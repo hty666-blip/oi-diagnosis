@@ -13,7 +13,7 @@ from app.api.deps import CurrentUser
 from app.domain.models import Diagnosis, Problem
 from app.infra.db import get_session
 from app.services.access import accessible_submission
-from app.services.judgement import effective_verdict
+from app.services.judgement import effective_verdict, result_narrative
 from app.services.wrong_card import CardInput, render_card
 
 router = APIRouter(prefix="/submissions", tags=["card"])
@@ -46,7 +46,7 @@ async def get_card(submission_id: int, session: SessionDep, user: CurrentUser) -
         pid=problem.pid if problem else str(sub.problem_id),
         title=problem.title if problem else "",
         verdict=verdict or "",
-        narrative=diag.narrative if diag else "",
+        narrative=result_narrative(sub, diag.narrative if diag else ""),
         nature=(
             diag.nature
             if diag and diag.nature

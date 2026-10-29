@@ -15,7 +15,7 @@ from app.domain.models import Diagnosis, Evidence, Problem, Submission
 from app.infra.db import get_session
 from app.orchestrator.graph import run_diagnosis
 from app.services.access import accessible_submission
-from app.services.judgement import effective_verdict
+from app.services.judgement import effective_verdict, result_narrative
 from app.services.submission_service import SubmissionService
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -26,6 +26,7 @@ class SubmissionCreate(BaseModel):
     problem_pid: str = Field(..., examples=["P1001"])
     code: str = Field(..., min_length=1, max_length=100_000)
     student_id: int | None = None
+    parent_submission_id: int | None = Field(default=None, gt=0)
 
     @field_validator("code")
     @classmethod
@@ -40,6 +41,7 @@ class SubmissionOut(BaseModel):
     code: str
     problem_pid: str
     problem_title: str
+    parent_submission_id: int | None = None
     stage: str
     verdict: str | None
     time_ms: int | None
@@ -56,6 +58,7 @@ def _to_out(
         code=sub.code,
         problem_pid=problem.pid if problem else "",
         problem_title=problem.title if problem else "",
+        parent_submission_id=sub.parent_submission_id,
         stage=sub.stage,
         verdict=effective_verdict(sub),
         time_ms=sub.time_ms,
@@ -65,12 +68,15 @@ def _to_out(
             {
                 "mechanism": diag.mechanism,
                 "nature": diag.nature,
-                "narrative": diag.narrative,
+                "narrative": result_narrative(sub, diag.narrative),
                 "status": diag.status,
                 "route": (diag.model_meta or {}).get("route"),
                 "autofixable": (diag.model_meta or {}).get("autofixable", False),
                 "degraded": diag.degraded or [],
                 "confidence": diag.confidence,
+                "review_revision": diag.review_revision,
+                "reviewer_id": diag.reviewer_id,
+                "reviewed_at": diag.reviewed_at.isoformat() if diag.reviewed_at else None,
             }
             if diag
             else None
@@ -88,7 +94,7 @@ async def create_submission(
         raise HTTPException(status_code=403, detail="只能以当前登录账号提交代码")
     svc = SubmissionService(session)
     try:
-        sub = await svc.create(payload.problem_pid, payload.code, user.id)
+        sub = await svc.create(payload.problem_pid, payload.code, user.id, payload.parent_submission_id)
     except SandboxError as e:
         raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
     except ValueError as e:
@@ -100,8 +106,9 @@ async def create_submission(
         ).scalar_one_or_none()
         return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
 
-    if sub.stage in ("COMPILING", "RUNNING"):
-        raise HTTPException(status_code=409, detail="该提交正在判题，请稍后查看结果")
+    if not svc.was_created:
+        raise HTTPException(status_code=409, detail=f"提交 #{sub.id} 正在判题，请稍后查看结果",
+                            headers={"Location": f"/api/v1/submissions/{sub.id}"})
 
     try:
         await svc.run(sub)
@@ -140,7 +147,8 @@ async def get_evidence(
         )
     ).scalars().all()
     return [
-        {"id": e.id, "type": e.type, "payload": e.payload, "digest": e.digest}
+        {"id": e.id, "type": e.type, "payload": e.payload, "digest": e.digest,
+         "reproducible": e.reproducible}
         for e in rows
     ]
 
@@ -154,6 +162,12 @@ async def diagnose_submission(
     sub = await accessible_submission(session, user, submission_id)
     if sub.stage != "READY" or sub.verdict is None:
         raise HTTPException(status_code=409, detail="提交尚未完成判题，请先等待结果或重新提交")
+    before = (
+        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+    ).scalar_one_or_none()
+    if before and before.reviewer_id is not None:
+        raise HTTPException(status_code=409, detail="该诊断已有教师复核，请保留审定记录或提交新版本代码")
+    initial_revision = before.review_revision if before else 0
 
     rows = (
         await session.execute(
@@ -168,8 +182,13 @@ async def diagnose_submission(
     draft = out["draft"]
 
     diag = (
-        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id)
+                              .with_for_update().execution_options(populate_existing=True))
     ).scalar_one_or_none() or Diagnosis(submission_id=sub.id)
+    if diag.reviewer_id is not None:
+        raise HTTPException(status_code=409, detail="该诊断已有教师复核，请保留审定记录或提交新版本代码")
+    if (diag.review_revision or 0) != initial_revision:
+        raise HTTPException(status_code=409, detail="诊断已更新，请重新读取最新结果")
     diag.mechanism = [c.model_dump() for c in draft.mechanism]
     diag.cognition = [c.model_dump() for c in draft.cognition]
     diag.nature = [n.model_dump() for n in draft.nature]
@@ -187,6 +206,7 @@ async def diagnose_submission(
         "critique_issues": (out["critique"].issues if out.get("critique") else []),
         "engine": "graph-stub-v1",
     }
+    diag.review_revision = (diag.review_revision or 0) + 1
     session.add(diag)
     await session.commit()
 
@@ -201,6 +221,29 @@ async def diagnose_submission(
         "first_hint_level": draft.first_hint_level,
         "nature": [n.model_dump() for n in draft.nature],
         "mechanism": [c.model_dump() for c in draft.mechanism],
+        "review_revision": diag.review_revision,
+        "reviewer_id": diag.reviewer_id,
+        "reviewed_at": diag.reviewed_at.isoformat() if diag.reviewed_at else None,
     }
+
+
+@router.get("/{submission_id}/lineage")
+async def get_lineage(submission_id: int, session: SessionDep, user: CurrentUser) -> list[dict]:
+    """返回当前提交的祖先链，不混入同题的其他练习分支。"""
+    current = await accessible_submission(session, user, submission_id)
+    chain = []
+    seen = set()
+    for _ in range(100):
+        if current.id in seen:
+            raise HTTPException(status_code=409, detail="提交版本关系异常，请联系管理员")
+        seen.add(current.id)
+        chain.append({"id": current.id, "parent_submission_id": current.parent_submission_id,
+                      "code": current.code, "stage": current.stage,
+                      "verdict": effective_verdict(current), "tests_passed": current.tests_passed,
+                      "created_at": current.created_at.isoformat() if current.created_at else None})
+        if current.parent_submission_id is None:
+            return list(reversed(chain))
+        current = await accessible_submission(session, user, current.parent_submission_id)
+    raise HTTPException(status_code=409, detail="版本链超过单次查看上限，请从较早版本查看")
 
 

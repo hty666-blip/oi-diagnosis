@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.ce_classify import classify_runtime
@@ -23,10 +25,12 @@ from app.capabilities.sandbox import CommandResult, CompileResult, SandboxClient
 from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
+from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, Problem, Submission
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
 PIPELINE_VER = "v4"
+logger = logging.getLogger(__name__)
 
 
 def build_runner():
@@ -41,17 +45,6 @@ def normalize_code(code: str) -> str:
 
 def code_digest(code: str) -> str:
     return hashlib.sha256(normalize_code(code).encode("utf-8")).hexdigest()
-
-
-def outputs_equal(actual: str, expected: str) -> bool:
-    """与 OJ 一致的宽松比较：忽略行尾空格与末尾多余空行。"""
-    a = [ln.rstrip() for ln in actual.replace("\r\n", "\n").split("\n")]
-    b = [ln.rstrip() for ln in expected.replace("\r\n", "\n").split("\n")]
-    while a and a[-1] == "":
-        a.pop()
-    while b and b[-1] == "":
-        b.pop()
-    return a == b
 
 
 @dataclass
@@ -112,13 +105,22 @@ class SubmissionService:
     def __init__(self, session: AsyncSession, sandbox=None) -> None:
         self.session = session
         self.sandbox = sandbox or build_runner()
+        self.was_created = False
 
-    async def create(self, problem_pid: str, code: str, student_id: int = 0) -> Submission:
+    async def create(self, problem_pid: str, code: str, student_id: int = 0,
+                     parent_submission_id: int | None = None) -> Submission:
+        self.was_created = False
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
         ).scalar_one_or_none()
         if problem is None:
             raise ValueError(f"题目不存在: {problem_pid}")
+        if parent_submission_id is not None:
+            parent = await self.session.get(Submission, parent_submission_id)
+            if parent is None or parent.student_id != student_id:
+                raise ValueError("上次提交不存在或不属于当前账号")
+            if parent.problem_id != problem.id:
+                raise ValueError("上次提交必须属于同一道题")
 
         normalized = normalize_code(code)
         if not normalized.strip():
@@ -127,6 +129,12 @@ class SubmissionService:
         suite = load_suite(problem)
         # 题面、数据或资源限制变化后旧结果不可复用；保持 pipeline_ver 在原字段长度内。
         pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
+        # 短事务内串行化同一请求；执行器运行时不占用数据库锁。
+        lock_key = hashlib.sha256(
+            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}".encode()
+        ).digest()[:8]
+        await self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"),
+                                   {"key": int.from_bytes(lock_key, "big", signed=True)})
 
         existing = (
             await self.session.execute(
@@ -135,12 +143,14 @@ class SubmissionService:
                     Submission.code_hash == digest,
                     Submission.student_id == student_id,
                     Submission.pipeline_ver == pipeline_ver,
-                    Submission.stage == "READY",
+                    Submission.parent_submission_id == parent_submission_id,
+                    Submission.stage.in_(("RECEIVED", "COMPILING", "RUNNING", "READY")),
                 )
                 .order_by(Submission.id.desc()).limit(1)
             )
         ).scalar_one_or_none()
         if existing is not None:
+            await self.session.commit()
             return existing
 
         sub = Submission(
@@ -150,15 +160,18 @@ class SubmissionService:
             code_hash=digest,
             pipeline_ver=pipeline_ver,
             stage="RECEIVED",
+            parent_submission_id=parent_submission_id,
         )
         self.session.add(sub)
         await self.session.commit()
         await self.session.refresh(sub)
+        self.was_created = True
         return sub
 
     async def run(self, submission: Submission) -> VerdictResult:
         """失败保持为系统错误，且无论成败都释放执行器资源。"""
         self._artifact_id = None
+        submission_id = submission.id
         try:
             return await self._run(submission)
         except SandboxError:
@@ -167,14 +180,28 @@ class SubmissionService:
             submission.tests_passed = None
             await self.session.commit()
             raise
+        except asyncio.CancelledError:
+            # 请求取消不能留下永远“运行中”的缓存记录。
+            await self.session.rollback()
+            await self.session.execute(update(Submission).where(Submission.id == submission_id).values(
+                stage="INTERRUPTED", verdict=None, tests_passed=None,
+            ))
+            await self.session.commit()
+            raise
         finally:
             artifact_id = getattr(self, "_artifact_id", None)
             cleanup = getattr(self.sandbox, "cleanup", None)
             if artifact_id and cleanup:
-                await cleanup(artifact_id)
+                try:
+                    await cleanup(artifact_id)
+                except SandboxError:
+                    logger.warning("判题结束后的产物清理失败", exc_info=False)
             close = getattr(self.sandbox, "close", None)
             if close:
-                await close()
+                try:
+                    await close()
+                except Exception:
+                    logger.warning("判题连接关闭失败", exc_info=False)
 
     async def _run(self, submission: Submission) -> VerdictResult:
         problem = (
@@ -229,14 +256,19 @@ class SubmissionService:
                 "scope": suite.scope,
                 "suite_digest": suite.digest,
                 "input": sample["input"][:8000],
+                "input_truncated": len(sample["input"]) > 8000,
                 "status": res.status,
+                "matched": res.status == "Accepted" and res.exit_code == 0
+                           and outputs_equal(res.stdout, sample["output"]),
                 "exit_code": res.exit_code,
                 "time_ms": res.time_ms,
                 "memory_kb": res.memory_kb,
                 "stdout": res.stdout[:4000],
+                "stdout_truncated": len(res.stdout) > 4000,
                 "stderr": res.stderr[:4000],
                 "expected": str(sample.get("output", ""))[:4000],
-            })
+                "expected_truncated": len(sample["output"]) > 4000,
+            }, reproducible=len(sample["input"]) <= 8000)
 
         result = decide_verdict(comp, runs, scope=suite.scope)
         result.suite_digest = suite.digest
@@ -299,12 +331,14 @@ class SubmissionService:
         self.session.add(diag)
         await self.session.commit()
 
-    async def _add_evidence(self, submission_id: int, kind: str, payload: dict) -> Evidence:
+    async def _add_evidence(self, submission_id: int, kind: str, payload: dict,
+                            *, reproducible: bool = True) -> Evidence:
         import json
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()[:32]
-        ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest)
+        ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest,
+                      reproducible=reproducible)
         self.session.add(ev)
         await self.session.commit()
         return ev

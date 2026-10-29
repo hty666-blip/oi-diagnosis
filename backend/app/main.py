@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1 import auth, card, catalog, submissions, system, tutor
+from app.api.v1 import auth, card, catalog, reviews, submissions, system, tutor
 from app.core.config import settings
 from app.infra.db import dispose_engine, ping
 
@@ -30,6 +30,7 @@ app.include_router(tutor.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(reviews.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["ops"])

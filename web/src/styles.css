@@ -405,3 +405,38 @@ button:disabled { cursor: not-allowed; opacity: .6; }
   .card-head .sub { font-size: 11px; text-align: right; }
   textarea.code { font-size: 13px; min-height: 300px; }
 }
+
+/* 教师审定与学生版本追踪沿用工作台控件。 */
+.review-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; margin-top: 20px; }
+.review-layout > section { min-width: 0; }
+.review-layout h3, .review-audit h3, .student-review h3, .submission-lineage h3 { font-size: 14px; margin: 18px 0 10px; }
+.review-code { max-height: 420px; overflow: auto; padding: 14px; background: #0d1017; border: 1px solid var(--line); border-radius: 10px; font: 13px/1.7 Consolas, monospace; white-space: pre; }
+.review-form { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+.review-form select { min-width: 0; width: 100%; }
+.review-form textarea { width: 100%; resize: vertical; line-height: 1.8; }
+.review-form fieldset { margin: 8px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+.review-form legend { color: var(--muted); font-size: 12px; padding-inline: 5px; }
+.evidence-choice { display: flex; align-items: flex-start; gap: 8px; margin: 9px 0; line-height: 1.7; cursor: pointer; font-size: 13px; }
+.evidence-choice input { margin-top: 5px; width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
+.review-form > button { align-self: flex-start; }
+.review-history { list-style: none; margin: 0; padding: 0; }
+.review-history > li { border-top: 1px solid var(--line); padding: 16px 0; }
+.review-history .narrative { margin-bottom: 8px; white-space: pre-wrap; }
+.review-outcome { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; line-height: 1.8; background: var(--panel-2); }
+.review-audit { border-top: 1px solid var(--line); margin-top: 24px; }
+.audit-snapshot summary, .lineage-list summary { cursor: pointer; color: var(--muted); font-size: 12px; padding-block: 7px; }
+.audit-snapshot pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.student-review { border-block: 1px solid var(--line); margin: 18px 0; padding: 4px 0 12px; }
+.student-review .card-head { margin-bottom: 0; }
+.student-review .card-head h3 { margin: 0; }
+.student-review .review-history > li:last-child { padding-bottom: 0; }
+.submission-lineage { margin: 20px 0; border-top: 1px solid var(--line); }
+.lineage-list { padding-left: 22px; margin: 12px 0; }
+.lineage-list > li { padding: 8px 0; }
+.lineage-list li::marker { color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) { .review-layout { grid-template-columns: 1fr; gap: 12px; } }
+@media (max-width: 700px) {
+  .review-form textarea, .review-form select { font-size: 16px; }
+  .evidence-choice { font-size: 14px; }
+  .student-review .card-head { align-items: flex-start; }
+}

@@ -10,7 +10,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -50,6 +61,9 @@ class Submission(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id", ondelete="CASCADE"), index=True)
     student_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)  # user 表后续补
+    parent_submission_id: Mapped[int | None] = mapped_column(
+        ForeignKey("submission.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     code: Mapped[str] = mapped_column(Text, default="")
     code_hash: Mapped[str] = mapped_column(String(64), index=True, default="")
@@ -115,11 +129,42 @@ class Diagnosis(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft/confirmed/needs_human/rejected
     degraded: Mapped[list] = mapped_column(JSONB, default=list)
     reviewer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # 自动重诊断和人工审定均递增，用于拒绝基于旧内容的写入。
+    review_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     model_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     submission: Mapped[Submission] = relationship(back_populates="diagnosis")
+
+
+class DiagnosisReview(Base):
+    """追加式教师审计；数据库触发器禁止覆盖或删除已保存记录。"""
+
+    __tablename__ = "diagnosis_review"
+    __table_args__ = (
+        UniqueConstraint("diagnosis_id", "revision", name="uq_diagnosis_review_version"),
+        CheckConstraint("decision IN ('confirm', 'revise', 'return')", name="ck_review_decision"),
+        CheckConstraint("revision > 0", name="ck_review_revision_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    diagnosis_id: Mapped[int] = mapped_column(
+        ForeignKey("diagnosis.id", ondelete="RESTRICT"), index=True
+    )
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("submission.id", ondelete="RESTRICT"), index=True
+    )
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="RESTRICT"))
+    actor_name: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer)
+    decision: Mapped[str] = mapped_column(String(16))
+    narrative: Mapped[str] = mapped_column(Text)
+    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    before: Mapped[dict] = mapped_column(JSONB)
+    after: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class HintSession(Base):

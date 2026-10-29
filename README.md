@@ -13,6 +13,8 @@
 - 学生数据按账号隔离；教师只可查看非空同班学生，管理员可查看全部。
 - 学生口头表示“AC”不结束答疑。修改后的同题提交须通过正式题包验证，才可结案；普通聊天不更新掌握度。
 - 工作台支持代码草稿、历史继续、执行证据、答疑、修改重提和带认证的错题卡导出。
+- 修改后的提交保存父版本，能回看同一修复链的代码与结果；重复请求复用执行任务。
+- 教师可确认、修订或退回本班诊断，绑定原始证据并保留追加式审计；过期版本与自动重诊断不能覆盖人工审定。
 
 ## 本地启动
 
@@ -31,10 +33,10 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 ```powershell
 backend\.venv\Scripts\python.exe scripts\import_packages.py --check
-backend\.venv\Scripts\python.exe scripts\import_packages.py
+backend\.venv\Scripts\python.exe scripts\prepare_demo.py
 ```
 
-如需演示账号，可运行 `backend\.venv\Scripts\python.exe scripts\seed_demo.py`。账号使用说明见登录页；演示密码仅用于本机。教师需配置与学生一致的非空 `class_name` 才可查看班级数据。
+`prepare_demo.py` 准备账号和自建题包，不调用模型或自动生成学生提交。账号使用说明见登录页；演示密码仅用于本机。`teacher01` 对应“初一 1 班”，可查看同班学生；已有非空班级和密码不会被覆盖。
 
 启动前端：
 
@@ -57,9 +59,9 @@ pytest -q
 
 设置 `TEST_DATABASE_URL` 后可执行真实 PostgreSQL 接口回归；数据库名称必须包含 `test`，先以该连接执行 `alembic upgrade head`。测试使用事务回滚，不应指向业务数据库。额外设置 `RUN_DOCKER_TESTS=1`，可执行真实 C++ 错解、修改和答疑核验场景，需要本地 `oi-judge:dev` 镜像。
 
-本轮本机结果：全部 **156 项测试通过**，包括独立 PostgreSQL 测试库和真实 Docker 判题；Ruff 通过；`web/` 下 `pnpm build` 通过。前端已验证登录和草稿恢复，完整新后端浏览器流程尚待联调。未调用外部模型验证诊断质量。
+第二轮本机结果：后端 **214 项测试通过**，包括独立 PostgreSQL、真正并发请求和真实 Docker 判题；Ruff 通过。`web/` 下 `pnpm test` 的 **8 项测试通过**，`pnpm build` 通过。隔离浏览器已完成错解、证据、提示、修改重提和验证解决的流程。验收时明确关闭外部模型，模型质量仍需单独评估。
 
-CI 会运行后端静态检查、迁移、PostgreSQL 接口测试、工具检查和前端构建；真实 Docker 判题是显式启用的本地回归。
+CI 会运行后端静态检查、迁移、PostgreSQL 接口测试、工具检查、前端测试和构建；真实 Docker 判题是显式启用的本地回归。更多范围与限制见 [第二轮改进验收](docs/第二轮改进验收.md)。
 
 ## 目录
 
@@ -74,5 +76,4 @@ CI 会运行后端静态检查、迁移、PostgreSQL 接口测试、工具检查
 
 仅提交无真实密钥的 `.env.example`。`.env`、私钥、运行目录和构建产物均在忽略规则内；题面、标签及评测数据随仓库公开。上传前可运行 `backend\.venv\Scripts\python.exe tools\check_secrets.py` 检查 Git 暂存内容；检查只报告路径与类型。
 
-自建题包采用 CC BY-SA 4.0；采集题面与页面版权归原平台及出题人，来源与许可边界见 [数据说明](data/README.md)。当前题包规模较小，教师复核写回、完整提交谱系和真实教学效果评估仍待实现。Docker 执行器用于本地开发与受控演示，尚未完成开放互联网环境的执行隔离验收。
-
+自建题包采用 CC BY-SA 4.0；采集题面与页面版权归原平台及出题人，来源与许可边界见 [数据说明](data/README.md)。当前题包规模较小，后台持久任务、完整数据删除与审计保留策略、真实教学效果评估仍待实现。Docker 执行器用于本地开发与受控演示，尚未完成开放互联网环境的执行隔离验收。

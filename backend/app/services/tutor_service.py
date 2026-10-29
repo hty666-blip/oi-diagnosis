@@ -15,11 +15,11 @@ from app.agents.tutor import (
     safe_output,
 )
 from app.core.config import settings
+from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
 from app.services.judgement import effective_verdict
-from app.services.submission_service import outputs_equal
 
 
 class TutorService:
@@ -234,12 +234,17 @@ class TutorService:
         for evidence in rows:
             payload = evidence.payload or {}
             failed = (
-                payload.get("status") != "Accepted"
+                payload.get("matched") is False
+                or payload.get("status") != "Accepted"
                 or payload.get("exit_code", 0) != 0
-                or not outputs_equal(str(payload.get("stdout", "")), str(payload.get("expected", "")))
+                or (payload.get("matched") is not True and not outputs_equal(
+                    str(payload.get("stdout", "")), str(payload.get("expected", ""))
+                ))
             )
             if failed:
-                view.counterexample = str(payload.get("stdin", payload.get("input", "")))[:4000]
+                if not payload.get("input_truncated"):
+                    view.counterexample = str(payload.get("stdin", payload.get("input", "")))
+                view.counterexample_minimized = False
                 break
         return view
 
@@ -274,6 +279,9 @@ def _diag_view(diag: Diagnosis | None) -> DiagnosisView:
         line=top.get("line"),
         col=top.get("col"),
         hint=str(top.get("hint", (diag.model_meta or {}).get("hint_seed", ""))),
+        evidence_summary=diag.narrative or "",
+        hypothesis="llm_hypothesis" in (diag.degraded or [])
+                   and (diag.reviewer_id is None or diag.status != "confirmed"),
     )
 
 

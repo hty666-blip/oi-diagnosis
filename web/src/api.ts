@@ -46,6 +46,13 @@ export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "操作未完成，请重试。";
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = getToken();
   return { ...(token ? { Authorization: "Bearer " + token } : {}), ...extra };
@@ -53,10 +60,10 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 
 async function checkResponse(res: Response, login = false): Promise<Response> {
   if (res.status === 401) {
-    if (login) throw new Error("用户名或密码错误，请检查后重试。");
+    if (login) throw new ApiError("用户名或密码错误，请检查后重试。", 401);
     clearSession();
     window.dispatchEvent(new Event("oi-session-expired"));
-    throw new Error("登录已过期，请重新登录；本机代码草稿已保留。");
+    throw new ApiError("登录已过期，请重新登录；本机代码草稿已保留。", 401);
   }
   if (!res.ok) {
     let detail = "";
@@ -67,12 +74,12 @@ async function checkResponse(res: Response, login = false): Promise<Response> {
         detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
       }
     } catch { /* 不把服务器 HTML 或内部错误堆栈显示给学生。 */ }
-    throw new Error(detail || ({
+    throw new ApiError(detail || ({
       403: "没有权限进行此操作。",
       404: "记录不存在，或当前账号无权访问。",
       429: "操作过于频繁，请稍后重试。",
       503: "判题服务暂时不可用，代码已保留，请稍后再次提交。",
-    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。");
+    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status);
   }
   return res;
 }
@@ -141,6 +148,7 @@ export interface TestSummary {
 
 export interface SubmissionResult {
   id: number;
+  parent_submission_id?: number | null;
   stage: string;
   verdict: string | null;
   tests_passed: TestSummary | null;
@@ -154,6 +162,9 @@ export interface SubmissionResult {
     nature: NatureTag[];
     mechanism: DiagResult["mechanism"];
     degraded?: string[];
+    review_revision?: number;
+    reviewer_id?: number | null;
+    reviewed_at?: string | null;
   } | null;
 }
 
@@ -168,6 +179,9 @@ export interface DiagResult {
   nature: NatureTag[];
   mechanism: { code: string; confidence: number; evidence_ids?: number[]; explain?: string }[];
   degraded?: string[];
+  review_revision?: number;
+  reviewer_id?: number | null;
+  reviewed_at?: string | null;
 }
 
 export interface EvidenceItem {
@@ -175,6 +189,7 @@ export interface EvidenceItem {
   type: string;
   payload: Record<string, unknown>;
   digest: string;
+  reproducible?: boolean;
 }
 
 export interface SessionReply {
@@ -196,6 +211,7 @@ export interface SessionHistory {
 
 export interface MySubmission {
   id: number;
+  parent_submission_id?: number | null;
   verdict: string | null;
   created_at: string;
   narrative: string;
@@ -205,6 +221,9 @@ export interface MySubmission {
   problem_title?: string;
   stage?: string;
   tests_passed?: TestSummary | null;
+  diagnosis_status?: string | null;
+  review_revision?: number;
+  reviewer_id?: number | null;
 }
 
 export interface CoachItem {
@@ -214,6 +233,49 @@ export interface CoachItem {
   confidence: number;
   narrative: string;
   route: string | null;
+  problem_pid?: string;
+  problem_title?: string;
+  student_name?: string;
+  review_revision?: number;
+  tests_passed?: TestSummary | null;
+}
+
+export type ReviewDecision = "confirm" | "revise" | "return";
+
+export interface ReviewEntry {
+  id: number;
+  submission_id: number;
+  revision: number;
+  actor: { id: number; name: string };
+  decision: ReviewDecision;
+  narrative: string;
+  evidence_ids: number[];
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ReviewHistory {
+  items: ReviewEntry[];
+  current_revision: number;
+}
+
+export interface ReviewInput {
+  submission_id: number;
+  expected_revision: number;
+  decision: ReviewDecision;
+  narrative: string;
+  evidence_ids: number[];
+}
+
+export interface LineageItem {
+  id: number;
+  parent_submission_id: number | null;
+  code: string;
+  verdict: string | null;
+  stage: string;
+  tests_passed: TestSummary | null;
+  created_at: string;
 }
 
 export interface Overview {
@@ -231,10 +293,18 @@ export const api = {
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
   getProblem: (pid: string) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid)),
-  submit: (pid: string, code: string) =>
-    post<SubmissionResult>("/submissions", { problem_pid: pid, code }),
+  submit: (pid: string, code: string, parentId?: number | null) =>
+    post<SubmissionResult>("/submissions", {
+      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+    }),
   getSubmission: (id: number) => get<SubmissionResult>("/submissions/" + id),
   evidence: (id: number) => get<EvidenceItem[]>("/submissions/" + id + "/evidence"),
+  lineage: (id: number) => get<LineageItem[]>("/submissions/" + id + "/lineage"),
+  reviews: (id: number) => get<ReviewHistory>("/submissions/" + id + "/reviews"),
+  review: (body: ReviewInput) => post<{
+    review: ReviewEntry;
+    diagnosis: { review_revision: number; status: string; narrative: string; reviewer_id: number; reviewed_at: string };
+  }>("/coach/reviews", body),
   diagnose: (id: number) => post<DiagResult>("/submissions/" + id + "/diagnose"),
   createSession: (submissionId: number) =>
     post<SessionReply>("/sessions", { submission_id: submissionId }),

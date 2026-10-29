@@ -1,48 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import Markdown from "./Markdown";
+import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
+import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
+import SubmissionLineage from "./components/SubmissionLineage";
 import {
   api, cachedUser, clearSession, messageOf, readLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
   type MySubmission, type Overview, type Problem, type ProblemDetail,
-  type SessionReply, type SubmissionResult, type TestSummary,
+  type SessionReply, type SubmissionResult,
 } from "./api";
 
 type View = "submit" | "my" | "coach" | "admin";
 const STARTER = "#include <iostream>\nusing namespace std;\n\nint main() {\n    // 在这里编写你的解题代码\n    return 0;\n}\n";
 const ROLE_LABEL: Record<string, string> = { student: "学生", teacher: "教练", admin: "管理员" };
-
-function resultLabel(verdict: string | null, tests?: TestSummary | null): string {
-  if (verdict === "AC") return tests?.scope === "package" ? "题包测试通过" : "历史通过 · 范围待核对";
-  return ({
-    SAMPLE_PASS: "样例通过 · 待完整验证", NO_TESTS: "暂无测试 · 未验证",
-    CE: "编译未通过", WA: "输出不符合预期", RE: "运行出错",
-    TLE: "运行超时", MLE: "内存超限", OLE: "输出超限",
-  } as Record<string, string>)[verdict ?? ""] ?? "尚未完成验证";
-}
-
-function VerdictBadge({ verdict, tests }: { verdict: string | null; tests?: TestSummary | null }) {
-  const state = verdict === "AC" && tests?.scope === "package" ? "ok"
-    : ["CE", "WA", "RE", "TLE", "MLE", "OLE"].includes(verdict ?? "") ? "bad" : "warn";
-  return <span className={"badge " + state}>{resultLabel(verdict, tests)}</span>;
-}
-
-function ErrorNotice({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  if (!message) return null;
-  return <div className="err" role="alert"><span>{message}</span>{onRetry && <button className="ghost" onClick={onRetry}>重试</button>}</div>;
-}
-
-function CardDownload({ id }: { id: number }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  async function download() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try { await api.downloadCard(id); } catch (e) { setError(messageOf(e)); } finally { setBusy(false); }
-  }
-  return <div className="download-control"><button className="ghost" onClick={download} disabled={busy}>{busy ? "导出中…" : "导出记录"}</button>{error && <span className="error-text" role="alert">{error}</span>}</div>;
-}
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(cachedUser);
@@ -83,7 +54,7 @@ export default function App() {
       <main className="main" id="main">
         {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={user.id} userId={user.id} restore={restore} /></div>}
         {view === "my" && <MyView onContinue={(id) => { setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
-        {view === "coach" && user.role !== "student" && <CoachView />}
+        {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminView />}
       </main>
     </div>
@@ -116,6 +87,8 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const [tutorSubmission, setTutorSubmission] = useState<number | null>(null);
   const [latestSubmitted, setLatestSubmitted] = useState<SubmissionResult | null>(null);
   const [detailRetry, setDetailRetry] = useState(0);
+  const [lineageRestore, setLineageRestore] = useState<{ id: number; tick: number } | null>(null);
+  const restoreTarget = (lineageRestore?.tick ?? 0) > (restore?.tick ?? 0) ? lineageRestore : restore;
   const requestLock = useRef(false);
   const workRequest = useRef(0);
   const evidenceRequest = useRef(0);
@@ -173,14 +146,14 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   }
 
   useEffect(() => {
-    if (!restore) return;
+    if (!restoreTarget) return;
     let active = true;
     const generation = ++workRequest.current;
     evidenceRequest.current += 1;
     hasSelection.current = true;
     requestLock.current = true;
     setBusy("restore"); setError("");
-    api.getSubmission(restore.id).then(async (value) => {
+    api.getSubmission(restoreTarget.id).then(async (value) => {
       if (!active || generation !== workRequest.current) return;
       if (!value.problem_pid || value.code === undefined) throw new Error("这条历史记录缺少题目或源码，请从题库重新打开题目。");
       setPid(value.problem_pid); setCode(value.code); setSavedCode(value.code);
@@ -193,7 +166,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       if (active && generation === workRequest.current) { setBusy(null); requestLock.current = false; }
     });
     return () => { active = false; };
-  }, [restore]);
+  }, [restoreTarget]);
 
   async function diagnose(id: number, generation = workRequest.current) {
     setDiagError("");
@@ -221,8 +194,9 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     requestLock.current = true; setBusy("judge"); setError(""); setDiagError("");
     setSub(null); setDiag(null); setEvidence([]); setEvidenceError("");
     const submittedCode = code;
+    const parentId = sub?.id;
     try {
-      const value = await api.submit(pid, submittedCode);
+      const value = await api.submit(pid, submittedCode, parentId);
       if (generation !== workRequest.current) return;
       setSub(value); setSavedCode(submittedCode); setDiag(initialDiagnosis(value)); setLatestSubmitted(value);
       const evidenceTask = loadEvidence(value.id);
@@ -232,7 +206,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       }
       await evidenceTask;
     } catch (e) {
-      if (generation === workRequest.current) setError(messageOf(e));
+      if (generation === workRequest.current) {
+        setSub(sub); setDiag(diag); setEvidence(evidence);
+        setError(messageOf(e));
+      }
     } finally {
       if (generation === workRequest.current) { setBusy(null); requestLock.current = false; }
     }
@@ -285,6 +262,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             <div className="verdict-bar"><VerdictBadge verdict={sub.verdict} tests={sub.tests_passed} />
               {sub.tests_passed && sub.tests_passed.total > 0 && <span className="muted">{sub.tests_passed.scope === "package" ? "题包测试" : sub.tests_passed.scope === "samples" ? "样例测试" : "历史测试"} {sub.tests_passed.passed} / {sub.tests_passed.total} 通过</span>}
             </div>
+            <ReviewHistoryPanel key={sub.id} submissionId={sub.id} pending={diag?.status === "needs_human"} />
             <p className="scope-note">{sub.verdict === "CE" ? "编译未通过，尚未运行测试。请先检查下方编译器信息。"
               : sub.verdict === "SAMPLE_PASS" ? "当前仅通过题面样例，尚未验证其他输入。请继续检查边界情况；这里不会把样例通过记为完整解决。"
               : sub.verdict === "NO_TESTS" ? "编译已完成，但没有可运行的测试数据，无法判断程序结果是否正确。"
@@ -294,7 +272,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             {busy === "diagnose" && <p role="status" className="muted">执行结果已保留，正在分析已有证据…</p>}
             <ErrorNotice message={diagError ? "执行已完成，诊断未完成：" + diagError : ""} onRetry={() => void retryDiagnosis()} />
             {diag && !["SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "") && <div className="diagnosis-block">
-              <h3>{diag.route === "llm_hypothesis" ? "待核实的模型建议" : diag.status === "needs_human" ? "现有证据与下一步检查" : "诊断说明"}</h3>
+              <h3>{diag.reviewed_at ? "当前审定说明" : diag.route === "llm_hypothesis" ? "待核实的模型建议" : diag.status === "needs_human" ? "现有证据与下一步检查" : "自动诊断说明"}</h3>
               {diag.status === "needs_human" && <p className="muted">现有证据不足以确认根因，需要进一步检查或请教师复核。</p>}
               <p className="narrative">{diag.narrative}</p>
               {!!diag.nature.length && <ul className="findings">{diag.nature.map((finding, index) => <li key={index}>
@@ -304,6 +282,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
               </li>)}</ul>}
             </div>}
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
+            <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />
             {canTutor && !tutorSubmission && <button className="ghost" onClick={() => setTutorSubmission(sub.id)}>围绕这次提交获取提示</button>}
           </section>}
           {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} />}
@@ -311,25 +290,6 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       </div>}
     </>
   );
-}
-
-function EvidencePanel({ items, loading, error, onRetry }: { items: EvidenceItem[]; loading: boolean; error: string; onRetry: () => void }) {
-  return <div className="evidence-panel"><h3>执行证据</h3>
-    {loading && <p className="muted" role="status">正在加载编译与运行记录…</p>}
-    <ErrorNotice message={error} onRetry={onRetry} />
-    {!loading && !error && !items.length && <p className="muted">尚无可展示的执行记录，不能据此确认错误原因。</p>}
-    {items.map((item) => {
-      const payload = item.payload;
-      const fields: [string, string][] = [["stdin", "输入"], ["input", "输入"], ["expected", "预期输出"], ["stdout", "实际输出"], ["stderr", item.type === "compile_log" ? "编译器信息" : "错误输出"]];
-      const presentFields = fields.filter(([key]) => typeof payload[key] === "string" && (payload[key] !== "" || key === "stdout"));
-      return <details key={item.id} className="evidence-item" open={item.type === "compile_log" && payload.ok === false}>
-        <summary>{item.type === "compile_log" ? (payload.ok === true ? "编译成功" : "编译器记录") : item.type === "run_trace" ? "测试 " + String(payload.case ?? "") + " · " + String(payload.status ?? "执行记录") : "检查记录"}<span className="dim"> · 证据 #{item.id}</span></summary>
-        {presentFields.map(([key, label]) => <div key={key}><h4>{label}</h4><pre>{String(payload[key]) || "（无输出）"}</pre></div>)}
-        {!presentFields.length && <pre>{JSON.stringify(payload, null, 2)}</pre>}
-        {typeof payload.time_ms === "number" && <p className="dim">运行用时 {payload.time_ms} ms</p>}
-      </details>;
-    })}
-  </div>;
 }
 
 type ChatMessage = { role: "tutor" | "student"; level: number; text: string };
@@ -434,17 +394,18 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">
       {loading ? <div className="empty" role="status">正在加载提交记录…</div> : !rows.length && !error ? <div className="empty">还没有提交记录。从「练习与诊断」选择一道题，提交你的第一份代码。</div> : <div className="table-scroll"><table><thead><tr><th>题目 / 提交</th><th>执行结果</th><th>诊断摘要</th><th>操作</th></tr></thead><tbody>
-        {rows.map((row) => <tr key={row.id}><td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "尚无诊断，打开后可查看执行记录。"}</td><td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button><CardDownload id={row.id} /></div></td></tr>)}
+        {rows.map((row) => <tr key={row.id}><td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.parent_submission_id ? " · 修改自 #" + row.parent_submission_id : ""}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.diagnosis_status === "needs_human" ? <span className="badge warn">{row.reviewer_id ? "教师已查看 · 仍待核对" : "待教师复核"}</span> : row.reviewer_id ? <span className="badge">教师已复核</span> : null}<p>{row.narrative || "尚无诊断，打开后可查看执行记录。"}</p></td><td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button><CardDownload id={row.id} /></div></td></tr>)}
       </tbody></table></div>}
     </div>
   </>;
 }
 
-function CoachView() {
+function CoachView({ userId }: { userId: number }) {
   const [queue, setQueue] = useState<CoachItem[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<number | null>(() => Number(readLocal("oi-selected-review:" + userId)) || null);
   async function load() {
     setLoading(true); setError("");
     try {
@@ -454,12 +415,13 @@ function CoachView() {
   }
   useEffect(() => { void load(); }, []);
   return <>
-    <div className="page-head"><div><h1>待复核记录</h1><p>这里展示证据不足的诊断记录，导出后结合学生源码核对。在线修订结论尚未提供。</p></div><button className="ghost" onClick={() => void load()} disabled={loading}>刷新</button></div>
+    <div className="page-head"><div><h1>待复核记录</h1><p>核对学生源码和执行证据，再确认、修订或退回诊断。每次处理都会留下审计记录。</p></div><button className="ghost" onClick={() => void load()} disabled={loading}>刷新队列</button></div>
     {overview && <p className="muted">当前可见提交 {overview.submissions} 条 · 诊断 {overview.diagnoses} 条 · 待复核 {overview.pending_review} 条</p>}
     <ErrorNotice message={error} onRetry={() => void load()} />
-    <div className="card">{loading ? <div className="empty" role="status">正在加载待复核记录…</div> : !queue.length && !error ? <div className="empty">暂无待复核记录。</div> : <div className="table-scroll"><table><thead><tr><th>提交</th><th>执行结果</th><th>待检查的解释</th><th>证据记录</th></tr></thead><tbody>
-      {queue.map((row) => <tr key={row.diagnosis_id}><td>#{row.submission_id}</td><td><VerdictBadge verdict={row.verdict} /></td><td className="muted">{row.narrative || "暂无诊断摘要"}</td><td><CardDownload id={row.submission_id} /></td></tr>)}
+    <div className="card">{loading ? <div className="empty" role="status">正在加载待复核记录…</div> : !queue.length && !error ? <div className="empty">暂无待复核记录。已打开记录的审定历史仍保留在下方。</div> : <div className="table-scroll"><table><thead><tr><th>学生 / 题目</th><th>执行结果</th><th>待检查的解释</th><th>操作</th></tr></thead><tbody>
+      {queue.map((row) => <tr key={row.diagnosis_id}><td><strong>{row.student_name || "学生提交"}</strong><div className="dim">{row.problem_pid} {row.problem_title} · #{row.submission_id}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "暂无诊断摘要"}</td><td><button className="ghost" onClick={() => { setSelectedId(row.submission_id); writeLocal("oi-selected-review:" + userId, String(row.submission_id)); }}>{selectedId === row.submission_id ? "正在查看" : "查看并复核"}</button></td></tr>)}
     </tbody></table></div>}</div>
+    {selectedId && <ReviewPanel key={selectedId} submissionId={selectedId} onReviewed={() => void load()} />}
   </>;
 }
 

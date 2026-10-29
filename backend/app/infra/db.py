@@ -15,6 +15,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    # 同时控制驱动与 SQLAlchemy 适配器的预编译缓存；迁移后仍需重启旧服务连接。
+    connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0},
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

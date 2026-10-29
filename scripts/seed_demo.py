@@ -100,7 +100,10 @@ async def ensure_users() -> None:
             user = (await s.execute(select(User).where(User.username == username))).scalar_one_or_none()
             if user is None:
                 s.add(User(username=username, display_name=name, role=role,
-                           class_name="", password_hash=hash_password(PASSWORD)))
+                           class_name="初一 1 班" if role == "teacher" else "",
+                           password_hash=hash_password(PASSWORD)))
+            elif role == "teacher" and not (user.class_name or "").strip():
+                user.class_name = "初一 1 班"
         await s.commit()
 
 
@@ -137,7 +140,7 @@ def main() -> int:
                 print(f"  [{username}] {pid} #{sid} {r.json().get('verdict')}")
     print(f"\n提交完成：{total} 条")
 
-    # 前 3 名学生各走一遍答疑，产生会话与掌握度数据
+    # 前 3 名学生各走一遍答疑；对话本身不证明修复，也不更新掌握度。
     with httpx.Client(timeout=180) as cli:
         for username, _, _ in STUDENTS[:3]:
             token = login(cli, username)
@@ -155,7 +158,7 @@ def main() -> int:
                      json={"content": "我看了下，好像是输出那里算错了"})
             cli.post(f"{BASE}/sessions/{sess}/messages", headers=headers,
                      json={"content": "改好了，过了！"})
-            print(f"  [{username}] 会话 #{sess} 完成")
+            print(f"  [{username}] 会话 #{sess} 已记录，仍需修改后提交核验")
 
     asyncio.run(dispose_engine())
     print("\n演示数据生成完毕。登录：student01 / teacher01 / admin，密码 123456")

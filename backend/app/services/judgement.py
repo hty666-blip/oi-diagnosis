@@ -13,3 +13,15 @@ def effective_verdict(submission: Submission) -> str | None:
     if counts.get("scope") == "package" and counts.get("passed") == total:
         return "AC"
     return "SAMPLE_PASS"
+
+
+def result_narrative(submission: Submission, narrative: str) -> str:
+    """旧结果按实际范围降级时，同步纠正展示文案，原诊断和审计不改写。"""
+    verdict = effective_verdict(submission)
+    legacy_success = narrative.strip() in {"样例全部通过，暂无问题。", "样例全部通过，暂无问题"}
+    if submission.verdict == "AC" or legacy_success:
+        if verdict == "SAMPLE_PASS":
+            return "公开样例已通过，尚未验证正式题包，不能确认程序正确。"
+        if verdict == "NO_TESTS":
+            return "没有可执行测试数据，历史结果尚未验证。"
+    return narrative

@@ -44,6 +44,8 @@ ignore = ["E501"]
 "app/capabilities/surface_lint.py" = ["E702", "SIM105", "UP009", "S110"]
 
 [tool.pytest.ini_options]
+# Windows 上系统临时目录偶发权限问题（pytest-of-* 被锁），统一放到仓库内
+addopts = "--basetemp=.pytest-tmp"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]

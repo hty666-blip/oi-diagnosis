@@ -28,8 +28,12 @@ ASK_FOR_ANSWER = re.compile(
 CONFUSED = re.compile(
     r"(不知道|不会|不懂|不明白|没懂|没思路|真不会|还是不对|看不懂|什么意思|能讲|讲讲|仔细说|详细说)"
 )
-RESOLVED = re.compile(r"(改好了|过了|ac 了|ac了|通过了|成功了|对了)", re.I)
-FULL_PROGRAM = re.compile(r"int\s+main\s*\(", re.I)
+RESOLVED = re.compile(
+    r"改好了|修好了|\bac\s*了|通过了|成功了|(?<![不没])对了"
+    r"|(?:样例|测试|评测|题包)(?:都|已经)?过了"
+    r"|(?:^|[\s，。！!])(?:已经|终于|都)?过了(?=$|[\s，。！!])", re.I,
+)
+FULL_PROGRAM = re.compile(r"\b(?:int|signed|auto|void)\s+main\s*\(", re.I)
 MEANINGLESS = re.compile(r"^[\s\W_]*$")
 
 PROBES = [
@@ -58,6 +62,9 @@ class DiagnosisView:
     col: int | None = None
     hint: str = ""
     counterexample: str = ""
+    evidence_summary: str = ""
+    counterexample_minimized: bool = False
+    hypothesis: bool = False
 
 
 @dataclass
@@ -133,13 +140,13 @@ def decide(session: SessionView, student_message: str, diag: DiagnosisView) -> T
         if session.stuck_count >= 2:
             return TutorDecision(
                 action="escalate", level=session.level, mode="explain",
-                content="这一步你自己试不出来也正常，我把情况同步给老师，让他陪你走一遍。",
+                content="这一步需要更多证据，建议带上本次提交和运行记录，请老师一起核对。",
                 p=diag.p, reason="stuck_at_gate",
             )
         return TutorDecision(
             action="hint", level=session.level, mode="gate",
-            content="我理解你想直接听讲解，但这一步需要你先动手：把 L3 那组数据跑一下，"
-                    "把程序输出贴给我——哪怕只贴一个数，我也能接着往下讲。",
+            content="这一步请先动手核对本次失败用例，把程序实际输出和预期输出贴出来。"
+                    "如果还没有失败输入，先确认本题有哪些可用测试。",
             p=diag.p, reason="stay",
         )
 
@@ -151,7 +158,7 @@ def decide(session: SessionView, student_message: str, diag: DiagnosisView) -> T
 
     if session.level >= MAX_LEVEL:
         return TutorDecision(action="escalate", level=MAX_LEVEL, mode="explain",
-                             content="这道题我到顶了，剩下的让老师跟你一起过一遍。",
+                             content="现有提示还不足以解决这道题，建议带上本次提交和证据，请老师一起核对。",
                              p=diag.p, reason="max_level")
 
     new_level = session.level + 1
@@ -166,8 +173,7 @@ def _on_confused(session: SessionView, diag: DiagnosisView, msg: str) -> TutorDe
         if session.stuck_count >= 1:
             return TutorDecision(
                 action="escalate", level=MAX_LEVEL, mode="explain",
-                content="看来我这样讲你还是接不上，我把这道题的情况同步给老师，"
-                        "他会用另一种方式跟你过一遍。",
+                content="现有提示还没有帮助你定位问题，建议带上本次提交和证据，请老师一起核对。",
                 p=diag.p, reason="stuck_at_max",
             )
         return TutorDecision(action="explain", level=MAX_LEVEL, mode="walkthrough",
@@ -177,7 +183,7 @@ def _on_confused(session: SessionView, diag: DiagnosisView, msg: str) -> TutorDe
     if session.stuck_count >= 2:
         return TutorDecision(
             action="escalate", level=session.level, mode="explain",
-            content="这道题我们换个真人来带你——我把前面的情况都整理给老师了。",
+            content="反复尝试仍未定位问题，建议把本次代码、输入和输出交给老师复核。",
             p=diag.p, reason="stuck_three_times",
         )
 
@@ -205,70 +211,49 @@ def _ack(msg: str) -> str:
 
 
 def _hint(level: int, diag: DiagnosisView) -> str:
-    if not diag.code and level > 0:
-        return (
-            "现有证据还不能定位具体错因。"
-            "先对照本次运行的实际输出与预期输出，说明最先不同的地方；"
-            "如果只有样例通过，请补查题目允许的边界情况。"
-        )
     loc = f"第 {diag.line} 行" + (f"第 {diag.col} 列" if diag.col else "") if diag.line else ""
     if level == 0:
         return "先别急着改，说说你打算怎么解决这道题？"
     if level == 1:
+        if not diag.code or diag.hypothesis:
+            return "现有证据还不能确定具体错因，先说明实际输出与预期输出哪里不同。"
         return f"方向提示：问题大概率在 **{_topic(diag)}** 这一类，不一定是思路全错。"
     if level == 2:
-        return f"定位提示：看看 {loc or '你写的核心那几行'} 附近，那里和你的预期可能不一致。"
+        if not loc:
+            return "还没有定位到具体行。请手算本次失败输入，比较每一步的中间结果，找出最先不同的一步。"
+        return f"定位提示：看看 {loc} 附近，那里和你的预期可能不一致。"
     if level == 3:
         if diag.counterexample:
-            return ("反例提示：用下面这组数据跑一下你的代码，看看输出对不对：\n\n"
+            label = "已缩减的失败用例" if diag.counterexample_minimized else "本次失败用例（尚未最小化）"
+            return (f"{label}：用下面的数据重跑你的代码，对照实际输出与预期输出：\n\n"
                     f"```\n{diag.counterexample.strip()}\n```\n\n先自己跑，别急着看答案。")
-        return "反例提示：试着自己造一组最小的数据（比如只有 1 个元素），看会不会出错。"
-    return f"修正提示：{diag.hint or '把这一处的类型/边界检查补上，然后重新提交。'}"
+        return "还没有可用的失败输入。请先核对题目约束和实际运行记录，找到合法且确实失败的用例。"
+    if not diag.code or diag.hypothesis:
+        return "尚未证实具体根因。请根据已记录的输入输出差异，一次只修改一处并重新提交验证。"
+    return f"修正提示：{diag.hint or '依据已定位的现象检查这一处，修改后重新提交验证。'}"
 
 
 def _explain(level: int, diag: DiagnosisView, *, deep: bool) -> str:
     """比 _hint 更具体：讲清"为什么"，并给一个可操作的小实验。"""
     topic = _topic(diag)
-    loc = f"第 {diag.line} 行" if diag.line else "你写的那几行"
-
-    if not diag.code:
-        return _hint(level or 1, diag)
 
     if level <= 1:
-        base = (
-            f"我们先把这类错误说清楚：它属于 **{topic}**。\n"
-            f"这类问题的特点是——代码能跑、样例可能也过，但换个数据就错。\n"
-            f"所以先别怀疑整个思路，只需要在{loc}找一个小地方核对。"
-        )
-        if deep:
-            base += ("\n\n举个例子：题目说 n 最多 10 万，而你的数组按 1 万开，"
-                     "小样例一定看不出问题，改成大数据才会崩——这就是“样例会骗人”。")
-        return base
+        if not diag.code or diag.hypothesis:
+            return _hint(1, diag)
+        return f"先看已有证据对应的方向：**{topic}**。请说明你原本期望程序做什么，再对照执行记录。"
 
     if level == 2:
-        base = (
-            f"具体到这个现象：{diag.message or '结果和预期不一致'}。\n"
-            f"位置在 {loc}。先做一件事：把这行的变量值打印出来，和你手算的对比，"
-            f"看是从第几步开始不一样。"
-        )
+        base = _hint(2, diag)
         if deep:
             base += "\n\n别一次改很多处，一次只改一处、改完立刻重新提交——这样才知道是哪一处生效。"
         return base
 
     if level == 3:
-        base = (
-            "我们用一个最小例子把它逼出来：\n"
-            "1）只留 1 个元素，看输出对不对；\n"
-            "2）再加 1 个，观察从哪一步开始不对；\n"
-            "3）把那一刻的中间变量打印出来。"
-        )
-        if diag.counterexample:
-            base += f"\n\n也可以直接用这组数据：\n```\n{diag.counterexample.strip()}\n```"
-        return base
+        return _hint(3, diag)
 
     base = (
-        f"最后一步，把改法说明白：{diag.hint or '检查这一处的类型与边界'}。\n"
-        "改完先别急着交——拿题目里最小的那组数据手算一遍，再提交。"
+        f"{_hint(4, diag)}\n"
+        "先手算本次失败输入，再重新提交，确认修改是否解决了已观察到的问题。"
     )
     if deep:
         base += ("\n\n你也可以把改完的代码贴上来，我帮你看还有没有别的问题。"
@@ -297,4 +282,4 @@ def _refuse_text(level: int) -> str:
 
 def safe_output(text: str) -> bool:
     """防代做最后一道检查：不得包含完整程序。"""
-    return not (FULL_PROGRAM.search(text) and "```" in text)
+    return isinstance(text, str) and not FULL_PROGRAM.search(text)
