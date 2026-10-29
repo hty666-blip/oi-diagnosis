@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.api.deps import CurrentUser, TeacherUser
+from app.core.text_validation import StorageText
 from app.domain.models import Diagnosis, Problem, Submission, User
 from app.infra.db import get_session
 from app.services.access import submission_scope
@@ -23,7 +24,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 async def list_problems(
     session: SessionDep,
     user: CurrentUser,
-    q: str = Query("", max_length=120, description="按题号/标题模糊搜索"),
+    q: Annotated[StorageText, Query(max_length=120, description="按题号/标题模糊搜索")] = "",
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
     stmt = select(Problem)

@@ -102,3 +102,24 @@ test("账号切换后的迟到401不清除新账号凭证，也不让旧任务�
   assert.equal(storage.get("oi_token"), "new-account-token");
   assert.deepEqual(events, []);
 });
+
+test("取消原提交不携带新代码，队列摘要使用授权查询并支持停止请求", async () => {
+  const requests = [];
+  const signal = new AbortController().signal;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return json(url.endsWith("/cancel") ? { id: 42, stage: "CANCELLED", verdict: null } : { counts: { queued: 1 } });
+  };
+  const cancelled = await api.cancelSubmission(42, signal);
+  assert.equal(cancelled.stage, "CANCELLED");
+  assert.equal(requests[0].url, "/api/v1/submissions/42/cancel");
+  assert.equal(requests[0].options.method, "POST");
+  assert.equal(requests[0].options.body, undefined);
+  await api.coachJudging(signal);
+  assert.equal(requests[1].url, "/api/v1/coach/judging");
+  assert.equal(requests[1].options.method, "GET");
+  for (const { options } of requests) {
+    assert.equal(options.signal, signal);
+    assert.equal(options.headers.Authorization, "Bearer local-test-token");
+  }
+});

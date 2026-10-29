@@ -4,7 +4,8 @@ import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
 import SubmissionLineage from "./components/SubmissionLineage";
-import { parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
+import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
+import JudgingQueuePanel from "./components/JudgingQueuePanel";
 import {
   api, ApiError, cachedUser, clearSession, messageOf, readLocal, removeLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
@@ -77,7 +78,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [problemError, setProblemError] = useState("");
   const [detailError, setDetailError] = useState("");
-  const [busy, setBusy] = useState<"judge" | "diagnose" | "restore" | null>(null);
+  const [busy, setBusy] = useState<"judge" | "diagnose" | "restore" | "cancel" | null>(null);
   const [error, setError] = useState("");
   const [diagError, setDiagError] = useState("");
   const [sub, setSub] = useState<SubmissionResult | null>(null);
@@ -160,6 +161,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
         setError("保存的任务不存在或当前账号无权访问。本机草稿已保留，请从提交记录核对，或重新提交代码。");
       } else setTaskError(result.error ? messageOf(result.error) : "已暂停自动查询。任务仍保存在服务器，点击继续查询即可查看，无需重新提交。");
     } else if (result.reason === "failed") setTaskError("");
+    else if (result.reason === "task_cancelled") {
+      removeLocal(pendingHintKey(nextPid));
+      setTaskError(""); setLatestSubmitted(null);
+    }
   }
 
   function selectProblem(nextPid: string) {
@@ -239,7 +244,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
         const stored = parsePendingId(readLocal(pendingKey(userId, value.problem_pid)));
         setTutorSubmission(stored === value.id ? parsePendingId(readLocal(pendingHintKey(value.problem_pid))) : null);
         void watchTask(value.id, value.problem_pid, generation);
-      } else if (submissionPhase(value) === "failed") {
+      } else if (submissionPhase(value) === "failed" || submissionPhase(value) === "cancelled") {
         setPendingId(value.id);
       } else await loadEvidence(value.id);
     }).catch((e) => { if (active) setError(messageOf(e)); }).finally(() => {
@@ -314,6 +319,36 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     finally { if (generation === workRequest.current) { requestLock.current = false; setBusy(null); } }
   }
 
+  async function cancelTask() {
+    if (!sub?.job?.cancelable || requestLock.current) return;
+    const generation = ++workRequest.current;
+    taskController.current?.abort(); taskController.current = null;
+    setPolling(false); setTaskError(""); setBusy("cancel"); requestLock.current = true;
+    const controller = new AbortController();
+    submitController.current?.abort(); submitController.current = controller;
+    try {
+      const result = await cancelAndRefresh(sub.id, {
+        signal: controller.signal, cancel: api.cancelSubmission, fetchRecord: api.getSubmission,
+      });
+      if (generation !== workRequest.current) return;
+      setSub(result.record); setSavedCode(result.record.code ?? "");
+      if (result.confirmed) {
+        setDiag(null); setEvidence([]); setLatestSubmitted(null);
+        writeLocal(pendingKey(userId, pid), String(result.record.id));
+        removeLocal(pendingHintKey(pid));
+      } else if (submissionPhase(result.record) === "complete") await finishSubmission(result.record, pid, generation);
+      else if (submissionPhase(result.record) === "pending") {
+        void watchTask(result.record.id, pid, generation);
+        setTaskError("取消尚未确认，服务器任务仍在处理中。请依据最新状态操作。");
+      } else setTaskError("该任务已经结束，未执行取消。请查看最新状态。");
+    } catch (e) {
+      if (generation === workRequest.current) {
+        void watchTask(sub.id, pid, generation);
+        setTaskError("尚未确认取消结果：" + messageOf(e));
+      }
+    } finally { if (generation === workRequest.current) { requestLock.current = false; setBusy(null); } }
+  }
+
   const hasChanged = sub !== null && code !== savedCode;
   const phase = sub ? submissionPhase(sub) : null;
   const canTutor = sub && phase === "complete" && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
@@ -353,7 +388,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void run(); }
             }} />
             <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim()}>
-              {busy === "judge" ? "正在发送任务…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
+              {busy === "judge" ? "正在发送任务…" : busy === "cancel" ? "正在核对取消…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
             </button><span className="dim">草稿保留在当前浏览器</span></div>
             {hasChanged && <p className="scope-note">代码已有修改。下方结果对应上次提交，请重新提交验证改动。</p>}
           </div>
@@ -361,11 +396,12 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
           {sub && <section className="card" aria-label="本次执行结果" aria-live="polite">
             <div className="card-head"><h2>提交 #{sub.id}</h2>{phase === "complete" && <CardDownload id={sub.id} />}</div>
             {phase !== "complete" && <div className="task-status" role="status">
-              <h3>{phase === "failed" ? "判题未完成" : taskLabel(sub)}</h3>
-              <p>{phase === "failed" ? sub.job?.last_error || "执行未能完成，不能将此结果算作学生代码错误。" : "任务已保存在服务器。刷新页面或切换题目不会取消判题，也可从提交记录继续查看。"}</p>
+              <h3>{phase === "cancelled" ? "已取消" : phase === "failed" ? "判题未完成" : taskLabel(sub)}</h3>
+              <p>{phase === "cancelled" ? "取消已记录，后台执行将在下一次状态检查时停止。代码和历史已保留；重新提交会创建新的任务。" : phase === "failed" ? sub.job?.last_error || "执行未能完成，不能将此结果算作学生代码错误。" : "任务已保存在服务器。刷新页面或切换题目不会取消判题，也可从提交记录继续查看。"}</p>
               {sub.job && <p className="dim">已尝试 {sub.job.attempts} / {sub.job.max_attempts} 次{phase === "pending" && !polling ? " · 自动查询已暂停" : ""}</p>}
               <ErrorNotice message={taskError} />
-              {phase === "pending" && !polling && <button className="ghost" onClick={() => void watchTask(sub.id, pid, workRequest.current)}>继续查询任务状态</button>}
+              {phase === "pending" && !polling && <button className="ghost" disabled={!!busy} onClick={() => void watchTask(sub.id, pid, workRequest.current)}>继续查询任务状态</button>}
+              {phase === "pending" && sub.job?.cancelable && <button className="ghost" disabled={!!busy} onClick={() => void cancelTask()}>{busy === "cancel" ? "正在核对取消…" : "取消本次任务"}</button>}
               {phase === "failed" && sub.job?.retryable && <button className="ghost" disabled={!!busy} onClick={() => void retryTask()}>重试原代码</button>}
               {phase === "failed" && <p className="dim">重试使用这条提交保存的代码；若要验证编辑后的代码，请选择「重新提交验证」。</p>}
             </div>}
@@ -393,9 +429,9 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
               </li>)}</ul>}
             </div>}
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
-            <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />
             {canTutor && !tutorSubmission && <button className="ghost" onClick={() => setTutorSubmission(sub.id)}>围绕这次提交获取提示</button>}
             </>}
+            {phase !== "pending" && <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />}
           </section>}
           {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} />}
         </section>
@@ -510,8 +546,8 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
           const recordPhase = submissionPhase({ stage: row.stage ?? "READY", verdict: row.verdict });
           return <tr key={row.id}>
             <td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.parent_submission_id ? " · 修改自 #" + row.parent_submission_id : ""}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td>
-            <td>{recordPhase === "complete" ? <VerdictBadge verdict={row.verdict} tests={row.tests_passed} /> : <span className="badge warn">{recordPhase === "failed" ? "判题未完成" : taskLabel({ stage: row.stage ?? "QUEUED" })}</span>}</td>
-            <td className="muted">{row.diagnosis_status === "needs_human" ? <span className="badge warn">{row.reviewer_id ? "教师已查看 · 仍待核对" : "待教师复核"}</span> : row.reviewer_id ? <span className="badge">教师已复核</span> : null}<p>{recordPhase === "complete" ? row.narrative || "尚无诊断，打开后可查看执行记录。" : recordPhase === "failed" ? "验证未完成，打开后可查看失败说明或重试。" : "任务仍在处理，打开后继续查看真实状态。"}</p></td>
+            <td>{recordPhase === "complete" ? <VerdictBadge verdict={row.verdict} tests={row.tests_passed} /> : <span className="badge warn">{recordPhase === "cancelled" ? "已取消" : recordPhase === "failed" ? "判题未完成" : taskLabel({ stage: row.stage ?? "QUEUED" })}</span>}</td>
+            <td className="muted">{row.diagnosis_status === "needs_human" ? <span className="badge warn">{row.reviewer_id ? "教师已查看 · 仍待核对" : "待教师复核"}</span> : row.reviewer_id ? <span className="badge">教师已复核</span> : null}<p>{recordPhase === "complete" ? row.narrative || "尚无诊断，打开后可查看执行记录。" : recordPhase === "cancelled" ? "任务已取消，代码与历史保留，可打开后重新提交。" : recordPhase === "failed" ? "验证未完成，打开后可查看失败说明或重试。" : "任务仍在处理，打开后继续查看真实状态。"}</p></td>
             <td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button>{recordPhase === "complete" && <CardDownload id={row.id} />}</div></td>
           </tr>;
         })}
@@ -537,6 +573,7 @@ function CoachView({ userId }: { userId: number }) {
   return <>
     <div className="page-head"><div><h1>待复核记录</h1><p>核对学生源码和执行证据，再确认、修订或退回诊断。每次处理都会留下审计记录。</p></div><button className="ghost" onClick={() => void load()} disabled={loading}>刷新队列</button></div>
     {overview && <p className="muted">当前可见提交 {overview.submissions} 条 · 诊断 {overview.diagnoses} 条 · 待复核 {overview.pending_review} 条</p>}
+    <JudgingQueuePanel />
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">{loading ? <div className="empty" role="status">正在加载待复核记录…</div> : !queue.length && !error ? <div className="empty">暂无待复核记录。已打开记录的审定历史仍保留在下方。</div> : <div className="table-scroll"><table><thead><tr><th>学生 / 题目</th><th>执行结果</th><th>待检查的解释</th><th>操作</th></tr></thead><tbody>
       {queue.map((row) => <tr key={row.diagnosis_id}><td><strong>{row.student_name || "学生提交"}</strong><div className="dim">{row.problem_pid} {row.problem_title} · #{row.submission_id}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "暂无诊断摘要"}</td><td><button className="ghost" onClick={() => { setSelectedId(row.submission_id); writeLocal("oi-selected-review:" + userId, String(row.submission_id)); }}>{selectedId === row.submission_id ? "正在查看" : "查看并复核"}</button></td></tr>)}

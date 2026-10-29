@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, messageOf, type LineageItem } from "../api";
 import { ErrorNotice, VerdictBadge } from "./RecordUI";
+import { submissionPhase, taskLabel } from "../judge-task";
 
 export default function SubmissionLineage({ submissionId, onOpen }: { submissionId: number; onOpen: (id: number) => void }) {
   const [rows, setRows] = useState<LineageItem[]>([]);
@@ -20,7 +21,7 @@ export default function SubmissionLineage({ submissionId, onOpen }: { submission
     <ErrorNotice message={error} onRetry={() => setRetry((value) => value + 1)} />
     {!loading && !error && rows.length === 1 && <p className="muted">这是本次修改的起点。继续修改并重新提交后，会保留前后版本关系。</p>}
     <ol className="lineage-list">{rows.map((row) => <li key={row.id}>
-      <div className="row"><button className="ghost" onClick={() => onOpen(row.id)} disabled={row.id === submissionId}>#{row.id}{row.id === submissionId ? " · 当前记录" : " · 打开代码"}</button><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></div>
+      <div className="row"><button className="ghost" onClick={() => onOpen(row.id)} disabled={row.id === submissionId}>#{row.id}{row.id === submissionId ? " · 当前记录" : " · 打开代码"}</button>{submissionPhase(row) === "complete" ? <VerdictBadge verdict={row.verdict} tests={row.tests_passed} /> : <span className="badge warn">{submissionPhase(row) === "failed" ? "判题未完成" : taskLabel(row)}</span>}</div>
       <details><summary>查看该版本代码</summary><pre className="review-code"><code>{row.code}</code></pre></details>
     </li>)}</ol>
   </section>;

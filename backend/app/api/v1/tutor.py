@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
+from app.core.text_validation import StorageText
 from app.infra.db import get_session
 from app.services.tutor_service import TutorService
 
@@ -21,7 +22,7 @@ class SessionCreate(BaseModel):
 
 
 class MessageIn(BaseModel):
-    content: str = Field(..., min_length=1, max_length=4000)
+    content: StorageText = Field(..., min_length=1, max_length=4000)
 
 
 class VerificationIn(BaseModel):

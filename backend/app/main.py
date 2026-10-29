@@ -6,8 +6,10 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
-from app.api.v1 import auth, card, catalog, reviews, submissions, system, tutor
+from app.api.errors import request_validation_error_handler
+from app.api.v1 import auth, card, catalog, operations, reviews, submissions, system, tutor
 from app.core.config import settings
 from app.core.security import validate_security_settings
 from app.infra.db import dispose_engine, ping
@@ -34,6 +36,7 @@ app = FastAPI(
     description="青少年信息学竞赛错题诊断与答疑系统",
     lifespan=lifespan,
 )
+app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 
 app.include_router(submissions.router, prefix="/api/v1")
 app.include_router(system.router, prefix="/api/v1")
@@ -42,6 +45,7 @@ app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
+app.include_router(operations.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["ops"])

@@ -45,8 +45,9 @@ async def jobs_context(api_context):
             student = User(username="job_student", role="student", class_name="A", password_hash="unused")
             peer = User(username="job_peer", role="student", class_name="A", password_hash="unused")
             teacher = User(username="job_teacher", role="teacher", class_name="A", password_hash="unused")
+            admin = User(username="job_admin", role="admin", class_name="", password_hash="unused")
             problem = Problem(pid="JOB-TEST", title="后台判题测试", samples=[{"input": "1", "output": "1"}])
-            session.add_all([student, peer, teacher, problem])
+            session.add_all([student, peer, teacher, admin, problem])
             await session.commit()
 
         def headers(user=None):
@@ -60,7 +61,7 @@ async def jobs_context(api_context):
         app.dependency_overrides[get_session] = independent_session
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://jobs") as client:
             yield SimpleNamespace(sessions=sessions, client=client, headers=headers,
-                                  student=student, peer=peer, teacher=teacher, problem=problem)
+                                  student=student, peer=peer, teacher=teacher, admin=admin, problem=problem)
     finally:
         if previous is None:
             app.dependency_overrides.pop(get_session, None)
@@ -436,3 +437,257 @@ async def test_queue_insert_failure_cannot_leave_an_orphan_submission(jobs_conte
     async with ctx.sessions() as session:
         assert await session.scalar(select(func.count()).select_from(Submission)) == 0
         assert await session.scalar(select(func.count()).select_from(JudgeJob)) == 0
+
+
+async def test_queued_cancel_is_owned_idempotent_and_keeps_code_and_lineage(jobs_context):
+    ctx = jobs_context
+    queued = await enqueue(ctx)
+    url = f"/api/v1/submissions/{queued['id']}/cancel"
+    assert queued["job"]["cancelable"] is True
+    assert (await ctx.client.post(url, headers=ctx.headers(ctx.peer))).status_code == 404
+    assert (await ctx.client.post(url, headers=ctx.headers(ctx.teacher))).status_code == 403
+    teacher_view = await ctx.client.get(f"/api/v1/submissions/{queued['id']}", headers=ctx.headers(ctx.teacher))
+    assert teacher_view.json()["job"]["cancelable"] is False
+    cancelled = await ctx.client.post(url, headers=ctx.headers())
+    assert cancelled.status_code == 200, cancelled.text
+    body = cancelled.json()
+    assert body["stage"] == "CANCELLED" and body["verdict"] is None
+    assert body["job"]["status"] == "cancelled"
+    assert body["job"]["cancelable"] is False and body["job"]["retryable"] is False
+    assert body["code"] == queued["code"] and body["parent_submission_id"] == queued["parent_submission_id"]
+    repeated = await ctx.client.post(url, headers=ctx.headers())
+    assert repeated.status_code == 200 and repeated.json()["id"] == body["id"]
+    assert await JudgeWorker(ctx.sessions).run_once() is False
+    assert (await ctx.client.post(f"/api/v1/submissions/{queued['id']}/retry", headers=ctx.headers())).status_code == 409
+    new = await ctx.client.post("/api/v1/submissions", headers={**ctx.headers(), "Prefer": "respond-async"},
+                                json={"problem_pid": ctx.problem.pid, "code": body["code"],
+                                      "parent_submission_id": body["id"]})
+    assert new.status_code == 202 and new.json()["id"] != body["id"]
+    assert new.json()["parent_submission_id"] == body["id"]
+    lineage = await ctx.client.get(f"/api/v1/submissions/{new.json()['id']}/lineage", headers=ctx.headers())
+    assert [row["id"] for row in lineage.json()] == [body["id"], new.json()["id"]]
+
+
+async def test_admin_may_cancel_another_students_job(jobs_context):
+    ctx = jobs_context
+    queued = await enqueue(ctx)
+    admin_view = await ctx.client.get(f"/api/v1/submissions/{queued['id']}", headers=ctx.headers(ctx.admin))
+    assert admin_view.json()["job"]["cancelable"] is True
+    cancelled = await ctx.client.post(f"/api/v1/submissions/{queued['id']}/cancel", headers=ctx.headers(ctx.admin))
+    assert cancelled.status_code == 200 and cancelled.json()["job"]["status"] == "cancelled"
+
+
+async def test_running_cancel_revokes_old_lease_and_refuses_all_old_writes(jobs_context):
+    ctx = jobs_context
+    queued = await enqueue(ctx)
+    lease = await claim(ctx)
+    cancelled = await ctx.client.post(f"/api/v1/submissions/{queued['id']}/cancel", headers=ctx.headers())
+    assert cancelled.status_code == 200 and cancelled.json()["stage"] == "CANCELLED"
+    async with ctx.sessions() as session:
+        assert await JobService(session).renew(lease) is False
+        assert await JobService(session).fail(lease, "execution_failed") is False
+    async with ctx.sessions() as session:
+        submission = await session.get(Submission, queued["id"])
+        with pytest.raises(LeaseLost):
+            await SubmissionService(session, sandbox=Runner(), lease=lease).run(submission)
+    async with ctx.sessions() as session:
+        job = await session.get(JudgeJob, lease.job_id)
+        assert job.status == "cancelled" and job.owner_token is None and job.lease_expires_at is None
+        assert (await session.get(Submission, queued["id"])).stage == "CANCELLED"
+        assert await session.scalar(select(func.count()).select_from(Evidence)) == 0
+
+
+async def test_cancel_does_not_replace_completed_or_failed_results(jobs_context, monkeypatch):
+    ctx = jobs_context
+    monkeypatch.setattr("app.services.submission_service.build_runner", Runner)
+    queued = await enqueue(ctx)
+    await JudgeWorker(ctx.sessions).run_once()
+    denied = await ctx.client.post(f"/api/v1/submissions/{queued['id']}/cancel", headers=ctx.headers())
+    assert denied.status_code == 409
+    completed = (await ctx.client.get(f"/api/v1/submissions/{queued['id']}", headers=ctx.headers())).json()
+    assert completed["stage"] == "READY" and completed["verdict"] == "SAMPLE_PASS"
+    assert completed["job"]["status"] == "succeeded" and completed["job"]["cancelable"] is False
+    monkeypatch.setattr(settings, "judge_job_max_attempts", 1)
+
+    class BrokenRunner(Runner):
+        async def compile(self, code):
+            raise SandboxError("offline")
+
+    monkeypatch.setattr("app.services.submission_service.build_runner", BrokenRunner)
+    failed = await enqueue(ctx, "int main(){return 2;}")
+    await JudgeWorker(ctx.sessions).run_once()
+    assert (await ctx.client.post(f"/api/v1/submissions/{failed['id']}/cancel", headers=ctx.headers())).status_code == 409
+
+
+@pytest.mark.parametrize("legacy_stage", ["RECEIVED", "COMPILING", "RUNNING"])
+async def test_background_request_skips_old_inline_activity_without_modifying_it(jobs_context, legacy_stage):
+    ctx = jobs_context
+    async with ctx.sessions() as session:
+        service = SubmissionService(session, sandbox=Runner())
+        parent = await service.create(ctx.problem.pid, "int main(){return 1;}", ctx.student.id)
+        await service.run(parent)
+        old = await service.create(ctx.problem.pid, "int main(){return 2;}", ctx.student.id, parent.id)
+        old.stage = legacy_stage
+        await session.commit()
+        old_id, parent_id = old.id, parent.id
+    body = {"problem_pid": ctx.problem.pid, "code": "int main(){return 2;}", "parent_submission_id": parent_id}
+    headers = {**ctx.headers(), "Prefer": "respond-async"}
+    new = await ctx.client.post("/api/v1/submissions", headers=headers, json=body)
+    assert new.status_code == 202, new.text
+    assert new.json()["id"] != old_id and new.json()["parent_submission_id"] == parent_id
+    repeated = await ctx.client.post("/api/v1/submissions", headers=headers, json=body)
+    assert repeated.status_code == 202 and repeated.json()["id"] == new.json()["id"]
+    async with ctx.sessions() as session:
+        original = await session.get(Submission, old_id)
+        assert original.stage == legacy_stage and original.parent_submission_id == parent_id
+        assert await session.scalar(select(func.count()).select_from(JudgeJob)) == 1
+    assert (await ctx.client.post(f"/api/v1/submissions/{old_id}/cancel", headers=ctx.headers())).status_code == 409
+
+
+async def test_background_request_still_reuses_ready_inline_cache(jobs_context):
+    ctx = jobs_context
+    async with ctx.sessions() as session:
+        service = SubmissionService(session, sandbox=Runner())
+        ready = await service.create(ctx.problem.pid, "int main(){return 0;}", ctx.student.id)
+        await service.run(ready)
+        ready_id = ready.id
+    result = await ctx.client.post("/api/v1/submissions", headers={**ctx.headers(), "Prefer": "respond-async"},
+                                   json={"problem_pid": ctx.problem.pid, "code": "int main(){return 0;}"})
+    assert result.status_code == 200 and result.json()["id"] == ready_id
+    assert result.json()["stage"] == "READY" and result.json()["job"] is None
+
+
+@pytest.mark.parametrize("winner", ["cancel", "complete"])
+async def test_cancel_and_completion_have_exactly_one_terminal_winner(jobs_context, winner):
+    ctx = jobs_context
+    queued = await enqueue(ctx)
+    lease = await claim(ctx)
+
+    async def finish_elsewhere():
+        async with ctx.sessions() as session:
+            submission = await session.get(Submission, queued["id"])
+            try:
+                await SubmissionService(session, sandbox=Runner(), lease=lease)._finalize(
+                    submission, VerdictResult("SAMPLE_PASS", 1, 1), triage(""),
+                    JudgeSuite("samples", [], "race-digest"),
+                )
+                return "completed"
+            except LeaseLost:
+                return "lease_lost"
+
+    async with ctx.sessions() as session:
+        await session.scalar(select(JudgeJob).where(JudgeJob.id == lease.job_id).with_for_update())
+        if winner == "cancel":
+            competing = asyncio.create_task(finish_elsewhere())
+        else:
+            competing = asyncio.create_task(ctx.client.post(
+                f"/api/v1/submissions/{queued['id']}/cancel", headers=ctx.headers()
+            ))
+        await asyncio.sleep(0.05)
+        assert not competing.done()
+        if winner == "cancel":
+            await JobService(session).cancel(queued["id"], ctx.student)
+            assert await asyncio.wait_for(competing, timeout=5) == "lease_lost"
+        else:
+            submission = await session.get(Submission, queued["id"])
+            await SubmissionService(session, sandbox=Runner(), lease=lease)._finalize(
+                submission, VerdictResult("SAMPLE_PASS", 1, 1), triage(""),
+                JudgeSuite("samples", [], "race-digest"),
+            )
+            assert (await asyncio.wait_for(competing, timeout=5)).status_code == 409
+    async with ctx.sessions() as session:
+        job = await session.get(JudgeJob, lease.job_id)
+        submission = await session.get(Submission, queued["id"])
+        if winner == "cancel":
+            assert job.status == "cancelled" and submission.stage == "CANCELLED"
+            assert submission.verdict is None
+        else:
+            assert job.status == "succeeded" and submission.stage == "READY"
+            assert submission.verdict == "SAMPLE_PASS"
+
+
+async def test_cancelling_a_running_worker_stops_execution_without_automatic_retry(jobs_context, monkeypatch):
+    ctx = jobs_context
+    monkeypatch.setattr(settings, "judge_job_lease_seconds", 5)
+    entered = asyncio.Event()
+    interrupted = asyncio.Event()
+
+    class HangingRunner(Runner):
+        async def compile(self, code):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                interrupted.set()
+                raise
+
+    monkeypatch.setattr("app.services.submission_service.build_runner", HangingRunner)
+    queued = await enqueue(ctx)
+    worker = asyncio.create_task(JudgeWorker(ctx.sessions).run_once())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        response = await ctx.client.post(f"/api/v1/submissions/{queued['id']}/cancel", headers=ctx.headers())
+        assert response.status_code == 200
+        await asyncio.wait_for(interrupted.wait(), timeout=5)
+        assert await asyncio.wait_for(worker, timeout=5) is True
+        async with ctx.sessions() as session:
+            job = await session.get(JudgeJob, queued["job"]["id"])
+            assert job.status == "cancelled" and job.attempts == 1
+    finally:
+        if not worker.done():
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+
+async def test_inline_failure_messages_do_not_expose_internal_errors(jobs_context, monkeypatch):
+    ctx = jobs_context
+
+    class BrokenRunner(Runner):
+        async def compile(self, code):
+            raise SandboxError("private-internal-config-value")
+
+    monkeypatch.setattr("app.services.submission_service.build_runner", BrokenRunner)
+    response = await ctx.client.post("/api/v1/submissions", headers=ctx.headers(),
+                                     json={"problem_pid": ctx.problem.pid, "code": "int main(){}"})
+    assert response.status_code == 503
+    assert "private-internal-config-value" not in response.text
+    assert "暂时不可用" in response.text
+
+
+@pytest.mark.parametrize("field, bad", [("code", "\ud800"), ("code", "x\x00y"),
+                                       ("problem_pid", "\ud800"), ("problem_pid", "x\x00y")])
+async def test_unstorable_submission_text_returns_safe_422(jobs_context, field, bad):
+    import json
+
+    ctx = jobs_context
+    body = {"problem_pid": ctx.problem.pid, "code": "int main(){}", field: bad}
+    response = await ctx.client.post("/api/v1/submissions", headers={**ctx.headers(), "Content-Type": "application/json"},
+                                     content=json.dumps(body, ensure_ascii=True).encode())
+    assert response.status_code == 422
+    assert "Traceback" not in response.text
+    async with ctx.sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(Submission)) == 0
+        assert await session.scalar(select(func.count()).select_from(JudgeJob)) == 0
+
+
+async def test_valid_unicode_submission_keeps_original_code(jobs_context):
+    ctx = jobs_context
+    source = "\ufeff// 合法中文与 emoji 🙂\nint main(){ return 0; }  \n"
+    queued = await enqueue(ctx, source)
+    assert queued["code"] == source
+
+
+@pytest.mark.parametrize("reason", ["interrupted", "lease_expired"])
+async def test_terminal_failure_never_promises_an_automatic_retry(jobs_context, monkeypatch, reason):
+    ctx = jobs_context
+    monkeypatch.setattr(settings, "judge_job_max_attempts", 1)
+    queued = await enqueue(ctx)
+    lease = await claim(ctx)
+    async with ctx.sessions() as session:
+        assert await JobService(session).fail(lease, reason) is True
+    body = (await ctx.client.get(f"/api/v1/submissions/{queued['id']}", headers=ctx.headers())).json()
+    assert body["job"]["status"] == "failed"
+    assert "自动尝试上限" in body["job"]["last_error"]
+    assert "稍后重新执行" not in body["job"]["last_error"]
+    assert "恢复流程" not in body["job"]["last_error"]

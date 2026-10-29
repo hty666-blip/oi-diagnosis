@@ -97,7 +97,7 @@ class JudgeJob(Base):
 
     __tablename__ = "judge_job"
     __table_args__ = (
-        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name="ck_judge_job_status"),
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')", name="ck_judge_job_status"),
         CheckConstraint("attempts >= 0 AND max_attempts > 0", name="ck_judge_job_attempts"),
     )
 

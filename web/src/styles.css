@@ -438,6 +438,19 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .task-status h3 { font-size: 15px; margin: 0 0 8px; }
 .task-status p { line-height: 1.8; margin: 8px 0; overflow-wrap: anywhere; }
 .task-status .ghost { margin-top: 8px; }
+.judging-queue { margin-block: 18px; }
+.judging-queue .card-head { margin-bottom: 10px; }
+.judging-queue p { line-height: 1.8; overflow-wrap: anywhere; }
+.judging-counts { display: flex; flex-wrap: wrap; gap: 12px 30px; margin-block: 16px; }
+.judging-counts > div { display: flex; align-items: baseline; gap: 10px; }
+.judging-counts dt { color: var(--muted); font-size: 13px; }
+.judging-counts dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; }
+.judging-failures { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.judging-failures summary { cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.judging-failures ul { list-style: none; margin: 12px 0 0; padding: 0; }
+.judging-failures li { padding-block: 12px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.judging-failures strong { font-size: 13px; font-weight: 500; }
+.judging-failures p { margin-block: 6px; }
 @media (max-width: 1000px) { .review-layout { grid-template-columns: 1fr; gap: 12px; } }
 @media (max-width: 700px) {
   .review-form textarea, .review-form select { font-size: 16px; }

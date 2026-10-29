@@ -16,7 +16,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.ce_classify import classify_runtime
@@ -138,19 +138,22 @@ class SubmissionService:
         await self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"),
                                    {"key": int.from_bytes(lock_key, "big", signed=True)})
 
-        existing = (
-            await self.session.execute(
-                select(Submission).where(
-                    Submission.problem_id == problem.id,
-                    Submission.code_hash == digest,
-                    Submission.student_id == student_id,
-                    Submission.pipeline_ver == pipeline_ver,
-                    Submission.parent_submission_id == parent_submission_id,
-                    Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
-                )
-                .order_by(Submission.id.desc()).limit(1)
-            )
-        ).scalar_one_or_none()
+        cached = select(Submission).where(
+            Submission.problem_id == problem.id,
+            Submission.code_hash == digest,
+            Submission.student_id == student_id,
+            Submission.pipeline_ver == pipeline_ver,
+            Submission.parent_submission_id == parent_submission_id,
+            Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
+        )
+        if background:
+            cached = cached.where(or_(
+                Submission.stage == "READY",
+                select(JudgeJob.id).where(JudgeJob.submission_id == Submission.id).exists(),
+            ))
+        existing = (await self.session.execute(
+            cached.order_by(Submission.id.desc()).limit(1)
+        )).scalar_one_or_none()
         if existing is not None:
             await self.session.commit()
             return existing

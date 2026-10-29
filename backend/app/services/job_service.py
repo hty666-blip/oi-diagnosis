@@ -23,6 +23,18 @@ ERROR_MESSAGES = {
 }
 
 
+def failure_message(reason: str, *, retrying: bool, manual_retry_available: bool) -> str:
+    if retrying:
+        return ERROR_MESSAGES.get(reason, ERROR_MESSAGES["execution_failed"])
+    cause = {
+        "timeout": "本次判题超过任务时限",
+        "interrupted": "判题执行中断",
+        "lease_expired": "执行服务中断",
+    }.get(reason, "判题执行服务暂时不可用")
+    action = "可手动重试或联系教师检查服务。" if manual_retry_available else "请联系教师检查执行服务。"
+    return f"{cause}，已达到自动尝试上限，结果未完成验证；{action}"
+
+
 class LeaseLost(RuntimeError):
     """调用者已失去本次执行的写入权，不能更改提交或证据。"""
 
@@ -36,7 +48,7 @@ class JobLease:
     committed: asyncio.Event = field(default_factory=asyncio.Event, compare=False, repr=False)
 
 
-def job_out(job: JudgeJob | None) -> dict | None:
+def job_out(job: JudgeJob | None, *, can_cancel: bool = False) -> dict | None:
     if job is None:
         return None
     return {
@@ -44,6 +56,7 @@ def job_out(job: JudgeJob | None) -> dict | None:
         "attempts": job.attempts, "max_attempts": job.max_attempts,
         "manual_retries": job.manual_retries,
         "retryable": job.status == "failed" and job.manual_retries < settings.judge_job_max_manual_retries,
+        "cancelable": can_cancel and job.status in ("queued", "running"),
         "last_error": job.last_error,
         "available_at": job.available_at.isoformat(),
         "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
@@ -101,7 +114,8 @@ class JobService:
                 job.owner_token = None
                 job.lease_expires_at = None
                 job.finished_at = func.now()
-                job.last_error = ERROR_MESSAGES["lease_expired"]
+                job.last_error = failure_message("lease_expired", retrying=False,
+                                                 manual_retry_available=job.manual_retries < settings.judge_job_max_manual_retries)
                 submission.stage = "SANDBOX_ERROR"
                 submission.verdict = None
                 submission.tests_passed = None
@@ -152,7 +166,8 @@ class JobService:
         job.status = "queued" if pending else "failed"
         job.owner_token = None
         job.lease_expires_at = None
-        job.last_error = ERROR_MESSAGES.get(reason, ERROR_MESSAGES["execution_failed"])
+        job.last_error = failure_message(reason, retrying=pending,
+                                         manual_retry_available=job.manual_retries < settings.judge_job_max_manual_retries)
         job.available_at = func.clock_timestamp() + timedelta(seconds=min(2 ** job.attempts, 10) if pending else 0)
         job.finished_at = None if pending else func.now()
         await self.session.execute(update(Submission).where(Submission.id == lease.submission_id).values(
@@ -186,6 +201,43 @@ class JobService:
         job.available_at = func.clock_timestamp()
         job.finished_at = None
         submission.stage = "QUEUED"
+        submission.verdict = None
+        submission.tests_passed = None
+        await self.session.commit()
+        await self.session.refresh(job)
+        return job
+
+    async def cancel(self, submission_id: int, user: User) -> JudgeJob:
+        submission = await accessible_submission(self.session, user, submission_id)
+        if user.role != "admin" and submission.student_id != user.id:
+            raise HTTPException(status_code=403, detail="只能取消自己提交的判题任务")
+        job = (await self.session.execute(
+            select(JudgeJob).where(JudgeJob.submission_id == submission_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(status_code=409, detail="历史同步提交不支持取消，请以新后台任务重新提交")
+        # 与工作器保持 Job -> Submission 锁序，并在等待 Job 锁后重读提交。
+        submission = (await self.session.execute(
+            select(Submission).where(Submission.id == submission_id)
+            .execution_options(populate_existing=True)
+        )).scalar_one()
+        if job.status == "cancelled":
+            await self.session.commit()
+            return job
+        if job.status not in ("queued", "running") or submission.stage == "READY":
+            raise HTTPException(status_code=409, detail="任务已结束，请查看最新执行结果")
+        diagnosis = (await self.session.execute(
+            select(Diagnosis).where(Diagnosis.submission_id == submission_id)
+        )).scalar_one_or_none()
+        if diagnosis and diagnosis.reviewer_id is not None:
+            raise HTTPException(status_code=409, detail="已有教师审定，不能取消或覆盖原结果")
+        job.status = "cancelled"
+        job.owner_token = None
+        job.lease_expires_at = None
+        job.last_error = None
+        job.finished_at = func.clock_timestamp()
+        submission.stage = "CANCELLED"
         submission.verdict = None
         submission.tests_passed = None
         await self.session.commit()

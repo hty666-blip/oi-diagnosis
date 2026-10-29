@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.text_validation import StorageText
 from app.domain.models import Diagnosis, DiagnosisReview, Evidence, User
 from app.services.access import accessible_submission
 
@@ -20,7 +21,7 @@ EvidenceId = Annotated[int, Field(gt=0, strict=True)]
 class ReviewMechanism(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str = Field(pattern=r"^M(?:0[1-9]|1[01])$")
-    explain: str = Field(min_length=1, max_length=1000)
+    explain: StorageText = Field(min_length=1, max_length=1000)
     evidence_ids: list[EvidenceId] = Field(min_length=1, max_length=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
 
@@ -37,7 +38,7 @@ class ReviewCreate(BaseModel):
     submission_id: int = Field(gt=0)
     expected_revision: int = Field(ge=0)
     decision: Literal["confirm", "revise", "return"]
-    narrative: str = Field(min_length=6, max_length=4000)
+    narrative: StorageText = Field(min_length=6, max_length=4000)
     evidence_ids: list[EvidenceId] = Field(default_factory=list, max_length=100)
     mechanism: list[ReviewMechanism] | None = Field(default=None, max_length=11)
 

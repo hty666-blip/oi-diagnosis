@@ -183,10 +183,11 @@ export interface SubmissionResult {
 
 export interface JudgeJob {
   id: number;
-  status: "queued" | "running" | "succeeded" | "failed";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   attempts: number;
   max_attempts: number;
   retryable: boolean;
+  cancelable: boolean;
   last_error: string | null;
   available_at: string;
   lease_expires_at: string | null;
@@ -310,6 +311,19 @@ export interface Overview {
   route: Record<string, number>;
 }
 
+export interface JudgingQueue {
+  observed_at: string;
+  scope: { kind: "all" | "class_and_own" | "own"; class_name: string | null };
+  counts: { queued: number; running: number; failed: number; cancelled: number; succeeded: number };
+  oldest_queued_wait_seconds: number | null;
+  leases: { active: number; expired: number; missing: number };
+  recent_failures: {
+    submission_id: number; problem_pid: string; problem_title: string;
+    student_id: number; student_name: string; attempts: number;
+    last_error: string; finished_at: string | null;
+  }[];
+}
+
 export const api = {
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts"),
   login: (username: string, password: string) =>
@@ -327,6 +341,8 @@ export const api = {
     }, { signal, headers: { Prefer: "respond-async" } }),
   retrySubmission: (id: number, signal?: AbortSignal) =>
     post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),
+  cancelSubmission: (id: number, signal?: AbortSignal) =>
+    post<SubmissionResult>("/submissions/" + id + "/cancel", undefined, { signal }),
   getSubmission: (id: number, signal?: AbortSignal) => get<SubmissionResult>("/submissions/" + id, { signal }),
   evidence: (id: number) => get<EvidenceItem[]>("/submissions/" + id + "/evidence"),
   lineage: (id: number) => get<LineageItem[]>("/submissions/" + id + "/lineage"),
@@ -346,6 +362,7 @@ export const api = {
   mySubmissions: () => get<MySubmission[]>("/me/submissions"),
   coachQueue: () => get<CoachItem[]>("/coach/queue"),
   coachOverview: () => get<Overview>("/coach/overview"),
+  coachJudging: (signal?: AbortSignal) => get<JudgingQueue>("/coach/judging", { signal }),
   downloadCard: async (id: number) => {
     const response = await request("/submissions/" + id + "/card");
     const url = URL.createObjectURL(await response.blob());

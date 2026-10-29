@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sourceModule } from "./load-source.mjs";
 
-const { submissionPhase, taskLabel, pendingKey, parsePendingId, pollDelay, pollSubmission } = await sourceModule("../src/judge-task.ts");
+const { submissionPhase, taskLabel, pendingKey, parsePendingId, pollDelay, pollSubmission, cancelAndRefresh } = await sourceModule("../src/judge-task.ts");
 const record = (stage, verdict = null, job) => ({ id: 42, stage, verdict, tests_passed: null, job });
 const ready = record("READY", "WA", { status: "succeeded" });
 
@@ -108,4 +108,57 @@ test("无响应的查询也有单次上限，暂停后保留服务器任务供�
   assert.equal(signals.length, 3);
   assert.ok(signals.every((signal) => signal.aborted));
   assert.match(result.error.message, /超时/);
+});
+
+test("刷新恢复已取消记录后立即停止查询，不把残留判定当作通过", async () => {
+  const cancelled = { ...record("CANCELLED", "AC", { status: "cancelled" }), code: "saved code", parent_submission_id: 21 };
+  let calls = 0;
+  const result = await pollSubmission(options({ fetchRecord: async () => { calls++; return cancelled; } }));
+  assert.equal(calls, 1);
+  assert.equal(result.reason, "task_cancelled");
+  assert.equal(submissionPhase(cancelled), "cancelled");
+  assert.equal(taskLabel(cancelled), "已取消");
+  assert.equal(result.record.code, "saved code");
+  assert.equal(result.record.parent_submission_id, 21);
+});
+
+test("取消后必须读取最新记录；完成竞争和409不能被报告为取消成功", async () => {
+  const calls = [];
+  const controller = new AbortController();
+  const result = await cancelAndRefresh(42, {
+    signal: controller.signal,
+    cancel: async (id, signal) => { calls.push(["cancel", id, signal]); throw Object.assign(new Error("ended"), { status: 409 }); },
+    fetchRecord: async (id, signal) => { calls.push(["get", id, signal]); return ready; },
+  });
+  assert.deepEqual(calls, [["cancel", 42, controller.signal], ["get", 42, controller.signal]]);
+  assert.equal(result.confirmed, false);
+  assert.equal(submissionPhase(result.record), "complete");
+  assert.equal(result.record.verdict, "WA");
+});
+
+test("取消响应不确定时以服务器事实为准；核对失败时不伪造已取消", async () => {
+  const cancelled = record("CANCELLED", null, { status: "cancelled" });
+  const signal = new AbortController().signal;
+  const recovered = await cancelAndRefresh(42, { signal,
+    cancel: async () => { throw new Error("connection lost"); }, fetchRecord: async () => cancelled });
+  assert.equal(recovered.confirmed, true);
+  assert.equal(recovered.record, cancelled);
+  await assert.rejects(cancelAndRefresh(42, { signal, cancel: async () => cancelled,
+    fetchRecord: async () => { throw new Error("cannot confirm"); } }), /cannot confirm/);
+  const stillRunning = await cancelAndRefresh(42, { signal, cancel: async () => cancelled,
+    fetchRecord: async () => record("RUNNING", null, { status: "running" }) });
+  assert.equal(stillRunning.confirmed, false);
+});
+
+test("取消核对遇到页面切换时不读取新页面也不返回旧结果", async () => {
+  const controller = new AbortController();
+  let reads = 0;
+  await assert.rejects(cancelAndRefresh(42, { signal: controller.signal,
+    cancel: async () => { controller.abort(); throw new DOMException("stopped", "AbortError"); },
+    fetchRecord: async () => { reads++; return ready; } }), (error) => error.name === "AbortError");
+  assert.equal(reads, 0);
+  const nextController = new AbortController();
+  await assert.rejects(cancelAndRefresh(42, { signal: nextController.signal,
+    cancel: async () => record("CANCELLED"),
+    fetchRecord: async () => { nextController.abort(); return ready; } }), (error) => error.name === "AbortError");
 });

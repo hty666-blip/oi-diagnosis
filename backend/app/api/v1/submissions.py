@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
 from app.capabilities.sandbox import SandboxError
-from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission, User
 from app.infra.db import get_session
 from app.orchestrator.graph import run_diagnosis
 from app.services.access import accessible_submission
@@ -21,13 +22,25 @@ from app.services.submission_service import SubmissionService
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+logger = logging.getLogger(__name__)
 
 
 class SubmissionCreate(BaseModel):
-    problem_pid: str = Field(..., examples=["P1001"])
+    problem_pid: str = Field(..., min_length=1, max_length=32, examples=["P1001"])
     code: str = Field(..., min_length=1, max_length=100_000)
     student_id: int | None = None
     parent_submission_id: int | None = Field(default=None, gt=0)
+
+    @field_validator("code", "problem_pid", mode="before")
+    @classmethod
+    def reject_unstorable_text(cls, value):
+        if not isinstance(value, str) or "\x00" in value:
+            raise HTTPException(status_code=422, detail="题号和代码必须是有效文本，不能包含空字符")
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise HTTPException(status_code=422, detail="题号或代码包含无法保存的字符") from exc
+        return value
 
     @field_validator("code")
     @classmethod
@@ -55,6 +68,7 @@ class SubmissionOut(BaseModel):
 def _to_out(
     sub: Submission, diag: Diagnosis | None = None, problem: Problem | None = None,
     job: JudgeJob | None = None,
+    user: User | None = None,
 ) -> SubmissionOut:
     return SubmissionOut(
         id=sub.id,
@@ -67,7 +81,7 @@ def _to_out(
         time_ms=sub.time_ms,
         memory_kb=sub.memory_kb,
         tests_passed=sub.tests_passed,
-        job=job_out(job),
+        job=job_out(job, can_cancel=user is not None and (user.role == "admin" or user.id == sub.student_id)),
         diagnosis=(
             {
                 "mechanism": diag.mechanism,
@@ -104,7 +118,8 @@ async def create_submission(
         sub = await svc.create(payload.problem_pid, payload.code, user.id, payload.parent_submission_id,
                                background=background)
     except SandboxError as e:
-        raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
+        logger.warning("提交尚未进入判题：%s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="题目或执行服务暂时不可用，请稍后重试") from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -113,7 +128,7 @@ async def create_submission(
             await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
         ).scalar_one_or_none()
         job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-        return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
+        return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
 
     if background:
         job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
@@ -123,7 +138,7 @@ async def create_submission(
         response.status_code = 202
         response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
         response.headers["Retry-After"] = "1"
-        return _to_out(sub, None, await session.get(Problem, sub.problem_id), job)
+        return _to_out(sub, None, await session.get(Problem, sub.problem_id), job, user)
 
     if not svc.was_created:
         raise HTTPException(status_code=409, detail=f"提交 #{sub.id} 正在判题，请稍后查看结果",
@@ -132,13 +147,14 @@ async def create_submission(
     try:
         await svc.run(sub)
     except SandboxError as e:
-        raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
+        logger.warning("判题执行暂时失败：%s", type(e).__name__)
+        raise HTTPException(status_code=503, detail="判题服务暂时不可用，请稍后重试") from e
 
     diag = (
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
     job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
 
 
 @router.post("/{submission_id}/retry", response_model=SubmissionOut, status_code=202)
@@ -149,7 +165,17 @@ async def retry_submission(
     sub = await accessible_submission(session, user, submission_id)
     response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
     response.headers["Retry-After"] = "1"
-    return _to_out(sub, None, await session.get(Problem, sub.problem_id), job)
+    return _to_out(sub, None, await session.get(Problem, sub.problem_id), job, user)
+
+
+@router.post("/{submission_id}/cancel", response_model=SubmissionOut)
+async def cancel_submission(
+    submission_id: int, session: SessionDep, user: CurrentUser,
+) -> SubmissionOut:
+    job = await JobService(session).cancel(submission_id, user)
+    sub = await accessible_submission(session, user, submission_id)
+    diag = (await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))).scalar_one_or_none()
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
 
 
 @router.get("/{submission_id}", response_model=SubmissionOut)
@@ -163,7 +189,7 @@ async def get_submission(
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
     job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
 
 
 @router.get("/{submission_id}/evidence")

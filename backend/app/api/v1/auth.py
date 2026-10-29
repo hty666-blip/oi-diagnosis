@@ -15,6 +15,7 @@ from app.core.security import (
     create_access_token,
     verify_password,
 )
+from app.core.text_validation import StorageText
 from app.domain.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 class LoginIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    username: str = Field(min_length=1, max_length=64)
+    username: StorageText = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)
 
     @field_validator("username", "password")

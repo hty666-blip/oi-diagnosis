@@ -1,8 +1,9 @@
 import type { SubmissionResult } from "./api";
 
-export type SubmissionPhase = "pending" | "complete" | "failed";
+export type SubmissionPhase = "pending" | "complete" | "failed" | "cancelled";
 
 export function submissionPhase(record: Pick<SubmissionResult, "stage" | "verdict" | "job">): SubmissionPhase {
+  if (record.job?.status === "cancelled" || record.stage === "CANCELLED") return "cancelled";
   if (record.job?.status === "failed" || ["SANDBOX_ERROR", "INTERRUPTED", "FAILED"].includes(record.stage)) return "failed";
   if (record.job?.status === "queued" || record.job?.status === "running") return "pending";
   if (record.stage === "READY" && record.verdict !== null) return "complete";
@@ -10,6 +11,7 @@ export function submissionPhase(record: Pick<SubmissionResult, "stage" | "verdic
 }
 
 export function taskLabel(record: Pick<SubmissionResult, "stage" | "job">): string {
+  if (record.job?.status === "cancelled" || record.stage === "CANCELLED") return "已取消";
   if (record.job?.status === "failed") return "判题未完成";
   if (record.stage === "COMPILING") return "正在编译代码";
   if (record.stage === "RUNNING") return "正在执行测试";
@@ -68,7 +70,24 @@ interface PollOptions {
   requestTimeoutMs?: number;
 }
 
-export interface PollResult { reason: "complete" | "failed" | "paused" | "cancelled"; record?: SubmissionResult; error?: unknown }
+export interface PollResult { reason: "complete" | "failed" | "paused" | "cancelled" | "task_cancelled"; record?: SubmissionResult; error?: unknown }
+
+export async function cancelAndRefresh(id: number, options: {
+  signal: AbortSignal;
+  cancel: (id: number, signal: AbortSignal) => Promise<SubmissionResult>;
+  fetchRecord: (id: number, signal: AbortSignal) => Promise<SubmissionResult>;
+}): Promise<{ record: SubmissionResult; confirmed: boolean; error?: unknown }> {
+  let cancellationError: unknown;
+  try { await options.cancel(id, options.signal); }
+  catch (error) {
+    if (options.signal.aborted) throw error;
+    cancellationError = error;
+  }
+  // 取消和完成可能竞争，必须重新读取服务器结果，不能只凭点击反馈宣布取消。
+  const record = await options.fetchRecord(id, options.signal);
+  if (options.signal.aborted) throw aborted();
+  return { record, confirmed: submissionPhase(record) === "cancelled", error: cancellationError };
+}
 
 async function boundedFetch(options: PollOptions): Promise<SubmissionResult> {
   const controller = new AbortController();
@@ -115,7 +134,7 @@ export async function pollSubmission(options: PollOptions): Promise<PollResult> 
       options.onUpdate(record);
       failures = 0;
       const phase = submissionPhase(record);
-      if (phase !== "pending") return { reason: phase, record };
+      if (phase !== "pending") return { reason: phase === "cancelled" ? "task_cancelled" : phase, record };
     } catch (error) {
       if (!isCurrent()) return { reason: "cancelled" };
       const status = (error as { status?: number } | null)?.status;

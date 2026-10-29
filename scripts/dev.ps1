@@ -78,6 +78,8 @@ try {
         & $PythonPath -m pip install -e '.[dev]'
         Assert-NativeSuccess '后端依赖安装'
     }
+    & $PythonPath -c "import sys; from app.core.config import settings; sys.exit(0 if settings.app_env.strip().lower() == 'dev' else 2)"
+    Assert-NativeSuccess '开发环境检查：该脚本仅允许 APP_ENV=dev'
     & $PythonPath -m alembic upgrade head
     Assert-NativeSuccess '数据库迁移'
     Write-Host "启动 API: http://127.0.0.1:$Port/docs" -ForegroundColor Green
