@@ -4,18 +4,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.input_types import ObjectId
 from app.core.text_validation import StorageText
 from app.domain.models import Diagnosis, DiagnosisReview, Evidence, User
 from app.services.access import accessible_submission
 
-EvidenceId = Annotated[int, Field(gt=0, strict=True)]
+EvidenceId = ObjectId
 
 
 class ReviewMechanism(BaseModel):
@@ -35,7 +36,7 @@ class ReviewMechanism(BaseModel):
 
 class ReviewCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    submission_id: int = Field(gt=0)
+    submission_id: ObjectId
     expected_revision: int = Field(ge=0)
     decision: Literal["confirm", "revise", "return"]
     narrative: StorageText = Field(min_length=6, max_length=4000)

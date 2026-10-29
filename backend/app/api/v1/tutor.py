@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
+from app.api.input_types import ObjectId, ObjectPathId
 from app.core.text_validation import StorageText
 from app.infra.db import get_session
 from app.services.tutor_service import TutorService
@@ -18,7 +19,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 class SessionCreate(BaseModel):
-    submission_id: int
+    submission_id: ObjectId
 
 
 class MessageIn(BaseModel):
@@ -26,7 +27,7 @@ class MessageIn(BaseModel):
 
 
 class VerificationIn(BaseModel):
-    submission_id: int = Field(..., gt=0)
+    submission_id: ObjectId
 
 
 @router.post("")
@@ -40,7 +41,7 @@ async def create_session(payload: SessionCreate, session: SessionDep, user: Curr
 
 
 @router.post("/{session_id}/messages")
-async def send_message(session_id: int, payload: MessageIn, session: SessionDep,
+async def send_message(session_id: ObjectPathId, payload: MessageIn, session: SessionDep,
                        user: CurrentUser) -> dict:
     try:
         return await TutorService(session, user).reply(session_id, payload.content)
@@ -49,7 +50,7 @@ async def send_message(session_id: int, payload: MessageIn, session: SessionDep,
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: int, session: SessionDep, user: CurrentUser) -> dict:
+async def get_session(session_id: ObjectPathId, session: SessionDep, user: CurrentUser) -> dict:
     try:
         return await TutorService(session, user).get(session_id)
     except ValueError as e:
@@ -58,6 +59,6 @@ async def get_session(session_id: int, session: SessionDep, user: CurrentUser) -
 
 @router.post("/{session_id}/verify")
 async def verify_session(
-    session_id: int, payload: VerificationIn, session: SessionDep, user: CurrentUser
+    session_id: ObjectPathId, payload: VerificationIn, session: SessionDep, user: CurrentUser
 ) -> dict:
     return await TutorService(session, user).verify(session_id, payload.submission_id)

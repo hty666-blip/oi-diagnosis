@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
+from app.api.input_types import ObjectId, ObjectPathId
 from app.capabilities.sandbox import SandboxError
 from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission, User
 from app.infra.db import get_session
@@ -28,8 +29,8 @@ logger = logging.getLogger(__name__)
 class SubmissionCreate(BaseModel):
     problem_pid: str = Field(..., min_length=1, max_length=32, examples=["P1001"])
     code: str = Field(..., min_length=1, max_length=100_000)
-    student_id: int | None = None
-    parent_submission_id: int | None = Field(default=None, gt=0)
+    student_id: ObjectId | None = None
+    parent_submission_id: ObjectId | None = None
 
     @field_validator("code", "problem_pid", mode="before")
     @classmethod
@@ -159,7 +160,7 @@ async def create_submission(
 
 @router.post("/{submission_id}/retry", response_model=SubmissionOut, status_code=202)
 async def retry_submission(
-    submission_id: int, session: SessionDep, user: CurrentUser, response: Response,
+    submission_id: ObjectPathId, session: SessionDep, user: CurrentUser, response: Response,
 ) -> SubmissionOut:
     job = await JobService(session).retry(submission_id, user)
     sub = await accessible_submission(session, user, submission_id)
@@ -170,7 +171,7 @@ async def retry_submission(
 
 @router.post("/{submission_id}/cancel", response_model=SubmissionOut)
 async def cancel_submission(
-    submission_id: int, session: SessionDep, user: CurrentUser,
+    submission_id: ObjectPathId, session: SessionDep, user: CurrentUser,
 ) -> SubmissionOut:
     job = await JobService(session).cancel(submission_id, user)
     sub = await accessible_submission(session, user, submission_id)
@@ -180,7 +181,7 @@ async def cancel_submission(
 
 @router.get("/{submission_id}", response_model=SubmissionOut)
 async def get_submission(
-    submission_id: int,
+    submission_id: ObjectPathId,
     session: SessionDep,
     user: CurrentUser,
 ) -> SubmissionOut:
@@ -194,7 +195,7 @@ async def get_submission(
 
 @router.get("/{submission_id}/evidence")
 async def get_evidence(
-    submission_id: int,
+    submission_id: ObjectPathId,
     session: SessionDep,
     user: CurrentUser,
 ) -> list[dict]:
@@ -212,7 +213,7 @@ async def get_evidence(
 
 @router.post("/{submission_id}/diagnose")
 async def diagnose_submission(
-    submission_id: int,
+    submission_id: ObjectPathId,
     session: SessionDep,
     user: CurrentUser,
 ) -> dict:
@@ -286,7 +287,7 @@ async def diagnose_submission(
 
 
 @router.get("/{submission_id}/lineage")
-async def get_lineage(submission_id: int, session: SessionDep, user: CurrentUser) -> list[dict]:
+async def get_lineage(submission_id: ObjectPathId, session: SessionDep, user: CurrentUser) -> list[dict]:
     """返回当前提交的祖先链，不混入同题的其他练习分支。"""
     current = await accessible_submission(session, user, submission_id)
     chain = []

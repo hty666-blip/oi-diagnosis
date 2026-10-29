@@ -7,7 +7,7 @@ import SubmissionLineage from "./components/SubmissionLineage";
 import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import JudgingQueuePanel from "./components/JudgingQueuePanel";
 import {
-  api, ApiError, cachedUser, clearSession, messageOf, readLocal, removeLocal, writeLocal,
+  api, ApiError, cachedUser, checkSessionStorage, clearSession, messageOf, readLocal, removeLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
   type MySubmission, type Overview, type Problem, type ProblemDetail,
   type SessionReply, type SubmissionResult,
@@ -21,20 +21,31 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(cachedUser);
   const [view, setView] = useState<View>(() => cachedUser()?.role === "student" ? "submit" : "coach");
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
-  const [expired, setExpired] = useState(false);
+  const [sessionNotice, setSessionNotice] = useState("");
 
   useEffect(() => {
-    const onExpired = () => { setExpired(true); setUser(null); };
+    const onExpired = () => { setSessionNotice("登录已过期，重新登录后可继续本机草稿。"); setUser(null); };
+    const onChanged = () => { setSessionNotice("登录账号已在其他页面变化，请重新登录；本机草稿已保留。"); setUser(null); setRestore(null); };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === "oi_token" || event.key === "oi_user") checkSessionStorage();
+    };
     window.addEventListener("oi-session-expired", onExpired);
-    return () => window.removeEventListener("oi-session-expired", onExpired);
+    window.addEventListener("oi-session-changed", onChanged);
+    window.addEventListener("storage", onStorage);
+    checkSessionStorage();
+    return () => {
+      window.removeEventListener("oi-session-expired", onExpired);
+      window.removeEventListener("oi-session-changed", onChanged);
+      window.removeEventListener("storage", onStorage);
+    };
   }, []);
 
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
-    setExpired(false);
+    setSessionNotice("");
     setRestore(null);
     setView(next.role === "student" ? "submit" : "coach");
-  }} />{expired && <div className="session-notice" role="status">登录已过期，重新登录后可继续本机草稿。</div>}</>;
+  }} />{sessionNotice && <div className="session-notice" role="status">{sessionNotice}</div>}</>;
 
   const nav: { key: View; label: string }[] = user.role === "student"
     ? [{ key: "submit", label: "练习与诊断" }, { key: "my", label: "提交记录" }]

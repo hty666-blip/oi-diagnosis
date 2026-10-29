@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -157,7 +157,11 @@ async def coach_overview(session: SessionDep, user: TeacherUser) -> dict:
     }
 
 @router.get("/problems/{pid}")
-async def get_problem(pid: str, session: SessionDep, user: CurrentUser) -> dict:
+async def get_problem(
+    pid: Annotated[StorageText, Path(min_length=1, max_length=32)],
+    session: SessionDep,
+    user: CurrentUser,
+) -> dict:
     """题目详情：题面 Markdown + 样例 + 来源。"""
     row = (
         await session.execute(select(Problem).where(Problem.pid == pid))

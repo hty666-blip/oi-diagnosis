@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { sourceModule } from "./load-source.mjs";
 
-const { api, ApiError } = await sourceModule("../src/api.ts");
+const { api, ApiError, setSession, clearSession, cachedUser, checkSessionStorage } = await sourceModule("../src/api.ts");
+const firstUser = { id: 1, username: "student01", display_name: "学生一", role: "student", class_name: "测试班" };
+const secondUser = { ...firstUser, id: 2, username: "student02", display_name: "学生二" };
 let storage;
 let events;
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
-  storage = new Map([["oi_token", "local-test-token"], ["oi_user", "{}"], ["oi-draft:1:PTV-0001", "unsaved code"]]);
+  storage = new Map([["oi-draft:1:PTV-0001", "unsaved code"]]);
   events = [];
   globalThis.localStorage = {
     getItem: (key) => storage.get(key) ?? null,
@@ -16,6 +18,7 @@ beforeEach(() => {
     removeItem: (key) => storage.delete(key),
   };
   globalThis.window = { dispatchEvent: (event) => { events.push(event.type); return true; } };
+  setSession("local-test-token", firstUser);
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -100,7 +103,7 @@ test("账号切换后的迟到401不清除新账号凭证，也不让旧任务�
   complete(json({ detail: "expired" }, 401));
   await assert.rejects(request, (error) => error.name === "AbortError");
   assert.equal(storage.get("oi_token"), "new-account-token");
-  assert.deepEqual(events, []);
+  assert.deepEqual(events, ["oi-session-changed"]);
 });
 
 test("取消原提交不携带新代码，队列摘要使用授权查询并支持停止请求", async () => {
@@ -122,4 +125,89 @@ test("取消原提交不携带新代码，队列摘要使用授权查询并支�
     assert.equal(options.signal, signal);
     assert.equal(options.headers.Authorization, "Bearer local-test-token");
   }
+});
+
+test("另一标签切号尚未通知时，旧页提交在联网前被拒绝，不串用新token", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return json({ id: 43 }); };
+  storage.set("oi_token", "second-account-token");
+  storage.set("oi_user", JSON.stringify(secondUser));
+  await assert.rejects(api.submitAsync("PTV-0001", "old-account-draft"), (error) => error.name === "AbortError");
+  assert.equal(calls, 0);
+  assert.equal(cachedUser(), null);
+  assert.equal(storage.get("oi_token"), "second-account-token");
+  assert.equal(storage.get("oi-draft:1:PTV-0001"), "unsaved code");
+  clearSession();
+  assert.equal(storage.get("oi_token"), "second-account-token");
+  assert.equal(storage.get("oi_user"), JSON.stringify(secondUser));
+  assert.deepEqual(events, ["oi-session-changed"]);
+});
+
+test("storage失效不会自动激活新账号，公共登录仍可用，明确登录后才恢复受保护请求", async () => {
+  storage.set("oi_token", "second-account-token");
+  storage.set("oi_user", JSON.stringify(secondUser));
+  checkSessionStorage();
+  checkSessionStorage();
+  assert.equal(cachedUser(), null);
+  assert.deepEqual(events, ["oi-session-changed"]);
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return json(url.endsWith("/login") ? { access_token: "explicit-token", user: secondUser } : []);
+  };
+  await api.demoAccounts();
+  const login = await api.login("student02", "password");
+  assert.equal(cachedUser(), null);
+  await assert.rejects(api.mySubmissions(), (error) => error.name === "AbortError");
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(({ options }) => options.headers.Authorization === undefined));
+  setSession(login.access_token, login.user);
+  await api.mySubmissions();
+  assert.equal(cachedUser().id, 2);
+  assert.equal(requests[2].options.headers.Authorization, "Bearer explicit-token");
+});
+
+test("只变更共享身份资料也会失效；旧页直接退出不会清掉新会话", async () => {
+  storage.set("oi_user", JSON.stringify(secondUser));
+  checkSessionStorage();
+  assert.equal(cachedUser(), null);
+  assert.deepEqual(events, ["oi-session-changed"]);
+  setSession("first-token", firstUser);
+  storage.set("oi_token", "second-token");
+  storage.set("oi_user", JSON.stringify(secondUser));
+  clearSession();
+  assert.equal(storage.get("oi_token"), "second-token");
+  assert.equal(cachedUser(), null);
+});
+
+test("响应正文延迟到达时再次核对身份，不向重新登录后的页面交付旧数据", async () => {
+  let complete;
+  globalThis.fetch = async () => ({ ok: true, status: 200,
+    json: () => new Promise((resolve) => { complete = resolve; }) });
+  const pending = api.getSubmission(42);
+  await new Promise((resolve) => setImmediate(resolve));
+  setSession("second-account-token", secondUser);
+  complete({ id: 42, code: "old-account-code" });
+  await assert.rejects(pending, (error) => error.name === "AbortError");
+  assert.equal(cachedUser().id, 2);
+  assert.equal(storage.get("oi_token"), "second-account-token");
+  assert.deepEqual(events, []);
+});
+
+test("公共演示接口失败不能退出当前账号，正文读取中止后也不交付结果", async () => {
+  globalThis.fetch = async () => json({ detail: "unavailable" }, 401);
+  await assert.rejects(api.demoAccounts(), (error) => error.status === 401);
+  assert.equal(cachedUser().id, 1);
+  assert.equal(storage.get("oi_token"), "local-test-token");
+  assert.deepEqual(events, []);
+  let complete;
+  const controller = new AbortController();
+  globalThis.fetch = async () => ({ ok: true, status: 200,
+    json: () => new Promise((resolve) => { complete = resolve; }) });
+  const pending = api.getSubmission(42, controller.signal);
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  complete({ id: 42 });
+  await assert.rejects(pending, (error) => error.name === "AbortError");
+  assert.equal(cachedUser().id, 1);
 });

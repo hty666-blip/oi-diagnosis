@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, SessionDep, TeacherUser
+from app.api.input_types import ObjectPathId
 from app.services.review_service import ReviewCreate, ReviewService
 
 router = APIRouter(tags=["reviews"])
@@ -16,5 +17,5 @@ async def create_review(payload: ReviewCreate, session: SessionDep, user: Teache
 
 
 @router.get("/submissions/{submission_id}/reviews")
-async def review_history(submission_id: int, session: SessionDep, user: CurrentUser) -> dict:
+async def review_history(submission_id: ObjectPathId, session: SessionDep, user: CurrentUser) -> dict:
     return await ReviewService(session, user).history(submission_id)
