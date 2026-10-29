@@ -27,10 +27,11 @@ from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
 from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.services.evidence_text import has_escaped_input, prepare_evidence_payload
 from app.services.job_service import JobLease, require_lease
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v4"
+PIPELINE_VER = "v5"
 logger = logging.getLogger(__name__)
 
 
@@ -203,13 +204,32 @@ class SubmissionService:
             ))
             await self.session.commit()
             raise
+        except Exception as exc:
+            if self.lease is not None:
+                # 工作器负责事务恢复和重试，包含 LeaseLost 在内的异常必须原样传播。
+                raise
+            try:
+                # 证据写入失败可能已使事务失效，不能在原事务里修改提交状态。
+                await self.session.rollback()
+                await self.session.execute(update(Submission).where(
+                    Submission.id == submission_id,
+                    Submission.stage != "READY",
+                ).values(stage="SANDBOX_ERROR", verdict=None, tests_passed=None))
+                await self.session.commit()
+            except Exception:
+                logger.warning("无法保存判题系统错误状态", exc_info=False)
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    logger.warning("无法回滚判题事务", exc_info=False)
+            raise SandboxError("判题执行未完成") from exc
         finally:
             artifact_id = getattr(self, "_artifact_id", None)
             cleanup = getattr(self.sandbox, "cleanup", None)
             if artifact_id and cleanup:
                 try:
                     await cleanup(artifact_id)
-                except SandboxError:
+                except Exception:
                     logger.warning("判题结束后的产物清理失败", exc_info=False)
             close = getattr(self.sandbox, "close", None)
             if close:
@@ -352,11 +372,12 @@ class SubmissionService:
     async def _add_evidence(self, submission_id: int, kind: str, payload: dict,
                             *, reproducible: bool = True) -> Evidence:
         import json
+        payload = prepare_evidence_payload(payload)
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()[:32]
         ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest,
-                      reproducible=reproducible)
+                      reproducible=reproducible and not has_escaped_input(payload))
         self.session.add(ev)
         await self._commit()
         return ev

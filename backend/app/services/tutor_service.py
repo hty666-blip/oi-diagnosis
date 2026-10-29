@@ -19,6 +19,7 @@ from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
+from app.services.evidence_text import has_escaped_input
 from app.services.judgement import effective_verdict
 
 
@@ -242,7 +243,7 @@ class TutorService:
                 ))
             )
             if failed:
-                if not payload.get("input_truncated"):
+                if not payload.get("input_truncated") and not has_escaped_input(payload):
                     view.counterexample = str(payload.get("stdin", payload.get("input", "")))
                 view.counterexample_minimized = False
                 break
