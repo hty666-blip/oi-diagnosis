@@ -1,0 +1,86 @@
+name: oi-diag
+
+# 开发环境：pg(+pgvector) / redis / minio / go-judge
+# 生产部署另见 deploy/compose.prod.yml（待 M6 补）
+
+services:
+  postgres:
+    # pgvector 已拉通（M5 的 RAG 需要向量列），直接用带扩展的官方镜像
+    image: pgvector/pgvector:pg16
+    container_name: oi-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oiuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oipass}
+      POSTGRES_DB: ${POSTGRES_DB:-oidiag}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oiuser} -d ${POSTGRES_DB:-oidiag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: oi-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # MinIO 体积大、且当前镜像代理对它返回 403；开发期用本地文件系统代替，
+  # 需要时再显式启用：docker compose --profile full up -d
+  minio:
+    image: minio/minio:latest
+    container_name: oi-minio
+    profiles: ["full"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # 沙箱：必须 privileged（官方要求），且只挂在独立网络，不与业务容器互通
+  judge:
+    build:
+      context: .
+      dockerfile: judge.Dockerfile
+    image: oi-judge:dev
+    container_name: oi-judge
+    privileged: true
+    shm_size: "256m"
+    ports:
+      - "${JUDGE_PORT:-5050}:5050"
+    environment:
+      # 只允许本机调用；生产务必改掉，并配合 -auth-token
+      GOJUDGE_DEBUG: "0"
+    networks:
+      - judge-net
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+
+networks:
+  judge-net:
+    driver: bridge
+    # 沙箱网络独立，业务容器默认不进这个网络

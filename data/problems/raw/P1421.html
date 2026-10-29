@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="no-js">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="csrf-token" content="1793323438:zhGW0mwpP+1MFacSEmEPPwgyGk1y1bgJXa7cBVSJ5b0=">
+    <meta name="renderer" content="webkit">
+    <script>
+        window.__feInitLocalTime = new Date().getTime() / 1000;
+        window.__feConfigVersion = '74d532c6c7861bfe'; window.__feConfigRequest = '\/_lfe\/config'; window.__fePhoneHomeCall = 'https\u003A\/\/moshimoshi\u003Aagltb3noatpwohhuenb5ag1tc2jsnnl3\u0040errtrack.luogu.com.cn\/lotlp1';        window.__luoguTagVersion = 'zh\u002DCN\/2026102909'; window.__luoguTagRequest = '\/_lfe\/tags';
+    </script>
+    <title>P1421 小玉买文具 - 洛谷</title>
+    <link rel="icon" href="https://fecdn.luogu.com.cn/favicon.ico">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-eval' 'unsafe-inline' luogu.com *.luogu.com luogu.com.cn *.luogu.com.cn luogu.org *.luogu.org wss: blob: luoguprivate.oss-cn-hangzhou.aliyuncs.com luogu.oss-cn-hangzhou.aliyuncs.com https://challenges.cloudflare.com https://*.dun.163yun.com https://*.dun.163.com https://*.nosdn.126.net https://*.nosdn.127.net https://nos.netease.com https://cstaticdun.126.net https://cstaticdun1.126.net https://cstaticdun-v6.126.net https://acstatic-dun.126.net; img-src * data:; font-src * data:; worker-src data: blob:; frame-src https://fecdn.luogu.com.cn https://player.bilibili.com https://www.bilibili.com https://challenges.cloudflare.com">
+        <script id="lentille-context" type="application/json">{"instance":"main","template":"problem.show","status":200,"locale":"zh-CN","data":{"problem":{"pid":"P1421","type":"P","name":"\u5c0f\u7389\u4e70\u6587\u5177","difficulty":1,"fullScore":100,"tags":[1],"totalSubmit":863496,"totalAccepted":522870,"flag":5,"provider":{"uid":29,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/29.png","name":"yeszy","slogan":"","badge":null,"isAdmin":false,"isBanned":false,"color":"Green","ccfLevel":0,"xcpcLevel":0,"background":""},"contenu":{"name":"\u5c0f\u7389\u4e70\u6587\u5177","background":"","description":"\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u4e00\u4e2a\u4efb\u52a1\uff0c\u5230\u6587\u5177\u5e97\u91cc\u4e70\u5c3d\u91cf\u591a\u7684\u7b7e\u5b57\u7b14\u3002\u5df2\u77e5\u4e00\u53ea\u7b7e\u5b57\u7b14\u7684\u4ef7\u683c\u662f $1$ \u5143 $9$ \u89d2\uff0c\u800c\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u7684\u94b1\u662f $a$ \u5143 $b$ \u89d2\uff0c\u5c0f\u7389\u60f3\u77e5\u9053\uff0c\u5979\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u5462\u3002\n","formatI":"\u8f93\u5165\u53ea\u6709\u4e00\u884c\u4e24\u4e2a\u6574\u6570\uff0c\u5206\u522b\u8868\u793a $a$ \u548c $b$\u3002","formatO":"\u8f93\u51fa\u4e00\u884c\u4e00\u4e2a\u6574\u6570\uff0c\u8868\u793a\u5c0f\u7389\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u3002\n","hint":"#### \u6570\u636e\u89c4\u6a21\u4e0e\u7ea6\u5b9a\n\n\u5bf9\u4e8e\u5168\u90e8\u7684\u6d4b\u8bd5\u70b9\uff0c\u4fdd\u8bc1 $0 \\leq a \\leq 10^4$\uff0c$0 \\leq b \\leq 9$\u3002","locale":"zh-CN"},"content":{"name":"\u5c0f\u7389\u4e70\u6587\u5177","background":"","description":"\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u4e00\u4e2a\u4efb\u52a1\uff0c\u5230\u6587\u5177\u5e97\u91cc\u4e70\u5c3d\u91cf\u591a\u7684\u7b7e\u5b57\u7b14\u3002\u5df2\u77e5\u4e00\u53ea\u7b7e\u5b57\u7b14\u7684\u4ef7\u683c\u662f $1$ \u5143 $9$ \u89d2\uff0c\u800c\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u7684\u94b1\u662f $a$ \u5143 $b$ \u89d2\uff0c\u5c0f\u7389\u60f3\u77e5\u9053\uff0c\u5979\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u5462\u3002\n","formatI":"\u8f93\u5165\u53ea\u6709\u4e00\u884c\u4e24\u4e2a\u6574\u6570\uff0c\u5206\u522b\u8868\u793a $a$ \u548c $b$\u3002","formatO":"\u8f93\u51fa\u4e00\u884c\u4e00\u4e2a\u6574\u6570\uff0c\u8868\u793a\u5c0f\u7389\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u3002\n","hint":"#### \u6570\u636e\u89c4\u6a21\u4e0e\u7ea6\u5b9a\n\n\u5bf9\u4e8e\u5168\u90e8\u7684\u6d4b\u8bd5\u70b9\uff0c\u4fdd\u8bc1 $0 \\leq a \\leq 10^4$\uff0c$0 \\leq b \\leq 9$\u3002","locale":"zh-CN"},"attachments":[],"showScore":true,"acceptSolution":false,"acceptLanguages":[5,1,2,28,3,4,11,12,27,34,7,25,8,33,15,14,19,30,31,32,21,22,17,9,16,13,23],"samples":[["10 3\n","5\n"]],"limits":{"time":[1000,1000,1000,1000,1000],"memory":[128000,128000,128000,128000,128000]}},"translations":{"en":{"name":"Xiaoyu Buys Stationery","background":"","description":"The homeroom teacher gives Xiaoyu a task: go to the stationery store and buy as many pens as possible. It is known that the price of one pen is $1$ yuan $9$ jiao, and the homeroom teacher gives Xiaoyu $a$ yuan $b$ jiao. Xiaoyu wants to know the maximum number of pens she can buy.","formatI":"The input contains one line with two integers, representing $a$ and $b$.","formatO":"Output one line with a single integer, the maximum number of pens Xiaoyu can buy.","hint":"#### Constraints\n\nFor all test points, it is guaranteed that $0 \\leq a \\leq 10^4$, $0 \\leq b \\leq 9$.\n\nTranslated by ChatGPT 5","locale":"en"},"zh-CN":{"name":"\u5c0f\u7389\u4e70\u6587\u5177","background":"","description":"\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u4e00\u4e2a\u4efb\u52a1\uff0c\u5230\u6587\u5177\u5e97\u91cc\u4e70\u5c3d\u91cf\u591a\u7684\u7b7e\u5b57\u7b14\u3002\u5df2\u77e5\u4e00\u53ea\u7b7e\u5b57\u7b14\u7684\u4ef7\u683c\u662f $1$ \u5143 $9$ \u89d2\uff0c\u800c\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u7684\u94b1\u662f $a$ \u5143 $b$ \u89d2\uff0c\u5c0f\u7389\u60f3\u77e5\u9053\uff0c\u5979\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u5462\u3002\n","formatI":"\u8f93\u5165\u53ea\u6709\u4e00\u884c\u4e24\u4e2a\u6574\u6570\uff0c\u5206\u522b\u8868\u793a $a$ \u548c $b$\u3002","formatO":"\u8f93\u51fa\u4e00\u884c\u4e00\u4e2a\u6574\u6570\uff0c\u8868\u793a\u5c0f\u7389\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u3002\n","hint":"#### \u6570\u636e\u89c4\u6a21\u4e0e\u7ea6\u5b9a\n\n\u5bf9\u4e8e\u5168\u90e8\u7684\u6d4b\u8bd5\u70b9\uff0c\u4fdd\u8bc1 $0 \\leq a \\leq 10^4$\uff0c$0 \\leq b \\leq 9$\u3002","locale":"zh-CN"}},"bookmarked":false,"contest":null,"contestProblems":null,"contestOrigin":null,"vjudgeUsername":null,"lastLanguage":null,"lastCode":"","lastCodeAt":null,"recommendations":[{"pid":"P1085","type":"P","name":"[NOIP 2004 \u666e\u53ca\u7ec4] \u4e0d\u9ad8\u5174\u7684\u6d25\u6d25","difficulty":1,"fullScore":100},{"pid":"P1422","type":"P","name":"\u5c0f\u7389\u5bb6\u7684\u7535\u8d39","difficulty":1,"fullScore":100},{"pid":"P1425","type":"P","name":"\u5c0f\u9c7c\u7684\u6e38\u6cf3\u65f6\u95f4","difficulty":1,"fullScore":100},{"pid":"P3954","type":"P","name":"[NOIP 2017 \u666e\u53ca\u7ec4] \u6210\u7ee9","difficulty":1,"fullScore":100},{"pid":"P5709","type":"P","name":"\u3010\u6df1\u57fa2.\u4e606\u3011Apples Prologue \/ \u82f9\u679c\u548c\u866b\u5b50","difficulty":1,"fullScore":100}],"forum":{"name":"P1421 \u5c0f\u7389\u4e70\u6587\u5177","type":2,"slug":"P1421","color":"orange-3"},"discussions":[{"id":1395473,"title":"80\u5206\u6c42\u8c03\u2026\u2026","author":{"uid":2244620,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2244620.png","name":"xiaokai_classmate","slogan":"\u76f4\u63a5\u4e00\u624b\u8bc8\u5c38\u6d41\uff0c\u6b22\u8fce\u6765\u52a0\u6211\u6d32\u7684\u8d26\u53f7\uff1a\u593a\u820d\u7684\u607a","badge":null,"isAdmin":false,"isBanned":false,"color":"Green","ccfLevel":0,"xcpcLevel":0,"background":"https:\/\/cdn.luogu.com.cn\/upload\/image_hosting\/edeg96rr.png"},"time":1791293994},{"id":1342716,"title":"python\u6c42\u6761\uff0c20\u5206","author":{"uid":2041293,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2041293.png","name":"_quanwei_","slogan":"\u606d\u559c\u4f60\uff0c\u6210\u4e3a\u5c0a\u8d35\u7684\u6885\u8d5b\u5fb7\u65af\u8f66\u4e3b","badge":null,"isAdmin":false,"isBanned":false,"color":"Gray","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1785755801},{"id":1338085,"title":"80\u5206\uff0c\u6c42\u52a9","author":{"uid":2215520,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2215520.png","name":"nicole_sui","slogan":"\u543e\u540d\u6797\u514b\u6c38\u4e0d\u53d8","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1785308155},{"id":1334620,"title":"\u4e3a\u4ec0\u4e48\u6211\u662f80\u5206","author":{"uid":2185089,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2185089.png","name":"gao_juny","slogan":"\u8fd9\u4e2a\u5bb6\u4f19\u5373\u4f7f\u4e0d\u61d2\uff0c\u4e5f\u4ec0\u4e48\u90fd\u7559\u4e0d\u4e0b","badge":null,"isAdmin":false,"isBanned":false,"color":"Green","ccfLevel":0,"xcpcLevel":0,"background":"https:\/\/cdn.luogu.com.cn\/upload\/image_hosting\/i9z9b89o.png"},"time":1784976249},{"id":1329264,"title":"\u7adf\u662f\u540e\u4efb\uff08if ur \u5206\u6570\u4e3a 40pts)","author":{"uid":1808488,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/1808488.png","name":"xiaomanyicheng","slogan":"\u8fd9\u4e2a\u5bb6\u4f19\u5c31\u662f\u5f88\u61d2\uff0c\u5565\u4e5f\u6ca1\u7559\u4e0b\uff08\u53ef\u80fd\u7559\u4e0b\u4e00\u9635\u54c8\u54c8\u54c8\uff09","badge":null,"isAdmin":false,"isBanned":false,"color":"Green","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1784548652},{"id":1324330,"title":"80,\u6211\u70b8\u4e86","author":{"uid":2097065,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2097065.png","name":"li13793009681","slogan":"","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1784178030}],"locale":"zh-CN","canEdit":false},"user":null,"time":1793237038.861632}</script>            <script src="https://fecdn.luogu.com.cn/columba/loader.20261018-2305.js" charset="utf-8" defer></script>
+    <link rel="stylesheet" href="https://fecdn.luogu.com.cn/columba/loader.20261018-2305.css" />
+    <script src="https://fecdn.luogu.com.cn/columba/vendor.20261018-2305.js" charset="utf-8" defer></script>
+        <script type="application/ld+json">{"@context":"https:\/\/schema.org","name":"P1421 \u5c0f\u7389\u4e70\u6587\u5177","description":"\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u4e00\u4e2a\u4efb\u52a1\uff0c\u5230\u6587\u5177\u5e97\u91cc\u4e70\u5c3d\u91cf\u591a\u7684\u7b7e\u5b57\u7b14\u3002\u5df2\u77e5\u4e00\u53ea\u7b7e\u5b57\u7b14\u7684\u4ef7\u683c\u662f 1 \u5143 9 \u89d2\uff0c\u800c\u73ed\u4e3b\u4efb\u7ed9\u5c0f\u7389\u7684\u94b1\u662f a \u5143 b \u89d2\uff0c\u5c0f\u7389\u60f3\u77e5\u9053\uff0c\u5979\u6700\u591a\u80fd\u4e70\u591a\u5c11\u53ea\u7b7e\u5b57\u7b14\u5462\u3002"}</script>
+    <link rel="canonical" href="https://www.luogu.com.cn/problem/P1421" />
+            <link rel="alternate" hreflang="en" href="https://www.luogu.com.cn/problem/P1421?lang=en" />
+        <meta property="og:locale:alternate" content="en" />
+            <link rel="alternate" hreflang="zh-CN" href="https://www.luogu.com.cn/problem/P1421?lang=zh-CN" />
+        <meta property="og:locale" content="zh-CN" />
+        <meta property="og:site_name" content="洛谷" />
+    <meta property="og:title" content="P1421 小玉买文具" />
+    <meta property="og:description" content="班主任给小玉一个任务，到文具店里买尽量多的签字笔。已知一只签字笔的价格是 1 元 9 角，而班主任给小玉的钱是 a 元 b 角，小玉想知道，她最多能买多少只签字笔呢。" />
+    <meta property="og:url" content="https://www.luogu.com.cn/problem/P1421" />
+        <script id="luogu-theme" type="application/json">{"id":1,"lNavi":{"back":"#ffffff","fore":"#262626","logo":null},"lBody":{"back":"#f0f4fa","blur":1000,"fade":1000,"image":"https:\/\/cdn.luogu.com.cn\/images\/bg\/fe\/luogu4-bg-l.jpg","midOpts":{"size":"cover"}},"dNavi":{"back":"#333333","fore":"#ffffff","logo":"#ffffff"},"dBody":{"back":"#0d1018","blur":1000,"fade":1000,"image":"https:\/\/cdn.luogu.com.cn\/images\/bg\/fe\/luogu4-bg-d.jpg","midOpts":{"size":"cover"}}}</script>
+    <style>body {  }</style>
+</head>
+<body>
+<div id="app">
+    <noscript>
+        <h3>请<b style="color:#f00;">不要禁用</b>脚本，否则网页无法正常加载</h3>
+    </noscript>
+        <article lang="zh-CN">
+        <h1>P1421 小玉买文具</h1>
+
+        
+        <section>
+            <h2>题目描述</h2>
+            <div>
+                                    班主任给小玉一个任务，到文具店里买尽量多的签字笔。已知一只签字笔的价格是 $1$ 元 $9$ 角，而班主任给小玉的钱是 $a$ 元 $b$ 角，小玉想知道，她最多能买多少只签字笔呢。
+
+                            </div>
+        </section>
+
+        <section>
+            <h2>输入格式</h2>
+            <div>
+                                    输入只有一行两个整数，分别表示 $a$ 和 $b$。
+                            </div>
+        </section>
+
+        <section>
+            <h2>输出格式</h2>
+            <div>
+                                    输出一行一个整数，表示小玉最多能买多少只签字笔。
+
+                            </div>
+        </section>
+
+        <section>
+            <h2>说明/提示</h2>
+            <div>
+                #### 数据规模与约定
+
+对于全部的测试点，保证 $0 \leq a \leq 10^4$，$0 \leq b \leq 9$。
+            </div>
+        </section>    </article>
+</div>
+</body>
+</html>

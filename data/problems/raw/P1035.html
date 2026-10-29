@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="no-js">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="csrf-token" content="1793323441:Oczd+3EUwz2BldywlW6MEXvRr+BWbQFjhhudxoZysKY=">
+    <meta name="renderer" content="webkit">
+    <script>
+        window.__feInitLocalTime = new Date().getTime() / 1000;
+        window.__feConfigVersion = '74d532c6c7861bfe'; window.__feConfigRequest = '\/_lfe\/config'; window.__fePhoneHomeCall = 'https\u003A\/\/moshimoshi\u003Aagltb3noatpwohhuenb5ag1tc2jsnnl3\u0040errtrack.luogu.com.cn\/lotlp1';        window.__luoguTagVersion = 'zh\u002DCN\/2026102909'; window.__luoguTagRequest = '\/_lfe\/tags';
+    </script>
+    <title>P1035 [NOIP 2002 普及组] 级数求和 - 洛谷</title>
+    <link rel="icon" href="https://fecdn.luogu.com.cn/favicon.ico">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'unsafe-eval' 'unsafe-inline' luogu.com *.luogu.com luogu.com.cn *.luogu.com.cn luogu.org *.luogu.org wss: blob: luoguprivate.oss-cn-hangzhou.aliyuncs.com luogu.oss-cn-hangzhou.aliyuncs.com https://challenges.cloudflare.com https://*.dun.163yun.com https://*.dun.163.com https://*.nosdn.126.net https://*.nosdn.127.net https://nos.netease.com https://cstaticdun.126.net https://cstaticdun1.126.net https://cstaticdun-v6.126.net https://acstatic-dun.126.net; img-src * data:; font-src * data:; worker-src data: blob:; frame-src https://fecdn.luogu.com.cn https://player.bilibili.com https://www.bilibili.com https://challenges.cloudflare.com">
+        <script id="lentille-context" type="application/json">{"instance":"main","template":"problem.show","status":200,"locale":"zh-CN","data":{"problem":{"pid":"P1035","type":"P","name":"[NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","difficulty":1,"fullScore":100,"tags":[1,5,19,82],"totalSubmit":1257861,"totalAccepted":487767,"flag":5,"provider":{"uid":19,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/19.png","name":"CCF_NOI","slogan":"","badge":null,"isAdmin":false,"isBanned":false,"color":"Gray","ccfLevel":0,"xcpcLevel":0,"background":""},"contenu":{"name":"[NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","background":"","description":"\u5df2\u77e5\uff1a$S_n= 1+\\dfrac{1}{2}+\\dfrac{1}{3}+\u2026+\\dfrac{1}{n}$\u3002\u663e\u7136\u5bf9\u4e8e\u4efb\u610f\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u5f53 $n$ \u8db3\u591f\u5927\u7684\u65f6\u5019\uff0c$S_n\u003Ek$\u3002\n\n\u73b0\u7ed9\u51fa\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u8981\u6c42\u8ba1\u7b97\u51fa\u4e00\u4e2a\u6700\u5c0f\u7684 $n$\uff0c\u4f7f\u5f97 $S_n\u003Ek$\u3002\n","formatI":"\u4e00\u4e2a\u6b63\u6574\u6570 $k$\u3002\n","formatO":"\u4e00\u4e2a\u6b63\u6574\u6570 $n$\u3002","hint":"**\u3010\u6570\u636e\u8303\u56f4\u3011**\n\n\u5bf9\u4e8e $100\\%$ \u7684\u6570\u636e\uff0c$1\\le k \\le 15$\u3002\n\n**\u3010\u9898\u76ee\u6765\u6e90\u3011**\n\nNOIP 2002 \u666e\u53ca\u7ec4\u7b2c\u4e00\u9898","locale":"zh-CN"},"content":{"name":"[NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","background":"","description":"\u5df2\u77e5\uff1a$S_n= 1+\\dfrac{1}{2}+\\dfrac{1}{3}+\u2026+\\dfrac{1}{n}$\u3002\u663e\u7136\u5bf9\u4e8e\u4efb\u610f\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u5f53 $n$ \u8db3\u591f\u5927\u7684\u65f6\u5019\uff0c$S_n\u003Ek$\u3002\n\n\u73b0\u7ed9\u51fa\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u8981\u6c42\u8ba1\u7b97\u51fa\u4e00\u4e2a\u6700\u5c0f\u7684 $n$\uff0c\u4f7f\u5f97 $S_n\u003Ek$\u3002\n","formatI":"\u4e00\u4e2a\u6b63\u6574\u6570 $k$\u3002\n","formatO":"\u4e00\u4e2a\u6b63\u6574\u6570 $n$\u3002","hint":"**\u3010\u6570\u636e\u8303\u56f4\u3011**\n\n\u5bf9\u4e8e $100\\%$ \u7684\u6570\u636e\uff0c$1\\le k \\le 15$\u3002\n\n**\u3010\u9898\u76ee\u6765\u6e90\u3011**\n\nNOIP 2002 \u666e\u53ca\u7ec4\u7b2c\u4e00\u9898","locale":"zh-CN"},"attachments":[],"showScore":true,"acceptSolution":false,"acceptLanguages":[5,1,2,28,3,4,11,12,27,34,7,25,8,33,15,14,19,30,31,32,21,22,17,9,16,13,23],"samples":[["1\n","2\n"]],"limits":{"time":[1000,1000,1000,1000,1000,1000],"memory":[524288,524288,524288,524288,524288,524288]}},"translations":{"en":{"name":"[NOIP 2002 Junior] Series Summation","background":null,"description":"Given: $S_n= 1+\\dfrac{1}{2}+\\dfrac{1}{3}+\u2026+\\dfrac{1}{n}$. It is obvious that for any integer $k$, when $n$ is sufficiently large, $S_n\u003Ek$.\nGiven an integer $k$, compute the smallest $n$ such that $S_n\u003Ek$.","formatI":"A positive integer $k$.","formatO":"A positive integer $n$.","hint":"\u3010Constraints\u3011\nFor $100\\%$ of the testdata, $1\\le k \\le 15$.\n\n\u3010Source\u3011\nNOIP 2002 Junior, Problem 1.\n\nTranslated by ChatGPT 5","locale":"en"},"zh-CN":{"name":"[NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","background":"","description":"\u5df2\u77e5\uff1a$S_n= 1+\\dfrac{1}{2}+\\dfrac{1}{3}+\u2026+\\dfrac{1}{n}$\u3002\u663e\u7136\u5bf9\u4e8e\u4efb\u610f\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u5f53 $n$ \u8db3\u591f\u5927\u7684\u65f6\u5019\uff0c$S_n\u003Ek$\u3002\n\n\u73b0\u7ed9\u51fa\u4e00\u4e2a\u6574\u6570 $k$\uff0c\u8981\u6c42\u8ba1\u7b97\u51fa\u4e00\u4e2a\u6700\u5c0f\u7684 $n$\uff0c\u4f7f\u5f97 $S_n\u003Ek$\u3002\n","formatI":"\u4e00\u4e2a\u6b63\u6574\u6570 $k$\u3002\n","formatO":"\u4e00\u4e2a\u6b63\u6574\u6570 $n$\u3002","hint":"**\u3010\u6570\u636e\u8303\u56f4\u3011**\n\n\u5bf9\u4e8e $100\\%$ \u7684\u6570\u636e\uff0c$1\\le k \\le 15$\u3002\n\n**\u3010\u9898\u76ee\u6765\u6e90\u3011**\n\nNOIP 2002 \u666e\u53ca\u7ec4\u7b2c\u4e00\u9898","locale":"zh-CN"}},"bookmarked":false,"contest":null,"contestProblems":null,"contestOrigin":null,"vjudgeUsername":null,"lastLanguage":null,"lastCode":"","lastCodeAt":null,"recommendations":[{"pid":"P1046","type":"P","name":"[NOIP 2005 \u666e\u53ca\u7ec4] \u9676\u9676\u6458\u82f9\u679c","difficulty":1,"fullScore":100},{"pid":"P1047","type":"P","name":"[NOIP 2005 \u666e\u53ca\u7ec4] \u6821\u95e8\u5916\u7684\u6811","difficulty":1,"fullScore":100},{"pid":"P1423","type":"P","name":"\u5c0f\u7389\u5728\u6e38\u6cf3","difficulty":1,"fullScore":100},{"pid":"P2669","type":"P","name":"[NOIP 2015 \u666e\u53ca\u7ec4] \u91d1\u5e01","difficulty":1,"fullScore":100},{"pid":"P5722","type":"P","name":"\u3010\u6df1\u57fa4.\u4f8b11\u3011\u6570\u5217\u6c42\u548c","difficulty":1,"fullScore":100}],"forum":{"name":"P1035 [NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","type":2,"slug":"P1035","color":"orange-3"},"discussions":[{"id":1395523,"title":"20\u5206\u6c42\u8c03\uff08\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5fc5\u5173\uff09","author":{"uid":2297962,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2297962.png","name":"ASH127","slogan":"\u8be5\u7528\u6237\u5df2\u767b\u57fa","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":"https:\/\/cdn.luogu.com.cn\/upload\/image_hosting\/6n953x9i.webp"},"time":1791296532},{"id":1390894,"title":"0pts\u6c42\u6761\u5fc5\u5173","author":{"uid":1901810,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/1901810.png","name":"slx2024","slogan":"\u5927\u53f7Yes_and_No\uff08\u88ab\u5c01\u7981\u4e86\/(\u3112o\u3112)\\~~)||\u8be5\u7528\u6237\u662f\u7537\u7684\uff01\uff01\uff01","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1791011763},{"id":1385255,"title":"\u4e3a\u4ec0\u4e48\u4f1a\u8d85\u65f6","author":{"uid":2078447,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2078447.png","name":"yangOvOchang","slogan":"\u6211\u56e2\u961f\u7684\u7f51\u5740\uff1awww.luogu.com.cn\/team\/134042   \u6b22\u8fce\u5927\u5bb6\u52a0\u5165\u0295\u032f\u2022\u0361\u02d4\u2022\u032f\u1dc5\u0294","badge":null,"isAdmin":false,"isBanned":false,"color":"Green","ccfLevel":0,"xcpcLevel":0,"background":"https:\/\/cdn.luogu.com.cn\/upload\/image_hosting\/kg0jznry.png"},"time":1790384326},{"id":1375980,"title":"80pt\u6c42\u8c03OTZ","author":{"uid":2171827,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2171827.png","name":"Forty_seven","slogan":"47 long live.","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1789266940},{"id":1374657,"title":"68\u5206\u6c42\u8c03","author":{"uid":1419879,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/1419879.png","name":"MBC_917","slogan":"\u6211\u7684\u4e16\u754cpvp\u65b0\u624b\u73a9\u5bb6","badge":null,"isAdmin":false,"isBanned":false,"color":"Blue","ccfLevel":0,"xcpcLevel":0,"background":"https:\/\/cdn.luogu.com.cn\/upload\/image_hosting\/8hvzmyqs.png"},"time":1789129779},{"id":1373345,"title":"\u6211\u4e0d\u660e\u767d","author":{"uid":2258914,"avatar":"https:\/\/cdn.luogu.com.cn\/upload\/usericon\/2258914.png","name":"AgNO3_x","slogan":"","badge":null,"isAdmin":false,"isBanned":false,"color":"Gray","ccfLevel":0,"xcpcLevel":0,"background":""},"time":1788936017}],"locale":"zh-CN","canEdit":false},"user":null,"time":1793237041.896363}</script>            <script src="https://fecdn.luogu.com.cn/columba/loader.20261018-2305.js" charset="utf-8" defer></script>
+    <link rel="stylesheet" href="https://fecdn.luogu.com.cn/columba/loader.20261018-2305.css" />
+    <script src="https://fecdn.luogu.com.cn/columba/vendor.20261018-2305.js" charset="utf-8" defer></script>
+        <script type="application/ld+json">{"@context":"https:\/\/schema.org","name":"P1035 [NOIP 2002 \u666e\u53ca\u7ec4] \u7ea7\u6570\u6c42\u548c","description":"\u5df2\u77e5\uff1aS_n= 1+\\dfrac{1}{2}+\\dfrac{1}{3}+\u2026+\\dfrac{1}{n}\u3002\u663e\u7136\u5bf9\u4e8e\u4efb\u610f\u4e00\u4e2a\u6574\u6570 k\uff0c\u5f53 n \u8db3\u591f\u5927\u7684\u65f6\u5019\uff0cS_n&gt;k\u3002\n\u73b0\u7ed9\u51fa\u4e00\u4e2a\u6574\u6570 k\uff0c\u8981\u6c42\u8ba1\u7b97\u51fa\u4e00\u4e2a\u6700\u5c0f\u7684 n\uff0c\u4f7f\u5f97 S_n&gt;k\u3002"}</script>
+    <link rel="canonical" href="https://www.luogu.com.cn/problem/P1035" />
+            <link rel="alternate" hreflang="en" href="https://www.luogu.com.cn/problem/P1035?lang=en" />
+        <meta property="og:locale:alternate" content="en" />
+            <link rel="alternate" hreflang="zh-CN" href="https://www.luogu.com.cn/problem/P1035?lang=zh-CN" />
+        <meta property="og:locale" content="zh-CN" />
+        <meta property="og:site_name" content="洛谷" />
+    <meta property="og:title" content="P1035 [NOIP 2002 普及组] 级数求和" />
+    <meta property="og:description" content="已知：S_n= 1+\dfrac{1}{2}+\dfrac{1}{3}+…+\dfrac{1}{n}。显然对于任意一个整数 k，当 n 足够大的时候，S_n&amp;gt;k。
+现给出一个整数 k，要求计算出一个最小的 n，使得 S_n&amp;gt;k。" />
+    <meta property="og:url" content="https://www.luogu.com.cn/problem/P1035" />
+        <script id="luogu-theme" type="application/json">{"id":1,"lNavi":{"back":"#ffffff","fore":"#262626","logo":null},"lBody":{"back":"#f0f4fa","blur":1000,"fade":1000,"image":"https:\/\/cdn.luogu.com.cn\/images\/bg\/fe\/luogu4-bg-l.jpg","midOpts":{"size":"cover"}},"dNavi":{"back":"#333333","fore":"#ffffff","logo":"#ffffff"},"dBody":{"back":"#0d1018","blur":1000,"fade":1000,"image":"https:\/\/cdn.luogu.com.cn\/images\/bg\/fe\/luogu4-bg-d.jpg","midOpts":{"size":"cover"}}}</script>
+    <style>body {  }</style>
+</head>
+<body>
+<div id="app">
+    <noscript>
+        <h3>请<b style="color:#f00;">不要禁用</b>脚本，否则网页无法正常加载</h3>
+    </noscript>
+        <article lang="zh-CN">
+        <h1>P1035 [NOIP 2002 普及组] 级数求和</h1>
+
+        
+        <section>
+            <h2>题目描述</h2>
+            <div>
+                                    已知：$S_n= 1+\dfrac{1}{2}+\dfrac{1}{3}+…+\dfrac{1}{n}$。显然对于任意一个整数 $k$，当 $n$ 足够大的时候，$S_n>k$。
+
+现给出一个整数 $k$，要求计算出一个最小的 $n$，使得 $S_n>k$。
+
+                            </div>
+        </section>
+
+        <section>
+            <h2>输入格式</h2>
+            <div>
+                                    一个正整数 $k$。
+
+                            </div>
+        </section>
+
+        <section>
+            <h2>输出格式</h2>
+            <div>
+                                    一个正整数 $n$。
+                            </div>
+        </section>
+
+        <section>
+            <h2>说明/提示</h2>
+            <div>
+                **【数据范围】**
+
+对于 $100\%$ 的数据，$1\le k \le 15$。
+
+**【题目来源】**
+
+NOIP 2002 普及组第一题
+            </div>
+        </section>    </article>
+</div>
+</body>
+</html>

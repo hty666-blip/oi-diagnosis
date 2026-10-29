@@ -1,0 +1,57 @@
+{
+  "run_at": "2026-10-29T11:47:00+08:00",
+  "model": "deepseek-chat",
+  "mode": "llm_hypothesis (规则判不了时才触发)",
+  "policy": {
+    "confidence_cap": 0.6,
+    "route": "llm_hypothesis",
+    "status": "needs_human",
+    "evidence_binding": "强制从真实 evidence_id 中选"
+  },
+  "cases": [
+    {
+      "id": "wa_operator",
+      "problem": "P1001",
+      "code_bug": "printf(\"%d\\n\", a-b) 把加法写成减法",
+      "verdict": "WA",
+      "latency_ms": 1755,
+      "status": "needs_human",
+      "route": "llm_hypothesis",
+      "confidence": 0.55,
+      "mechanism": "M08",
+      "evidence_ids": [19],
+      "narrative": "你的程序输出的是 a-b 的结果 -10，但期望输出是 50，先回头确认题目到底要求做什么运算、输入输出格式是否读对了。"
+    },
+    {
+      "id": "wa_range",
+      "problem": "P1001",
+      "code_bug": "for (int i = 1; i < n; i++) 漏掉最后一项",
+      "verdict": "WA",
+      "latency_ms": 1217,
+      "status": "needs_human",
+      "route": "llm_hypothesis",
+      "confidence": 0.55,
+      "mechanism": "M04",
+      "evidence_ids": [22],
+      "narrative": "你的循环只累加到 n-1，漏掉了 n 这一项，先检查循环的终止条件是否应该包含 n。"
+    },
+    {
+      "id": "wa_format",
+      "problem": "P1001",
+      "code_bug": "printf(\"sum=%d\", ...) 多了前缀",
+      "verdict": "WA",
+      "latency_ms": 2141,
+      "status": "needs_human",
+      "route": "llm_hypothesis",
+      "confidence": 0.4,
+      "mechanism": "M08",
+      "evidence_ids": [25],
+      "narrative": "程序算出的数值是对的，但判题仍报 WA，先核对题目要求的输出格式是否与 printf 的写法完全一致（比如是否要多输出换行或不要 'sum=' 前缀）。"
+    }
+  ],
+  "notes": [
+    "三个案例规则层都无法判定（无 P0/P1/P2 证据），因此走 LLM 兜底。",
+    "模型给出的定位均与真实 bug 一致（运算符、循环边界、输出格式）。",
+    "因为置信度封顶 0.6 < 0.75，系统一律标 needs_human，不直接告诉学生，交教练复核。"
+  ]
+}

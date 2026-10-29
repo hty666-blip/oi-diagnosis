@@ -1,0 +1,35 @@
+{
+  "pid": "B4354",
+  "title": "[GESP202506 一级] 假期阅读",
+  "difficulty_id": 1,
+  "difficulty": "入门",
+  "tags": [
+    "tag:62",
+    "tag:354",
+    "tag:409"
+  ],
+  "sections": {
+    "background": "对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1181>",
+    "description": "小 A 有一本厚厚的书。这本书总共有 $n$ 页，小 A 一天中最多只能阅读完其中的 $k$ 页。小 A 的假期总共有 $t$ 天，他想知道在假期中最多能阅读完这本书的多少页。",
+    "input_format": "第一行，一个正整数 $n$，表示书的页数。\n\n第二行，一个正整数 $k$，表示小 A 每天最多阅读的页数。\n\n第三行，一个正整数 $t$，表示小 A 假期的天数。",
+    "output_format": "一行，一个整数，表示假期中所能阅读的最多页数。",
+    "hint": "对于所有测试点，保证 $n,k,t$ 均不超过 $1000$。"
+  },
+  "samples": [
+    {
+      "input": "8\n3\n2",
+      "output": "6"
+    },
+    {
+      "input": "19\n3\n30",
+      "output": "19"
+    }
+  ],
+  "markdown": "# B4354 [GESP202506 一级] 假期阅读\n\n## 题目背景\n\n对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1181>\n\n## 题目描述\n\n小 A 有一本厚厚的书。这本书总共有 $n$ 页，小 A 一天中最多只能阅读完其中的 $k$ 页。小 A 的假期总共有 $t$ 天，他想知道在假期中最多能阅读完这本书的多少页。\n\n## 输入格式\n\n第一行，一个正整数 $n$，表示书的页数。\n\n第二行，一个正整数 $k$，表示小 A 每天最多阅读的页数。\n\n第三行，一个正整数 $t$，表示小 A 假期的天数。\n\n## 输出格式\n\n一行，一个整数，表示假期中所能阅读的最多页数。\n\n## 说明/提示\n\n对于所有测试点，保证 $n,k,t$ 均不超过 $1000$。\n",
+  "time_limit_ms": "1000",
+  "source": "gesp",
+  "source_url": "https://www.luogu.com.cn/problem/B4354",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false
+}

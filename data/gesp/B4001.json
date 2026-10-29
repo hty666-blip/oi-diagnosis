@@ -1,0 +1,38 @@
+{
+  "pid": "B4001",
+  "title": "[GESP202406 一级] 立方数",
+  "difficulty_id": 1,
+  "difficulty": "入门",
+  "tags": [
+    "数学",
+    "tag:61",
+    "枚举",
+    "tag:354",
+    "tag:355",
+    "tag:409"
+  ],
+  "sections": {
+    "background": "对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1149>",
+    "description": "小杨有一个正整数 $n$，他想知道 $n$ 是否是一个立方数。一个正整数 $n$ 是立方数当且仅当存在一个正整数 $x$ 满足 $x\\times x\\times x=n$ 。",
+    "input_format": "第一行包含一个正整数 $n$。",
+    "output_format": "如果正整数 $n$ 是一个立方数，输出 `Yes`，否则输出 `No`。",
+    "hint": "对于样例 $1$，存在正整数 $2$ 使得 $8=2\\times 2\\times 2$ ，因此 $8$ 为立方数。\n\n对于样例 $2$，不存在满足条件的正整数，因此 $9$ 不为立方数。\n\n对于全部数据，保证有 $1 \\le n \\le 1000$。"
+  },
+  "samples": [
+    {
+      "input": "8",
+      "output": "Yes"
+    },
+    {
+      "input": "9",
+      "output": "No"
+    }
+  ],
+  "markdown": "# B4001 [GESP202406 一级] 立方数\n\n## 题目背景\n\n对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1149>\n\n## 题目描述\n\n小杨有一个正整数 $n$，他想知道 $n$ 是否是一个立方数。一个正整数 $n$ 是立方数当且仅当存在一个正整数 $x$ 满足 $x\\times x\\times x=n$ 。\n\n## 输入格式\n\n第一行包含一个正整数 $n$。\n\n## 输出格式\n\n如果正整数 $n$ 是一个立方数，输出 `Yes`，否则输出 `No`。\n\n## 说明/提示\n\n对于样例 $1$，存在正整数 $2$ 使得 $8=2\\times 2\\times 2$ ，因此 $8$ 为立方数。\n\n对于样例 $2$，不存在满足条件的正整数，因此 $9$ 不为立方数。\n\n对于全部数据，保证有 $1 \\le n \\le 1000$。\n",
+  "time_limit_ms": "1000",
+  "source": "gesp",
+  "source_url": "https://www.luogu.com.cn/problem/B4001",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false
+}

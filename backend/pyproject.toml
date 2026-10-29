@@ -1,0 +1,57 @@
+[project]
+name = "oi-diagnosis"
+version = "0.1.0"
+description = "青少年信息学竞赛错题诊断与答疑系统（毕业设计）"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.5",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg>=0.30",
+  "alembic>=1.13",
+  "pgvector>=0.3",
+  "redis>=5.1",
+  "arq>=0.26",
+  "httpx>=0.27",
+  "sse-starlette>=2.1",
+  "lxml>=5.3",
+  "structlog>=24.4",
+  "langgraph>=0.2",
+  "PyJWT>=2.9",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "ruff>=0.7",
+  "testcontainers>=4.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# 扫描器是逐字符状态机，一行多条语句更易读
+"app/capabilities/surface_lint.py" = ["E702", "SIM105", "UP009", "S110"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+

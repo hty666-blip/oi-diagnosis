@@ -1,0 +1,206 @@
+"""提交相关接口（M1：同步执行，M4 改为入队 + SSE）。"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import CurrentUser
+from app.capabilities.sandbox import SandboxError
+from app.domain.models import Diagnosis, Evidence, Problem, Submission
+from app.infra.db import get_session
+from app.orchestrator.graph import run_diagnosis
+from app.services.access import accessible_submission
+from app.services.judgement import effective_verdict
+from app.services.submission_service import SubmissionService
+
+router = APIRouter(prefix="/submissions", tags=["submissions"])
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+class SubmissionCreate(BaseModel):
+    problem_pid: str = Field(..., examples=["P1001"])
+    code: str = Field(..., min_length=1, max_length=100_000)
+    student_id: int | None = None
+
+    @field_validator("code")
+    @classmethod
+    def reject_blank_code(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("请输入要检查的代码")
+        return value
+
+
+class SubmissionOut(BaseModel):
+    id: int
+    code: str
+    problem_pid: str
+    problem_title: str
+    stage: str
+    verdict: str | None
+    time_ms: int | None
+    memory_kb: int | None
+    tests_passed: dict | None
+    diagnosis: dict | None = None
+
+
+def _to_out(
+    sub: Submission, diag: Diagnosis | None = None, problem: Problem | None = None
+) -> SubmissionOut:
+    return SubmissionOut(
+        id=sub.id,
+        code=sub.code,
+        problem_pid=problem.pid if problem else "",
+        problem_title=problem.title if problem else "",
+        stage=sub.stage,
+        verdict=effective_verdict(sub),
+        time_ms=sub.time_ms,
+        memory_kb=sub.memory_kb,
+        tests_passed=sub.tests_passed,
+        diagnosis=(
+            {
+                "mechanism": diag.mechanism,
+                "nature": diag.nature,
+                "narrative": diag.narrative,
+                "status": diag.status,
+                "route": (diag.model_meta or {}).get("route"),
+                "autofixable": (diag.model_meta or {}).get("autofixable", False),
+                "degraded": diag.degraded or [],
+                "confidence": diag.confidence,
+            }
+            if diag
+            else None
+        ),
+    )
+
+
+@router.post("", response_model=SubmissionOut)
+async def create_submission(
+    payload: SubmissionCreate,
+    session: SessionDep,
+    user: CurrentUser,
+) -> SubmissionOut:
+    if payload.student_id not in (None, user.id):
+        raise HTTPException(status_code=403, detail="只能以当前登录账号提交代码")
+    svc = SubmissionService(session)
+    try:
+        sub = await svc.create(payload.problem_pid, payload.code, user.id)
+    except SandboxError as e:
+        raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    if sub.stage == "READY":
+        diag = (
+            await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+        ).scalar_one_or_none()
+        return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+
+    if sub.stage in ("COMPILING", "RUNNING"):
+        raise HTTPException(status_code=409, detail="该提交正在判题，请稍后查看结果")
+
+    try:
+        await svc.run(sub)
+    except SandboxError as e:
+        raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
+
+    diag = (
+        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+    ).scalar_one_or_none()
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+
+
+@router.get("/{submission_id}", response_model=SubmissionOut)
+async def get_submission(
+    submission_id: int,
+    session: SessionDep,
+    user: CurrentUser,
+) -> SubmissionOut:
+    sub = await accessible_submission(session, user, submission_id)
+    diag = (
+        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+    ).scalar_one_or_none()
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+
+
+@router.get("/{submission_id}/evidence")
+async def get_evidence(
+    submission_id: int,
+    session: SessionDep,
+    user: CurrentUser,
+) -> list[dict]:
+    await accessible_submission(session, user, submission_id)
+    rows = (
+        await session.execute(
+            select(Evidence).where(Evidence.submission_id == submission_id).order_by(Evidence.id)
+        )
+    ).scalars().all()
+    return [
+        {"id": e.id, "type": e.type, "payload": e.payload, "digest": e.digest}
+        for e in rows
+    ]
+
+@router.post("/{submission_id}/diagnose")
+async def diagnose_submission(
+    submission_id: int,
+    session: SessionDep,
+    user: CurrentUser,
+) -> dict:
+    """对已有提交跑多 Agent 诊断（证据来自数据库，不重复判题）。"""
+    sub = await accessible_submission(session, user, submission_id)
+    if sub.stage != "READY" or sub.verdict is None:
+        raise HTTPException(status_code=409, detail="提交尚未完成判题，请先等待结果或重新提交")
+
+    rows = (
+        await session.execute(
+            select(Evidence).where(Evidence.submission_id == submission_id).order_by(Evidence.id)
+        )
+    ).scalars().all()
+    evidence = [{"id": e.id, "type": e.type, "payload": e.payload} for e in rows]
+
+    out = await run_diagnosis(
+        submission_id=sub.id, code=sub.code, verdict=effective_verdict(sub), evidence=evidence
+    )
+    draft = out["draft"]
+
+    diag = (
+        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
+    ).scalar_one_or_none() or Diagnosis(submission_id=sub.id)
+    diag.mechanism = [c.model_dump() for c in draft.mechanism]
+    diag.cognition = [c.model_dump() for c in draft.cognition]
+    diag.nature = [n.model_dump() for n in draft.nature]
+    diag.narrative = draft.narrative
+    diag.confidence = draft.confidence
+    diag.status = out["status"]
+    diag.degraded = draft.degraded
+    diag.model_meta = {
+        **(diag.model_meta or {}),
+        "route": out["route"],
+        "attempts": out["attempts"],
+        "first_hint_level": draft.first_hint_level,
+        "nature": [n.model_dump() for n in draft.nature],
+        "hint_seed": draft.hint_seed,
+        "critique_issues": (out["critique"].issues if out.get("critique") else []),
+        "engine": "graph-stub-v1",
+    }
+    session.add(diag)
+    await session.commit()
+
+    return {
+        "submission_id": sub.id,
+        "verdict": effective_verdict(sub),
+        "status": out["status"],
+        "route": out["route"],
+        "attempts": out["attempts"],
+        "confidence": draft.confidence,
+        "narrative": draft.narrative,
+        "first_hint_level": draft.first_hint_level,
+        "nature": [n.model_dump() for n in draft.nature],
+        "mechanism": [c.model_dump() for c in draft.mechanism],
+    }
+
+

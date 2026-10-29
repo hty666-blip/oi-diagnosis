@@ -1,0 +1,37 @@
+{
+  "pid": "P1216",
+  "title": "[IOI 1994 / USACO1.5] 数字三角形 Number Triangles",
+  "difficulty_id": 2,
+  "difficulty": "普及−",
+  "tags": [
+    "动态规划 DP",
+    "递推",
+    "tag:46",
+    "tag:102"
+  ],
+  "tags_raw": [
+    3,
+    12,
+    46,
+    102
+  ],
+  "sections": {
+    "description": "观察下面的数字金字塔。\n\n写一个程序来查找从最高点到底部任意处结束的路径，使路径经过数字的和最大。每一步可以走到左下方的点也可以到达右下方的点。\n\n![](https://cdn.luogu.com.cn/upload/image_hosting/95pzs0ne.png)\n\n在上面的样例中，从 $7 \\to 3 \\to 8 \\to 7 \\to 5$ 的路径产生了最大权值。",
+    "input_format": "第一个行一个正整数 $r$，表示行的数目。\n\n后面每行为这个数字金字塔特定行包含的整数。",
+    "output_format": "单独的一行，包含那个可能得到的最大的和。",
+    "hint": "【数据范围】\n对于 $100\\%$ 的数据，$1\\le r\\le 1000$，其他输入在 $[0,100]$ 范围内。\n\n题目翻译来自 NOCOW。\n\nIOI1994 Day1T1 / USACO Training Section 1.5。"
+  },
+  "samples": [
+    {
+      "input": "5\n7\n3 8\n8 1 0\n2 7 4 4\n4 5 2 6 5",
+      "output": "30"
+    }
+  ],
+  "source": "luogu",
+  "source_url": "https://www.luogu.com.cn/problem/P1216",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false,
+  "crawled_at": "2026-10-29T09:27:15+0800",
+  "markdown": "# P1216 [IOI 1994 / USACO1.5] 数字三角形 Number Triangles\n\n## 题目描述\n\n观察下面的数字金字塔。\n\n写一个程序来查找从最高点到底部任意处结束的路径，使路径经过数字的和最大。每一步可以走到左下方的点也可以到达右下方的点。\n\n![](https://cdn.luogu.com.cn/upload/image_hosting/95pzs0ne.png)\n\n在上面的样例中，从 $7 \\to 3 \\to 8 \\to 7 \\to 5$ 的路径产生了最大权值。\n\n## 输入格式\n\n第一个行一个正整数 $r$，表示行的数目。\n\n后面每行为这个数字金字塔特定行包含的整数。\n\n## 输出格式\n\n单独的一行，包含那个可能得到的最大的和。\n\n## 说明/提示\n\n【数据范围】\n对于 $100\\%$ 的数据，$1\\le r\\le 1000$，其他输入在 $[0,100]$ 范围内。\n\n题目翻译来自 NOCOW。\n\nIOI1994 Day1T1 / USACO Training Section 1.5。\n\n## 输入输出样例\n\n样例 1 输入\n```\n5\n7\n3 8\n8 1 0\n2 7 4 4\n4 5 2 6 5\n```\n\n样例 1 输出\n```\n30\n```\n"
+}

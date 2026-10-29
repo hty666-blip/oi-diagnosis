@@ -1,0 +1,114 @@
+{
+  "stats": {
+    "cases": 5,
+    "succeeded": 5,
+    "success_rate": 1.0,
+    "avg_after_lines": 2.0,
+    "avg_reduction": 0.999,
+    "validator_pass_rate": 1.0,
+    "reproduce_rate": 1.0,
+    "avg_steps": 12.6
+  },
+  "results": [
+    {
+      "case": "sum_int",
+      "ok": true,
+      "before_n": 3000,
+      "after_n": 3,
+      "before": {
+        "lines": 2,
+        "chars": 33005
+      },
+      "after": {
+        "lines": 2,
+        "chars": 35
+      },
+      "steps": 16,
+      "elapsed_ms": 28520,
+      "reduction": 0.999,
+      "validator_ok": true,
+      "reproduced": true,
+      "counterexample": "3\n1000000000 1000000000 1000000000\n"
+    },
+    {
+      "case": "sum_off_by_one",
+      "ok": true,
+      "before_n": 3000,
+      "after_n": 1,
+      "before": {
+        "lines": 2,
+        "chars": 33005
+      },
+      "after": {
+        "lines": 2,
+        "chars": 13
+      },
+      "steps": 12,
+      "elapsed_ms": 21547,
+      "reduction": 0.9997,
+      "validator_ok": true,
+      "reproduced": true,
+      "counterexample": "1\n1000000000\n"
+    },
+    {
+      "case": "sum_init_one",
+      "ok": true,
+      "before_n": 3000,
+      "after_n": 1,
+      "before": {
+        "lines": 2,
+        "chars": 33005
+      },
+      "after": {
+        "lines": 2,
+        "chars": 13
+      },
+      "steps": 12,
+      "elapsed_ms": 21697,
+      "reduction": 0.9997,
+      "validator_ok": true,
+      "reproduced": true,
+      "counterexample": "1\n1000000000\n"
+    },
+    {
+      "case": "fact_int",
+      "ok": true,
+      "before_n": 600,
+      "after_n": 1,
+      "before": {
+        "lines": 601,
+        "chars": 1444
+      },
+      "after": {
+        "lines": 2,
+        "chars": 5
+      },
+      "steps": 13,
+      "elapsed_ms": 23130,
+      "reduction": 0.9983,
+      "validator_ok": true,
+      "reproduced": true,
+      "counterexample": "1\n20\n"
+    },
+    {
+      "case": "fact_short_loop",
+      "ok": true,
+      "before_n": 600,
+      "after_n": 1,
+      "before": {
+        "lines": 601,
+        "chars": 1444
+      },
+      "after": {
+        "lines": 2,
+        "chars": 5
+      },
+      "steps": 10,
+      "elapsed_ms": 17858,
+      "reduction": 0.9983,
+      "validator_ok": true,
+      "reproduced": true,
+      "counterexample": "1\n12\n"
+    }
+  ]
+}

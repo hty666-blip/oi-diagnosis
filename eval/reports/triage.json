@@ -1,0 +1,24 @@
+{
+  "total": 200,
+  "p_accuracy": 1.0,
+  "route_accuracy": 1.0,
+  "elapsed_ms": 8,
+  "by_kind": {
+    "P0": {
+      "n": 160,
+      "p_ok": 160,
+      "route_ok": 160
+    },
+    "P1": {
+      "n": 6,
+      "p_ok": 6,
+      "route_ok": 6
+    },
+    "clean": {
+      "n": 34,
+      "p_ok": 34,
+      "route_ok": 34
+    }
+  },
+  "failures": []
+}

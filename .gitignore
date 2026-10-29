@@ -1,0 +1,39 @@
+# ---- 数据集公开；执行过程与用户运行数据仅本地保留 ----
+data/run/
+backend/data/
+
+# ---- 自建题包（版权归自己，可以提交） ----
+!/problems/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 前端 ----
+node_modules/
+dist/
+.vite/
+
+# ---- 环境与密钥 ----
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+
+# ---- 本地生成物 ----
+*.log
+*.tsbuildinfo
+
+# ---- 编辑器/系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,70 @@
+{
+  "total": 3,
+  "ok": 3,
+  "verdict_acc": 1.0,
+  "route_acc": 1.0,
+  "p_level_acc": {
+    "P0": 1.0,
+    "P1": null
+  },
+  "wa_keyword_hit": null,
+  "latency_ms": {
+    "mean": 103,
+    "p95": 93,
+    "submit_mean": 850
+  },
+  "elapsed_s": 2,
+  "by_kind": {
+    "P0": {
+      "n": 3,
+      "verdict_acc": 1.0,
+      "route": {
+        "fast_fix": 3
+      }
+    }
+  },
+  "rows": [
+    {
+      "id": "p0-000",
+      "kind": "P0",
+      "bug": "第 0 处分号写成全角「；」",
+      "verdict": "CE",
+      "status": "confirmed",
+      "route": "fast_fix",
+      "confidence": 1.0,
+      "p_pred": "P0",
+      "narrative": "第 3 行 第 13 列：中文/全角符号「；」不能用于 C++ 语法（共 2 处，先修这个） 建议：改成英文半角「;」",
+      "kw_hit": null,
+      "latency_ms": 89,
+      "submit_ms": 736
+    },
+    {
+      "id": "p0-001",
+      "kind": "P0",
+      "bug": "第 1 处分号写成全角「，」",
+      "verdict": "CE",
+      "status": "confirmed",
+      "route": "fast_fix",
+      "confidence": 1.0,
+      "p_pred": "P0",
+      "narrative": "第 4 行 第 26 列：中文/全角符号「，」不能用于 C++ 语法（共 2 处，先修这个） 建议：改成英文半角「,」",
+      "kw_hit": null,
+      "latency_ms": 93,
+      "submit_ms": 788
+    },
+    {
+      "id": "p0-002",
+      "kind": "P0",
+      "bug": "第 2 处分号写成全角「（」",
+      "verdict": "CE",
+      "status": "confirmed",
+      "route": "fast_fix",
+      "confidence": 1.0,
+      "p_pred": "P0",
+      "narrative": "第 5 行 第 26 列：中文/全角符号「（」不能用于 C++ 语法（共 2 处，先修这个） 建议：改成英文半角「(」",
+      "kw_hit": null,
+      "latency_ms": 127,
+      "submit_ms": 1027
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+id: PTV-0002
+title: 阶乘
+difficulty: 入门
+knowledge_points: ["循环", "整数溢出"]
+target_errors: ["M01"]
+package_level: A
+time_limit_ms: 1000
+memory_limit_mb: 256
+source: self-authored
+ai_generated: false
+license: CC BY-SA 4.0
+reviewer: 自建示例
+reviewed_at: 2026-10-29

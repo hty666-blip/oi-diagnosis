@@ -1,0 +1,41 @@
+{
+  "pid": "B3953",
+  "title": "[GESP202403 一级] 找因数",
+  "difficulty_id": 1,
+  "difficulty": "入门",
+  "tags": [
+    "数学",
+    "tag:61",
+    "tag:354",
+    "tag:355",
+    "tag:409"
+  ],
+  "sections": {
+    "background": "对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1141>",
+    "description": "小 A 最近刚刚学习了因数的概念，具体来说，如果一个正整数 $a$ 可以被另一个正整数 $b$ 整除，那么我们就说 $b$ 是 $a$ 的因数。\n\n请你帮忙写一个程序，从小到大输出正整数 $a$ 的所有因数。",
+    "input_format": "输入一行一个正整数 $a$。保证 $a\\leq1000$。",
+    "output_format": "输出若干行，为 $a$ 的所有约数，从小到大排序。",
+    "hint": ""
+  },
+  "samples": [
+    {
+      "input": "1",
+      "output": "1"
+    },
+    {
+      "input": "6",
+      "output": "1\n2\n3\n6"
+    },
+    {
+      "input": "10",
+      "output": "1\n2\n5\n10"
+    }
+  ],
+  "markdown": "# B3953 [GESP202403 一级] 找因数\n\n## 题目背景\n\n对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1141>\n\n## 题目描述\n\n小 A 最近刚刚学习了因数的概念，具体来说，如果一个正整数 $a$ 可以被另一个正整数 $b$ 整除，那么我们就说 $b$ 是 $a$ 的因数。\n\n请你帮忙写一个程序，从小到大输出正整数 $a$ 的所有因数。\n\n## 输入格式\n\n输入一行一个正整数 $a$。保证 $a\\leq1000$。\n\n## 输出格式\n\n输出若干行，为 $a$ 的所有约数，从小到大排序。\n",
+  "time_limit_ms": "1000",
+  "source": "gesp",
+  "source_url": "https://www.luogu.com.cn/problem/B3953",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false
+}

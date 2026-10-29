@@ -1,0 +1,20 @@
+{
+  "problem": "PTV-0001",
+  "original": {
+    "n": 20000,
+    "lines": 2,
+    "chars": 220006
+  },
+  "minimized": {
+    "n": 3,
+    "lines": 2,
+    "chars": 35
+  },
+  "steps": 19,
+  "elapsed_ms": 33454,
+  "reduction": 0.9999,
+  "counterexample": "3\n1000000000 1000000000 1000000000\n",
+  "student_output": "-1294967296",
+  "expected_output": "3000000000",
+  "validator_ok": true
+}

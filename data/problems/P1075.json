@@ -1,0 +1,37 @@
+{
+  "pid": "P1075",
+  "title": "[NOIP 2012 普及组] 质因数分解",
+  "difficulty_id": 2,
+  "difficulty": "普及−",
+  "tags": [
+    "数学",
+    "tag:29",
+    "NOIP 普及组",
+    "素数判断"
+  ],
+  "tags_raw": [
+    5,
+    29,
+    82,
+    239
+  ],
+  "sections": {
+    "description": "已知正整数 $n$ 是两个不同的质数的乘积，试求出两者中较大的那个质数。",
+    "input_format": "输入一个正整数 $n$。",
+    "output_format": "输出一个正整数 $p$，即较大的那个质数。",
+    "hint": "$1 \\le n\\le 2\\times 10^9$。\n\nNOIP 2012 普及组 第一题"
+  },
+  "samples": [
+    {
+      "input": "21",
+      "output": "7"
+    }
+  ],
+  "source": "luogu",
+  "source_url": "https://www.luogu.com.cn/problem/P1075",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false,
+  "crawled_at": "2026-10-29T09:27:29+0800",
+  "markdown": "# P1075 [NOIP 2012 普及组] 质因数分解\n\n## 题目描述\n\n已知正整数 $n$ 是两个不同的质数的乘积，试求出两者中较大的那个质数。\n\n## 输入格式\n\n输入一个正整数 $n$。\n\n## 输出格式\n\n输出一个正整数 $p$，即较大的那个质数。\n\n## 说明/提示\n\n$1 \\le n\\le 2\\times 10^9$。\n\nNOIP 2012 普及组 第一题\n\n## 输入输出样例\n\n样例 1 输入\n```\n21\n```\n\n样例 1 输出\n```\n7\n```\n"
+}

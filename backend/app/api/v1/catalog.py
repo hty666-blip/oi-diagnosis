@@ -1,0 +1,161 @@
+﻿"""题库与教练台接口。"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.deps import CurrentUser, TeacherUser
+from app.domain.models import Diagnosis, Problem, Submission
+from app.infra.db import get_session
+from app.services.access import submission_scope
+from app.services.judgement import effective_verdict
+
+router = APIRouter(tags=["catalog"])
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+@router.get("/problems")
+async def list_problems(
+    session: SessionDep,
+    user: CurrentUser,
+    q: str = Query("", max_length=120, description="按题号/标题模糊搜索"),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    stmt = select(Problem)
+    if q:
+        stmt = stmt.where(or_(
+            Problem.pid.icontains(q, autoescape=True),
+            Problem.title.icontains(q, autoescape=True),
+        ))
+    rows = (await session.execute(stmt.order_by(Problem.id).limit(limit))).scalars().all()
+    return [
+        {
+            "pid": r.pid,
+            "title": r.title,
+            "difficulty": r.difficulty,
+            "tags": r.tags,
+            "samples": len(r.samples or []),
+            "package_level": r.package_level,
+            "source": r.source,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/coach/queue")
+async def coach_queue(
+    session: SessionDep,
+    user: TeacherUser,
+    limit: int = Query(20, ge=1, le=100),
+) -> list[dict]:
+    """待人工复核队列：needs_human 的诊断，按时间倒序。"""
+    rows = (
+        await session.execute(
+            select(Diagnosis, Submission)
+            .join(Submission, Submission.id == Diagnosis.submission_id)
+            .where(Diagnosis.status == "needs_human", submission_scope(user))
+            .order_by(Diagnosis.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    out = []
+    for diag, sub in rows:
+        out.append({
+            "diagnosis_id": diag.id,
+            "submission_id": sub.id,
+            "verdict": effective_verdict(sub),
+            "route": (diag.model_meta or {}).get("route"),
+            "confidence": diag.confidence,
+            "narrative": diag.narrative,
+            "mechanism": diag.mechanism,
+            "student_id": sub.student_id,
+        })
+    return out
+
+@router.get("/me/submissions")
+async def my_submissions(
+    session: SessionDep,
+    user: CurrentUser,
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict]:
+    """当前学生自己的提交历史（含诊断摘要）。"""
+    rows = (
+        await session.execute(
+            select(Submission, Diagnosis, Problem)
+            .outerjoin(Diagnosis, Diagnosis.submission_id == Submission.id)
+            .join(Problem, Problem.id == Submission.problem_id)
+            .where(Submission.student_id == user.id)
+            .order_by(Submission.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    out = []
+    for sub, diag, problem in rows:
+        out.append({
+            "id": sub.id,
+            "problem_id": sub.problem_id,
+            "problem_pid": problem.pid,
+            "problem_title": problem.title,
+            "stage": sub.stage,
+            "tests_passed": sub.tests_passed,
+            "verdict": effective_verdict(sub),
+            "created_at": sub.created_at.isoformat() if sub.created_at else "",
+            "narrative": (diag.narrative if diag else "")[:120],
+            "route": (diag.model_meta or {}).get("route") if diag else None,
+            "p": (diag.nature or [{}])[0].get("p") if diag and diag.nature else None,
+        })
+    return out
+
+
+@router.get("/coach/overview")
+async def coach_overview(session: SessionDep, user: TeacherUser) -> dict:
+    """教练台概览：判定分布、路由分布、待复核数。"""
+    subs = (
+        await session.execute(select(Submission).where(submission_scope(user)))
+    ).scalars().all()
+    diags = (
+        await session.execute(
+            select(Diagnosis).join(Submission, Submission.id == Diagnosis.submission_id)
+            .where(submission_scope(user))
+        )
+    ).scalars().all()
+    verdict: dict[str, int] = {}
+    for s in subs:
+        key = effective_verdict(s) or "?"
+        verdict[key] = verdict.get(key, 0) + 1
+    route: dict[str, int] = {}
+    for d in diags:
+        r = (d.model_meta or {}).get("route", "unknown")
+        route[r] = route.get(r, 0) + 1
+    return {
+        "submissions": len(subs),
+        "diagnoses": len(diags),
+        "pending_review": sum(1 for d in diags if d.status == "needs_human"),
+        "verdict": verdict,
+        "route": route,
+    }
+
+@router.get("/problems/{pid}")
+async def get_problem(pid: str, session: SessionDep, user: CurrentUser) -> dict:
+    """题目详情：题面 Markdown + 样例 + 来源。"""
+    row = (
+        await session.execute(select(Problem).where(Problem.pid == pid))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    return {
+        "pid": row.pid,
+        "title": row.title,
+        "difficulty": row.difficulty,
+        "tags": row.tags,
+        "samples": row.samples or [],
+        "statement_md": row.statement_md,
+        "source": row.source,
+        "source_url": row.source_url,
+        "package_level": row.package_level,
+        "time_limit_ms": 1000,
+    }

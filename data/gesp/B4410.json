@@ -1,0 +1,35 @@
+{
+  "pid": "B4410",
+  "title": "[GESP202509 一级] 金字塔",
+  "difficulty_id": 1,
+  "difficulty": "入门",
+  "tags": [
+    "tag:62",
+    "tag:355",
+    "tag:409"
+  ],
+  "sections": {
+    "background": "对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1189>",
+    "description": "金字塔由 $n$ 层石块垒成。从塔底向上，每层依次需要 $n \\times n, (n-1) \\times (n-1), \\cdots, 2 \\times 2, 1 \\times 1$ 块石块。请问搭建金字塔总共需要多少块石块？",
+    "input_format": "一行，一个正整数 $n$，表示金字塔的层数。",
+    "output_format": "一行，一个正整数，表示搭建金字塔所需的石块数量。",
+    "hint": "对于所有测试点，保证 $1 \\leq n \\leq 50$。"
+  },
+  "samples": [
+    {
+      "input": "2",
+      "output": "5"
+    },
+    {
+      "input": "5",
+      "output": "55"
+    }
+  ],
+  "markdown": "# B4410 [GESP202509 一级] 金字塔\n\n## 题目背景\n\n对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1189>\n\n## 题目描述\n\n金字塔由 $n$ 层石块垒成。从塔底向上，每层依次需要 $n \\times n, (n-1) \\times (n-1), \\cdots, 2 \\times 2, 1 \\times 1$ 块石块。请问搭建金字塔总共需要多少块石块？\n\n## 输入格式\n\n一行，一个正整数 $n$，表示金字塔的层数。\n\n## 输出格式\n\n一行，一个正整数，表示搭建金字塔所需的石块数量。\n\n## 说明/提示\n\n对于所有测试点，保证 $1 \\leq n \\leq 50$。\n",
+  "time_limit_ms": "1000",
+  "source": "gesp",
+  "source_url": "https://www.luogu.com.cn/problem/B4410",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false
+}

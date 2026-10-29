@@ -1,0 +1,41 @@
+{
+  "pid": "P1226",
+  "title": "【模板】快速幂",
+  "difficulty_id": 2,
+  "difficulty": "普及−",
+  "tags": [
+    "数学",
+    "递推",
+    "递归",
+    "分治",
+    "tag:314",
+    "tag:523"
+  ],
+  "tags_raw": [
+    5,
+    12,
+    54,
+    112,
+    314,
+    523
+  ],
+  "sections": {
+    "description": "给你三个整数 $a,b,p$，求 $a^b \\bmod p$。",
+    "input_format": "输入只有一行三个整数，分别代表 $a,b,p$。",
+    "output_format": "输出一行一个字符串 `a^b mod p=s`，其中 $a,b,p$ 分别为题目给定的值， $s$ 为运算结果。",
+    "hint": "**样例解释**\n\n$2^{10} = 1024$，$1024 \\bmod 9 = 7$。\n\n**数据规模与约定**\n\n对于 $100\\%$ 的数据，保证 $0\\le a,b < 2^{31}$，$a+b>0$，$2 \\leq p \\lt 2^{31}$。"
+  },
+  "samples": [
+    {
+      "input": "2 10 9",
+      "output": "2^10 mod 9=7"
+    }
+  ],
+  "source": "luogu",
+  "source_url": "https://www.luogu.com.cn/problem/P1226",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false,
+  "crawled_at": "2026-10-29T09:27:50+0800",
+  "markdown": "# P1226 【模板】快速幂\n\n## 题目描述\n\n给你三个整数 $a,b,p$，求 $a^b \\bmod p$。\n\n## 输入格式\n\n输入只有一行三个整数，分别代表 $a,b,p$。\n\n## 输出格式\n\n输出一行一个字符串 `a^b mod p=s`，其中 $a,b,p$ 分别为题目给定的值， $s$ 为运算结果。\n\n## 说明/提示\n\n**样例解释**\n\n$2^{10} = 1024$，$1024 \\bmod 9 = 7$。\n\n**数据规模与约定**\n\n对于 $100\\%$ 的数据，保证 $0\\le a,b < 2^{31}$，$a+b>0$，$2 \\leq p \\lt 2^{31}$。\n\n## 输入输出样例\n\n样例 1 输入\n```\n2 10 9\n```\n\n样例 1 输出\n```\n2^10 mod 9=7\n```\n"
+}

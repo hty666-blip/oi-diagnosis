@@ -1,0 +1,33 @@
+{
+  "pid": "P1177",
+  "title": "【模板】排序",
+  "difficulty_id": 2,
+  "difficulty": "普及−",
+  "tags": [
+    "排序",
+    "tag:523"
+  ],
+  "tags_raw": [
+    113,
+    523
+  ],
+  "sections": {
+    "description": "将读入的 $N$ 个数从小到大排序后输出。",
+    "input_format": "第一行为一个正整数 $N$。\n\n第二行包含 $N$ 个空格隔开的正整数 $a_i$，为你需要进行排序的数。",
+    "output_format": "将给定的 $N$ 个数从小到大输出，数之间空格隔开。",
+    "hint": "对于 $20\\%$ 的数据，有 $1 \\leq N \\leq 10^3$；\n\n对于 $100\\%$ 的数据，有 $1 \\leq N \\leq 10^5$，$1 \\le a_i \\le 10^9$。"
+  },
+  "samples": [
+    {
+      "input": "5\n4 2 4 5 1",
+      "output": "1 2 4 4 5"
+    }
+  ],
+  "source": "luogu",
+  "source_url": "https://www.luogu.com.cn/problem/P1177",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false,
+  "crawled_at": "2026-10-29T09:27:20+0800",
+  "markdown": "# P1177 【模板】排序\n\n## 题目描述\n\n将读入的 $N$ 个数从小到大排序后输出。\n\n## 输入格式\n\n第一行为一个正整数 $N$。\n\n第二行包含 $N$ 个空格隔开的正整数 $a_i$，为你需要进行排序的数。\n\n## 输出格式\n\n将给定的 $N$ 个数从小到大输出，数之间空格隔开。\n\n## 说明/提示\n\n对于 $20\\%$ 的数据，有 $1 \\leq N \\leq 10^3$；\n\n对于 $100\\%$ 的数据，有 $1 \\leq N \\leq 10^5$，$1 \\le a_i \\le 10^9$。\n\n## 输入输出样例\n\n样例 1 输入\n```\n5\n4 2 4 5 1\n```\n\n样例 1 输出\n```\n1 2 4 4 5\n```\n"
+}

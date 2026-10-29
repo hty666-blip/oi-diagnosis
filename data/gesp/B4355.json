@@ -1,0 +1,32 @@
+{
+  "pid": "B4355",
+  "title": "[GESP202506 一级] 值日",
+  "difficulty_id": 1,
+  "difficulty": "入门",
+  "tags": [
+    "数学",
+    "tag:62",
+    "tag:355",
+    "tag:409"
+  ],
+  "sections": {
+    "background": "对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1181>",
+    "description": "小杨和小红是值日生，负责打扫教室。小杨每 $m$ 天值日一次，小红每 $n$ 天值日一次。今天他们两个一起值日，请问至少多少天后，他们会再次同一天值日？",
+    "input_format": "第一行，一个正整数 $m$，表示小杨的值日周期；\n\n第二行，一个正整数 $n$，表示小红的值日周期。",
+    "output_format": "一行，一个整数，表示至少多少天后他们会再次同一天值日。",
+    "hint": "对于所有测试点，保证 $1 \\leq m, n \\leq 100$。"
+  },
+  "samples": [
+    {
+      "input": "4\n6",
+      "output": "12"
+    }
+  ],
+  "markdown": "# B4355 [GESP202506 一级] 值日\n\n## 题目背景\n\n对应的选择、判断题：<https://ti.luogu.com.cn/problemset/1181>\n\n## 题目描述\n\n小杨和小红是值日生，负责打扫教室。小杨每 $m$ 天值日一次，小红每 $n$ 天值日一次。今天他们两个一起值日，请问至少多少天后，他们会再次同一天值日？\n\n## 输入格式\n\n第一行，一个正整数 $m$，表示小杨的值日周期；\n\n第二行，一个正整数 $n$，表示小红的值日周期。\n\n## 输出格式\n\n一行，一个整数，表示至少多少天后他们会再次同一天值日。\n\n## 说明/提示\n\n对于所有测试点，保证 $1 \\leq m, n \\leq 100$。\n",
+  "time_limit_ms": "1000",
+  "source": "gesp",
+  "source_url": "https://www.luogu.com.cn/problem/B4355",
+  "license_note": "题面著作权归洛谷及原出题人所有；仅用于非商业毕业设计演示，禁止再分发。",
+  "package_level": "C",
+  "has_testdata": false
+}
