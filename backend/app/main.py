@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
 from app.api.v1 import auth, card, catalog, reviews, submissions, system, tutor
 from app.core.config import settings
+from app.core.security import validate_security_settings
 from app.infra.db import dispose_engine, ping
+from app.worker import JudgeWorker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    await dispose_engine()
+    validate_security_settings()
+    worker = asyncio.create_task(JudgeWorker().run_forever()) if settings.judge_worker_enabled else None
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+        await dispose_engine()
 
 
 app = FastAPI(

@@ -74,3 +74,31 @@ test("非 JSON 服务器错误不会把 HTML 或内部堆栈当成学生提示",
   await assert.rejects(api.evidence(42), (error) =>
     error.status === 502 && !error.message.includes("private internal trace"));
 });
+
+test("异步提交只申请持久任务，202响应可查询；重试原提交不伪造新代码或父记录", async () => {
+  const requests = [];
+  const signal = new AbortController().signal;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return json({ id: 42, stage: "QUEUED", verdict: null, job: { status: "queued" } }, 202);
+  };
+  const accepted = await api.submitAsync("PTV-0001", "code", 21, signal);
+  assert.equal(accepted.verdict, null);
+  assert.equal(requests[0].options.headers.Prefer, "respond-async");
+  assert.equal(requests[0].options.signal, signal);
+  assert.equal(JSON.parse(requests[0].options.body).parent_submission_id, 21);
+  await api.retrySubmission(42, signal);
+  assert.equal(requests[1].url, "/api/v1/submissions/42/retry");
+  assert.equal(requests[1].options.body, undefined);
+});
+
+test("账号切换后的迟到401不清除新账号凭证，也不让旧任务响应污染新页面", async () => {
+  let complete;
+  globalThis.fetch = () => new Promise((resolve) => { complete = resolve; });
+  const request = api.getSubmission(42);
+  storage.set("oi_token", "new-account-token");
+  complete(json({ detail: "expired" }, 401));
+  await assert.rejects(request, (error) => error.name === "AbortError");
+  assert.equal(storage.get("oi_token"), "new-account-token");
+  assert.deepEqual(events, []);
+});

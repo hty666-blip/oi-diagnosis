@@ -92,6 +92,31 @@ class Submission(Base):
     )
 
 
+class JudgeJob(Base):
+    """与提交同事务保存的判题任务；租约令牌隔离失效执行者。"""
+
+    __tablename__ = "judge_job"
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name="ck_judge_job_status"),
+        CheckConstraint("attempts >= 0 AND max_attempts > 0", name="ck_judge_job_attempts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("submission.id", ondelete="CASCADE"), unique=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    manual_retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    owner_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Evidence(Base):
     __tablename__ = "evidence"
 

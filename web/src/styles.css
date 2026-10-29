@@ -434,6 +434,10 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .lineage-list { padding-left: 22px; margin: 12px 0; }
 .lineage-list > li { padding: 8px 0; }
 .lineage-list li::marker { color: var(--muted); font-size: 12px; }
+.task-status { margin: 14px 0; padding: 14px 0; border-block: 1px solid var(--line); }
+.task-status h3 { font-size: 15px; margin: 0 0 8px; }
+.task-status p { line-height: 1.8; margin: 8px 0; overflow-wrap: anywhere; }
+.task-status .ghost { margin-top: 8px; }
 @media (max-width: 1000px) { .review-layout { grid-template-columns: 1fr; gap: 12px; } }
 @media (max-width: 700px) {
   .review-form textarea, .review-form select { font-size: 16px; }

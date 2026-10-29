@@ -26,7 +26,8 @@ from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, Problem, Submission
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.services.job_service import JobLease, require_lease
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
 PIPELINE_VER = "v4"
@@ -102,13 +103,14 @@ def decide_verdict(comp: CompileResult, runs: list[tuple[dict, CommandResult]], 
 
 
 class SubmissionService:
-    def __init__(self, session: AsyncSession, sandbox=None) -> None:
+    def __init__(self, session: AsyncSession, sandbox=None, *, lease: JobLease | None = None) -> None:
         self.session = session
         self.sandbox = sandbox or build_runner()
         self.was_created = False
+        self.lease = lease
 
     async def create(self, problem_pid: str, code: str, student_id: int = 0,
-                     parent_submission_id: int | None = None) -> Submission:
+                     parent_submission_id: int | None = None, *, background: bool = False) -> Submission:
         self.was_created = False
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
@@ -144,7 +146,7 @@ class SubmissionService:
                     Submission.student_id == student_id,
                     Submission.pipeline_ver == pipeline_ver,
                     Submission.parent_submission_id == parent_submission_id,
-                    Submission.stage.in_(("RECEIVED", "COMPILING", "RUNNING", "READY")),
+                    Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
                 )
                 .order_by(Submission.id.desc()).limit(1)
             )
@@ -159,10 +161,14 @@ class SubmissionService:
             code=normalized,
             code_hash=digest,
             pipeline_ver=pipeline_ver,
-            stage="RECEIVED",
+            stage="QUEUED" if background else "RECEIVED",
             parent_submission_id=parent_submission_id,
         )
         self.session.add(sub)
+        if background:
+            await self.session.flush()
+            self.session.add(JudgeJob(submission_id=sub.id,
+                                      max_attempts=max(1, settings.judge_job_max_attempts)))
         await self.session.commit()
         await self.session.refresh(sub)
         self.was_created = True
@@ -173,14 +179,20 @@ class SubmissionService:
         self._artifact_id = None
         submission_id = submission.id
         try:
+            if self.lease is not None:
+                await require_lease(self.session, self.lease)
             return await self._run(submission)
         except SandboxError:
+            if self.lease is not None:
+                raise
             submission.stage = "SANDBOX_ERROR"
             submission.verdict = None
             submission.tests_passed = None
             await self.session.commit()
             raise
         except asyncio.CancelledError:
+            if self.lease is not None:
+                raise
             # 请求取消不能留下永远“运行中”的缓存记录。
             await self.session.rollback()
             await self.session.execute(update(Submission).where(Submission.id == submission_id).values(
@@ -221,7 +233,7 @@ class SubmissionService:
         })
 
         submission.stage = "COMPILING"
-        await self.session.commit()
+        await self._commit()
 
         # 2) 编译
         comp = await self.sandbox.compile(submission.code)
@@ -240,7 +252,7 @@ class SubmissionService:
 
         # 3) 运行本次固定的测试集，记录输入以便重现失败。
         submission.stage = "RUNNING"
-        await self.session.commit()
+        await self._commit()
 
         runs: list[tuple[dict, CommandResult]] = []
         for idx, sample in enumerate(suite.cases, start=1):
@@ -290,6 +302,9 @@ class SubmissionService:
 
     async def _finalize(self, submission: Submission, result: VerdictResult,
                         tr: TriageResult, suite: JudgeSuite) -> None:
+        if self.lease is not None:
+            # 在修改 Submission 和查询 Diagnosis 可能触发 autoflush 之前先锁定所有者。
+            await require_lease(self.session, self.lease)
         submission.verdict = result.verdict
         result.suite_digest = suite.digest
         submission.tests_passed = {"passed": result.passed, "total": result.total,
@@ -329,7 +344,7 @@ class SubmissionService:
         }
         diag.degraded = tr.notes
         self.session.add(diag)
-        await self.session.commit()
+        await self._commit(complete_job=True)
 
     async def _add_evidence(self, submission_id: int, kind: str, payload: dict,
                             *, reproducible: bool = True) -> Evidence:
@@ -340,6 +355,21 @@ class SubmissionService:
         ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest,
                       reproducible=reproducible)
         self.session.add(ev)
-        await self.session.commit()
+        await self._commit()
         return ev
+
+    async def _commit(self, *, complete_job: bool = False) -> None:
+        if self.lease is not None:
+            job = await require_lease(self.session, self.lease)
+            if complete_job:
+                from sqlalchemy import func
+
+                job.status = "succeeded"
+                # 完成令牌仅用于心跳确认清理归属；非 running 状态始终不能写回。
+                job.lease_expires_at = None
+                job.last_error = None
+                job.finished_at = func.now()
+        await self.session.commit()
+        if complete_job and self.lease is not None:
+            self.lease.committed.set()
 

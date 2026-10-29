@@ -4,8 +4,9 @@ import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
 import SubmissionLineage from "./components/SubmissionLineage";
+import { parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import {
-  api, cachedUser, clearSession, messageOf, readLocal, writeLocal,
+  api, ApiError, cachedUser, clearSession, messageOf, readLocal, removeLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
   type MySubmission, type Overview, type Problem, type ProblemDetail,
   type SessionReply, type SubmissionResult,
@@ -88,14 +89,81 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const [latestSubmitted, setLatestSubmitted] = useState<SubmissionResult | null>(null);
   const [detailRetry, setDetailRetry] = useState(0);
   const [lineageRestore, setLineageRestore] = useState<{ id: number; tick: number } | null>(null);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [polling, setPolling] = useState(false);
+  const [taskError, setTaskError] = useState("");
   const restoreTarget = (lineageRestore?.tick ?? 0) > (restore?.tick ?? 0) ? lineageRestore : restore;
   const requestLock = useRef(false);
   const workRequest = useRef(0);
   const evidenceRequest = useRef(0);
   const hasSelection = useRef(false);
+  const taskController = useRef<AbortController | null>(null);
+  const submitController = useRef<AbortController | null>(null);
   const draftKey = (nextPid: string) => "oi-draft:" + userId + ":" + nextPid;
+  const pendingHintKey = (nextPid: string) => "oi-pending-hint:" + userId + ":" + nextPid;
+
+  useEffect(() => () => {
+    workRequest.current += 1;
+    taskController.current?.abort();
+    submitController.current?.abort();
+  }, []);
+
+  function stopWatching() {
+    taskController.current?.abort();
+    taskController.current = null;
+    setPolling(false); setPendingId(null); setTaskError("");
+  }
+
+  async function finishSubmission(value: SubmissionResult, nextPid: string, generation: number) {
+    if (generation !== workRequest.current) return;
+    if (parsePendingId(readLocal(pendingKey(userId, nextPid))) === value.id) {
+      removeLocal(pendingKey(userId, nextPid));
+      removeLocal(pendingHintKey(nextPid));
+    }
+    setPendingId(null); setTaskError(""); setSub(value); setDiag(initialDiagnosis(value));
+    setSavedCode(value.code ?? ""); setLatestSubmitted(value);
+    const evidenceTask = loadEvidence(value.id);
+    if (!["AC", "SAMPLE_PASS", "NO_TESTS"].includes(value.verdict ?? "") && !value.diagnosis?.reviewer_id) {
+      requestLock.current = true; setBusy("diagnose");
+      try { await diagnose(value.id, generation); }
+      finally { if (generation === workRequest.current) { requestLock.current = false; setBusy(null); } }
+    }
+    await evidenceTask;
+  }
+
+  async function watchTask(id: number, nextPid: string, generation: number) {
+    taskController.current?.abort();
+    const controller = new AbortController();
+    taskController.current = controller;
+    setPendingId(id); setPolling(true); setTaskError("");
+    writeLocal(pendingKey(userId, nextPid), String(id));
+    const result = await pollSubmission({
+      id, signal: controller.signal,
+      fetchRecord: async (recordId, signal) => {
+        const value = await api.getSubmission(recordId, signal);
+        if (value.problem_pid && value.problem_pid !== nextPid) throw new ApiError("保存的任务不属于当前题目，请从提交记录打开。", 404);
+        return value;
+      },
+      isCurrent: () => generation === workRequest.current,
+      onUpdate: (value) => {
+        setSub(value); setSavedCode(value.code ?? "");
+        if (submissionPhase(value) !== "complete") setDiag(null);
+      },
+    });
+    if (generation !== workRequest.current || taskController.current !== controller) return;
+    taskController.current = null; setPolling(false);
+    if (result.reason === "complete" && result.record) await finishSubmission(result.record, nextPid, generation);
+    else if (result.reason === "paused") {
+      if (result.error instanceof ApiError && [403, 404].includes(result.error.status)) {
+        removeLocal(pendingKey(userId, nextPid)); removeLocal(pendingHintKey(nextPid));
+        setPendingId(null); setSub(null);
+        setError("保存的任务不存在或当前账号无权访问。本机草稿已保留，请从提交记录核对，或重新提交代码。");
+      } else setTaskError(result.error ? messageOf(result.error) : "已暂停自动查询。任务仍保存在服务器，点击继续查询即可查看，无需重新提交。");
+    } else if (result.reason === "failed") setTaskError("");
+  }
 
   function selectProblem(nextPid: string) {
+    stopWatching();
     hasSelection.current = true;
     workRequest.current += 1;
     evidenceRequest.current += 1;
@@ -104,7 +172,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     writeLocal("oi-selected-problem:" + userId, nextPid);
     setSub(null); setDiag(null); setEvidence([]); setError(""); setDiagError("");
     setEvidenceLoading(false); setEvidenceError("");
-    setTutorSubmission(null); setLatestSubmitted(null);
+    const storedId = parsePendingId(readLocal(pendingKey(userId, nextPid)));
+    setTutorSubmission(storedId ? parsePendingId(readLocal(pendingHintKey(nextPid))) : null);
+    setLatestSubmitted(null);
+    if (storedId) void watchTask(storedId, nextPid, workRequest.current);
   }
 
   async function loadProblems() {
@@ -147,13 +218,16 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
 
   useEffect(() => {
     if (!restoreTarget) return;
+    stopWatching();
     let active = true;
     const generation = ++workRequest.current;
     evidenceRequest.current += 1;
     hasSelection.current = true;
     requestLock.current = true;
+    const controller = new AbortController();
+    submitController.current?.abort(); submitController.current = controller;
     setBusy("restore"); setError("");
-    api.getSubmission(restoreTarget.id).then(async (value) => {
+    api.getSubmission(restoreTarget.id, controller.signal).then(async (value) => {
       if (!active || generation !== workRequest.current) return;
       if (!value.problem_pid || value.code === undefined) throw new Error("这条历史记录缺少题目或源码，请从题库重新打开题目。");
       setPid(value.problem_pid); setCode(value.code); setSavedCode(value.code);
@@ -161,11 +235,17 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       writeLocal("oi-selected-problem:" + userId, value.problem_pid);
       setSub(value); setDiag(initialDiagnosis(value)); setDiagError("");
       setTutorSubmission(null); setLatestSubmitted(null);
-      await loadEvidence(value.id);
+      if (submissionPhase(value) === "pending") {
+        const stored = parsePendingId(readLocal(pendingKey(userId, value.problem_pid)));
+        setTutorSubmission(stored === value.id ? parsePendingId(readLocal(pendingHintKey(value.problem_pid))) : null);
+        void watchTask(value.id, value.problem_pid, generation);
+      } else if (submissionPhase(value) === "failed") {
+        setPendingId(value.id);
+      } else await loadEvidence(value.id);
     }).catch((e) => { if (active) setError(messageOf(e)); }).finally(() => {
       if (active && generation === workRequest.current) { setBusy(null); requestLock.current = false; }
     });
-    return () => { active = false; };
+    return () => { active = false; controller.abort(); };
   }, [restoreTarget]);
 
   async function diagnose(id: number, generation = workRequest.current) {
@@ -188,23 +268,27 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   }
 
   async function run() {
-    if (requestLock.current || !detail || !code.trim()) return;
+    if (requestLock.current || !detail || !code.trim() || (sub && submissionPhase(sub) === "pending")) return;
+    stopWatching();
     const generation = ++workRequest.current;
     evidenceRequest.current += 1;
     requestLock.current = true; setBusy("judge"); setError(""); setDiagError("");
     setSub(null); setDiag(null); setEvidence([]); setEvidenceError("");
     const submittedCode = code;
     const parentId = sub?.id;
+    const controller = new AbortController();
+    submitController.current?.abort(); submitController.current = controller;
     try {
-      const value = await api.submit(pid, submittedCode, parentId);
+      const value = await api.submitAsync(pid, submittedCode, parentId, controller.signal);
       if (generation !== workRequest.current) return;
-      setSub(value); setSavedCode(submittedCode); setDiag(initialDiagnosis(value)); setLatestSubmitted(value);
-      const evidenceTask = loadEvidence(value.id);
-      if (!["AC", "SAMPLE_PASS", "NO_TESTS"].includes(value.verdict ?? "")) {
-        setBusy("diagnose");
-        await diagnose(value.id, generation);
+      setSub(value); setSavedCode(submittedCode); setDiag(null);
+      if (submissionPhase(value) === "complete") await finishSubmission(value, pid, generation);
+      else {
+        setLatestSubmitted(null);
+        if (tutorSubmission) writeLocal(pendingHintKey(pid), String(tutorSubmission));
+        else removeLocal(pendingHintKey(pid));
+        if (submissionPhase(value) === "pending") void watchTask(value.id, pid, generation);
       }
-      await evidenceTask;
     } catch (e) {
       if (generation === workRequest.current) {
         setSub(sub); setDiag(diag); setEvidence(evidence);
@@ -215,8 +299,24 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     }
   }
 
+  async function retryTask() {
+    if (!sub || !sub.job?.retryable || requestLock.current) return;
+    const generation = ++workRequest.current;
+    requestLock.current = true; setBusy("judge"); setTaskError("");
+    const controller = new AbortController();
+    submitController.current?.abort(); submitController.current = controller;
+    try {
+      const value = await api.retrySubmission(sub.id, controller.signal);
+      if (generation !== workRequest.current) return;
+      setSub(value); setDiag(null); setEvidence([]);
+      void watchTask(value.id, pid, generation);
+    } catch (e) { if (generation === workRequest.current) setTaskError(messageOf(e)); }
+    finally { if (generation === workRequest.current) { requestLock.current = false; setBusy(null); } }
+  }
+
   const hasChanged = sub !== null && code !== savedCode;
-  const canTutor = sub && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
+  const phase = sub ? submissionPhase(sub) : null;
+  const canTutor = sub && phase === "complete" && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
 
   return (
     <>
@@ -252,13 +352,24 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             <textarea id="solution-code" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid), e.target.value); }} onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void run(); }
             }} />
-            <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || !detail || !code.trim()}>
-              {busy === "judge" ? "正在编译与运行…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : sub ? "重新提交验证" : "提交并验证"}
+            <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim()}>
+              {busy === "judge" ? "正在发送任务…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
             </button><span className="dim">草稿保留在当前浏览器</span></div>
             {hasChanged && <p className="scope-note">代码已有修改。下方结果对应上次提交，请重新提交验证改动。</p>}
           </div>
+          {pendingId && !sub && <section className="card" aria-label="恢复判题任务"><h2>提交 #{pendingId}</h2><p role="status">{polling ? "正在读取服务器保存的任务状态…" : "状态查询已暂停，代码草稿和服务器任务均已保留。"}</p><ErrorNotice message={taskError} onRetry={() => void watchTask(pendingId, pid, workRequest.current)} /></section>}
           {sub && <section className="card" aria-label="本次执行结果" aria-live="polite">
-            <div className="card-head"><h2>提交 #{sub.id}</h2><CardDownload id={sub.id} /></div>
+            <div className="card-head"><h2>提交 #{sub.id}</h2>{phase === "complete" && <CardDownload id={sub.id} />}</div>
+            {phase !== "complete" && <div className="task-status" role="status">
+              <h3>{phase === "failed" ? "判题未完成" : taskLabel(sub)}</h3>
+              <p>{phase === "failed" ? sub.job?.last_error || "执行未能完成，不能将此结果算作学生代码错误。" : "任务已保存在服务器。刷新页面或切换题目不会取消判题，也可从提交记录继续查看。"}</p>
+              {sub.job && <p className="dim">已尝试 {sub.job.attempts} / {sub.job.max_attempts} 次{phase === "pending" && !polling ? " · 自动查询已暂停" : ""}</p>}
+              <ErrorNotice message={taskError} />
+              {phase === "pending" && !polling && <button className="ghost" onClick={() => void watchTask(sub.id, pid, workRequest.current)}>继续查询任务状态</button>}
+              {phase === "failed" && sub.job?.retryable && <button className="ghost" disabled={!!busy} onClick={() => void retryTask()}>重试原代码</button>}
+              {phase === "failed" && <p className="dim">重试使用这条提交保存的代码；若要验证编辑后的代码，请选择「重新提交验证」。</p>}
+            </div>}
+            {phase === "complete" && <>
             <div className="verdict-bar"><VerdictBadge verdict={sub.verdict} tests={sub.tests_passed} />
               {sub.tests_passed && sub.tests_passed.total > 0 && <span className="muted">{sub.tests_passed.scope === "package" ? "题包测试" : sub.tests_passed.scope === "samples" ? "样例测试" : "历史测试"} {sub.tests_passed.passed} / {sub.tests_passed.total} 通过</span>}
             </div>
@@ -284,6 +395,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
             <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />
             {canTutor && !tutorSubmission && <button className="ghost" onClick={() => setTutorSubmission(sub.id)}>围绕这次提交获取提示</button>}
+            </>}
           </section>}
           {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} />}
         </section>
@@ -394,7 +506,15 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">
       {loading ? <div className="empty" role="status">正在加载提交记录…</div> : !rows.length && !error ? <div className="empty">还没有提交记录。从「练习与诊断」选择一道题，提交你的第一份代码。</div> : <div className="table-scroll"><table><thead><tr><th>题目 / 提交</th><th>执行结果</th><th>诊断摘要</th><th>操作</th></tr></thead><tbody>
-        {rows.map((row) => <tr key={row.id}><td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.parent_submission_id ? " · 修改自 #" + row.parent_submission_id : ""}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.diagnosis_status === "needs_human" ? <span className="badge warn">{row.reviewer_id ? "教师已查看 · 仍待核对" : "待教师复核"}</span> : row.reviewer_id ? <span className="badge">教师已复核</span> : null}<p>{row.narrative || "尚无诊断，打开后可查看执行记录。"}</p></td><td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button><CardDownload id={row.id} /></div></td></tr>)}
+        {rows.map((row) => {
+          const recordPhase = submissionPhase({ stage: row.stage ?? "READY", verdict: row.verdict });
+          return <tr key={row.id}>
+            <td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.parent_submission_id ? " · 修改自 #" + row.parent_submission_id : ""}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td>
+            <td>{recordPhase === "complete" ? <VerdictBadge verdict={row.verdict} tests={row.tests_passed} /> : <span className="badge warn">{recordPhase === "failed" ? "判题未完成" : taskLabel({ stage: row.stage ?? "QUEUED" })}</span>}</td>
+            <td className="muted">{row.diagnosis_status === "needs_human" ? <span className="badge warn">{row.reviewer_id ? "教师已查看 · 仍待核对" : "待教师复核"}</span> : row.reviewer_id ? <span className="badge">教师已复核</span> : null}<p>{recordPhase === "complete" ? row.narrative || "尚无诊断，打开后可查看执行记录。" : recordPhase === "failed" ? "验证未完成，打开后可查看失败说明或重试。" : "任务仍在处理，打开后继续查看真实状态。"}</p></td>
+            <td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button>{recordPhase === "complete" && <CardDownload id={row.id} />}</div></td>
+          </tr>;
+        })}
       </tbody></table></div>}
     </div>
   </>;

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 
 from import_packages import ROOT, import_packages, read_packages
-from seed_demo import ensure_users
+from seed_demo import ensure_users, require_demo_environment
 
 
 async def prepare() -> None:
+    require_demo_environment()
     records = read_packages(ROOT / "problems")
     await ensure_users()
     await import_packages(records)

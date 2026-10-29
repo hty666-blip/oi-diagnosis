@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,12 @@ class Settings(BaseSettings):
     judge_url: str = "http://localhost:5050"
     judge_token: str = ""
     judge_timeout_s: float = 30.0
+    judge_worker_enabled: bool = True
+    judge_worker_poll_seconds: float = Field(default=0.5, ge=0.1, le=60)
+    judge_job_lease_seconds: int = Field(default=30, ge=5, le=300)
+    judge_job_timeout_seconds: float = Field(default=120.0, ge=1, le=3600)
+    judge_job_max_attempts: int = Field(default=3, ge=1, le=10)
+    judge_job_max_manual_retries: int = Field(default=2, ge=0, le=10)
 
     # 模型
     llm_enabled: bool = True

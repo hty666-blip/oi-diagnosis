@@ -61,11 +61,11 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
       <div className="login-panel">
         <form className="login-card" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
           <h2>登录</h2>
-          <p className="hint">登录后可继续本机草稿，也可选择下方演示账号。</p>
+          <p className="hint">登录后可继续本机草稿。{demos.length > 0 ? "也可选择下方演示账号。" : "请使用教师分配的账号。"}</p>
 
           <div className="field">
             <label htmlFor="login-username">用户名</label>
-            <input id="login-username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required disabled={busy} />
+            <input id="login-username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" maxLength={64} required disabled={busy} />
           </div>
           <div className="field">
             <label htmlFor="login-password">密码</label>
@@ -75,6 +75,7 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              maxLength={1024}
               required
               disabled={busy}
             />
@@ -86,7 +87,7 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
             {busy ? "登录中…" : "进入系统"}
           </button>
 
-          <div className="demo-accounts">
+          {demos.length > 0 && <div className="demo-accounts">
             <div className="label">一键填入演示账号</div>
             <div className="demo-grid">
               {demos.map((d) => (
@@ -107,7 +108,7 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
         </form>
       </div>
     </div>

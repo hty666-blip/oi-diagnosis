@@ -69,6 +69,8 @@ jobs:
           python-version: "3.12"
       - name: Install parsing deps
         run: pip install lxml
+      - name: Check tracked files for secrets
+        run: python tools/check_secrets.py --all
       - name: Surface lint smoke
         run: |
           status=0

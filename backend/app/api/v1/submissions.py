@@ -4,17 +4,18 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
 from app.capabilities.sandbox import SandboxError
-from app.domain.models import Diagnosis, Evidence, Problem, Submission
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
 from app.infra.db import get_session
 from app.orchestrator.graph import run_diagnosis
 from app.services.access import accessible_submission
+from app.services.job_service import JobService, job_out
 from app.services.judgement import effective_verdict, result_narrative
 from app.services.submission_service import SubmissionService
 
@@ -48,10 +49,12 @@ class SubmissionOut(BaseModel):
     memory_kb: int | None
     tests_passed: dict | None
     diagnosis: dict | None = None
+    job: dict | None = None
 
 
 def _to_out(
-    sub: Submission, diag: Diagnosis | None = None, problem: Problem | None = None
+    sub: Submission, diag: Diagnosis | None = None, problem: Problem | None = None,
+    job: JudgeJob | None = None,
 ) -> SubmissionOut:
     return SubmissionOut(
         id=sub.id,
@@ -64,6 +67,7 @@ def _to_out(
         time_ms=sub.time_ms,
         memory_kb=sub.memory_kb,
         tests_passed=sub.tests_passed,
+        job=job_out(job),
         diagnosis=(
             {
                 "mechanism": diag.mechanism,
@@ -89,12 +93,16 @@ async def create_submission(
     payload: SubmissionCreate,
     session: SessionDep,
     user: CurrentUser,
+    response: Response,
+    prefer: Annotated[str | None, Header()] = None,
 ) -> SubmissionOut:
     if payload.student_id not in (None, user.id):
         raise HTTPException(status_code=403, detail="只能以当前登录账号提交代码")
     svc = SubmissionService(session)
+    background = "respond-async" in [part.strip().lower() for part in (prefer or "").split(",")]
     try:
-        sub = await svc.create(payload.problem_pid, payload.code, user.id, payload.parent_submission_id)
+        sub = await svc.create(payload.problem_pid, payload.code, user.id, payload.parent_submission_id,
+                               background=background)
     except SandboxError as e:
         raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
     except ValueError as e:
@@ -104,7 +112,18 @@ async def create_submission(
         diag = (
             await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
         ).scalar_one_or_none()
-        return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+        job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
+        return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
+
+    if background:
+        job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(status_code=409, detail="该提交正在同步执行，请稍后查询结果",
+                                headers={"Location": f"/api/v1/submissions/{sub.id}"})
+        response.status_code = 202
+        response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
+        response.headers["Retry-After"] = "1"
+        return _to_out(sub, None, await session.get(Problem, sub.problem_id), job)
 
     if not svc.was_created:
         raise HTTPException(status_code=409, detail=f"提交 #{sub.id} 正在判题，请稍后查看结果",
@@ -118,7 +137,19 @@ async def create_submission(
     diag = (
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+    job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
+
+
+@router.post("/{submission_id}/retry", response_model=SubmissionOut, status_code=202)
+async def retry_submission(
+    submission_id: int, session: SessionDep, user: CurrentUser, response: Response,
+) -> SubmissionOut:
+    job = await JobService(session).retry(submission_id, user)
+    sub = await accessible_submission(session, user, submission_id)
+    response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
+    response.headers["Retry-After"] = "1"
+    return _to_out(sub, None, await session.get(Problem, sub.problem_id), job)
 
 
 @router.get("/{submission_id}", response_model=SubmissionOut)
@@ -131,7 +162,8 @@ async def get_submission(
     diag = (
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id))
+    job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
+    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job)
 
 
 @router.get("/{submission_id}/evidence")

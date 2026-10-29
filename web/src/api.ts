@@ -18,6 +18,10 @@ export function writeLocal(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* 禁用存储时仍允许继续编辑。 */ }
 }
 
+export function removeLocal(key: string) {
+  try { localStorage.removeItem(key); } catch { /* 清理失败不影响服务器任务。 */ }
+}
+
 export function getToken(): string {
   return readLocal(TOKEN_KEY) ?? "";
 }
@@ -84,26 +88,34 @@ async function checkResponse(res: Response, login = false): Promise<Response> {
   return res;
 }
 
-async function request(url: string, body?: unknown, method = "GET"): Promise<Response> {
+interface RequestOptions { signal?: AbortSignal; headers?: Record<string, string> }
+
+async function request(url: string, body?: unknown, method = "GET", options: RequestOptions = {}): Promise<Response> {
+  const issuedToken = getToken();
   let response: Response;
   try {
     response = await fetch(BASE + url, {
       method,
-      headers: authHeaders(body === undefined ? {} : { "Content-Type": "application/json" }),
+      headers: authHeaders({ ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...options.headers }),
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: options.signal,
     });
   } catch {
+    if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("请求已停止", "AbortError");
     throw new Error("无法连接服务，请检查网络和后端是否启动；当前输入已保留。");
+  }
+  if (options.signal?.aborted || (url !== "/auth/login" && issuedToken !== getToken())) {
+    throw new DOMException("账号或页面已切换，请求已停止", "AbortError");
   }
   return checkResponse(response, url === "/auth/login");
 }
 
-async function get<T>(url: string): Promise<T> {
-  return (await request(url)).json() as Promise<T>;
+async function get<T>(url: string, options?: RequestOptions): Promise<T> {
+  return (await request(url, undefined, "GET", options)).json() as Promise<T>;
 }
 
-async function post<T>(url: string, body?: unknown): Promise<T> {
-  return (await request(url, body, "POST")).json() as Promise<T>;
+async function post<T>(url: string, body?: unknown, options?: RequestOptions): Promise<T> {
+  return (await request(url, body, "POST", options)).json() as Promise<T>;
 }
 
 export interface Problem {
@@ -155,6 +167,7 @@ export interface SubmissionResult {
   problem_pid?: string;
   problem_title?: string;
   code?: string;
+  job?: JudgeJob | null;
   diagnosis?: {
     narrative: string;
     status: string;
@@ -166,6 +179,17 @@ export interface SubmissionResult {
     reviewer_id?: number | null;
     reviewed_at?: string | null;
   } | null;
+}
+
+export interface JudgeJob {
+  id: number;
+  status: "queued" | "running" | "succeeded" | "failed";
+  attempts: number;
+  max_attempts: number;
+  retryable: boolean;
+  last_error: string | null;
+  available_at: string;
+  lease_expires_at: string | null;
 }
 
 export interface DiagResult {
@@ -297,7 +321,13 @@ export const api = {
     post<SubmissionResult>("/submissions", {
       problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
     }),
-  getSubmission: (id: number) => get<SubmissionResult>("/submissions/" + id),
+  submitAsync: (pid: string, code: string, parentId?: number | null, signal?: AbortSignal) =>
+    post<SubmissionResult>("/submissions", {
+      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+    }, { signal, headers: { Prefer: "respond-async" } }),
+  retrySubmission: (id: number, signal?: AbortSignal) =>
+    post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),
+  getSubmission: (id: number, signal?: AbortSignal) => get<SubmissionResult>("/submissions/" + id, { signal }),
   evidence: (id: number) => get<EvidenceItem[]>("/submissions/" + id + "/evidence"),
   lineage: (id: number) => get<LineageItem[]>("/submissions/" + id + "/lineage"),
   reviews: (id: number) => get<ReviewHistory>("/submissions/" + id + "/reviews"),

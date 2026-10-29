@@ -1,7 +1,8 @@
-"""上传前检查 Git 暂存内容；仅报告路径和类型，不输出疑似密钥。"""
+"""检查 Git 索引中的密钥；默认检查本次修改，--all 检查全部跟踪文件。"""
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 from pathlib import Path
@@ -22,13 +23,19 @@ def env_values(path: Path) -> dict[str, str]:
     return result
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--all", action="store_true", help="检查全部索引文件，适用于 CI")
+    args = parser.parse_args(argv)
     sample = env_values(ROOT / ".env.example")
     local = env_values(ROOT / ".env")
     private_values = [value.encode() for key, value in local.items()
                       if re.search(r"KEY|TOKEN|SECRET|PASSWORD", key, re.I)
                       and len(value) >= 8 and value != sample.get(key)]
-    paths = subprocess.check_output(["git", "diff", "--cached", "--name-only", "-z"], cwd=ROOT)
+    command = ["git", "ls-files", "-z"] if args.all else [
+        "git", "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z",
+    ]
+    paths = subprocess.check_output(command, cwd=ROOT)
     problems = []
     files = [part.decode("utf-8") for part in paths.split(b"\0") if part]
     for path in files:
@@ -46,7 +53,7 @@ def main() -> int:
         print(f"BLOCKED: {path} ({kind})")
     if problems:
         return 1
-    print(f"检查通过：{len(files)} 个暂存文件，未发现环境文件或匹配的密钥。")
+    print(f"检查通过：{len(files)} 个索引文件，未发现环境文件或匹配的密钥。")
     return 0
 
 

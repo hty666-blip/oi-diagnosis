@@ -18,6 +18,7 @@ from sqlalchemy import select
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.core.config import settings  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.domain.models import User  # noqa: E402
 from app.infra.db import SessionLocal, dispose_engine  # noqa: E402
@@ -89,7 +90,13 @@ POOL = [
 ]
 
 
+def require_demo_environment() -> None:
+    if settings.app_env != "dev":
+        raise RuntimeError("演示账号只允许在 APP_ENV=dev 的本地环境创建")
+
+
 async def ensure_users() -> None:
+    require_demo_environment()
     async with SessionLocal() as s:
         for username, name, klass in STUDENTS:
             user = (await s.execute(select(User).where(User.username == username))).scalar_one_or_none()
