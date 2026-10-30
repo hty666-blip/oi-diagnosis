@@ -31,7 +31,7 @@ from app.services.evidence_text import has_escaped_input, prepare_evidence_paylo
 from app.services.job_service import JobLease, require_lease
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v5"
+PIPELINE_VER = "v6"
 logger = logging.getLogger(__name__)
 
 
