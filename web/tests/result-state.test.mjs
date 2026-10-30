@@ -4,6 +4,11 @@ import { sourceModule } from "./load-source.mjs";
 
 const { resultState } = await sourceModule("../src/result-state.ts");
 
+test("历史计数无法核验时明确待核对，不显示通过或宣称没有测试", () => {
+  assert.deepEqual(resultState("UNVERIFIED", { scope: "package", passed: 1, total: true }),
+    { label: "历史结果待核对", tone: "warn" });
+});
+
 test("样例、零测试、旧 AC 以及不一致计数均不呈现正式通过", () => {
   const cases = [
     ["SAMPLE_PASS", { scope: "samples", passed: 2, total: 2 }],

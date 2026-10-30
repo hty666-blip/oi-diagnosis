@@ -192,7 +192,7 @@ class TutorService:
         )
         if complete:
             hs.status = "resolved"
-        elif effective_verdict(candidate) not in ("SAMPLE_PASS", "NO_TESTS"):
+        elif effective_verdict(candidate) not in ("SAMPLE_PASS", "NO_TESTS", "UNVERIFIED"):
             hs.failed_attempts += 1
 
         result = self._verification_reply(hs, candidate)
@@ -211,6 +211,8 @@ class TutorService:
                 text = "修改后的代码已通过当前题包测试，这次答疑已解决。"
             elif effective_verdict(candidate) == "SAMPLE_PASS":
                 text = "修改后的代码仅通过公开样例；答疑保留，仍需检查边界数据。"
+            elif effective_verdict(candidate) == "UNVERIFIED":
+                text = "历史测试计数无法核对，答疑保留；请重新提交并运行正式测试后再核验。"
             elif effective_verdict(candidate) == "NO_TESTS":
                 text = "目前没有可执行测试，无法核验修改是否正确；请补充测试或请教师复核。"
             else:

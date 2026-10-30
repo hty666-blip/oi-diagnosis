@@ -41,7 +41,8 @@ def render_card(c: CardInput) -> str:
     parts = [f"# 错题卡 · {c.pid} {c.title}".strip(), ""]
 
     verdict_badge = {"CE": "编译错误", "WA": "答案错误", "TLE": "超时",
-                     "MLE": "超内存", "RE": "运行时错误", "AC": "通过"}.get(c.verdict, c.verdict)
+                     "MLE": "超内存", "RE": "运行时错误", "AC": "通过",
+                     "UNVERIFIED": "历史结果待核对"}.get(c.verdict, c.verdict)
     parts.append(f"**判定**：`{c.verdict}`（{verdict_badge}）")
 
     if c.narrative:

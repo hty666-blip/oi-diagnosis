@@ -14,7 +14,7 @@ from app.core.text_validation import StorageText
 from app.domain.models import Diagnosis, Problem, Submission, User
 from app.infra.db import get_session
 from app.services.access import submission_scope
-from app.services.judgement import effective_verdict, result_narrative
+from app.services.judgement import effective_verdict, result_narrative, valid_test_summary
 
 router = APIRouter(tags=["catalog"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -114,7 +114,7 @@ async def my_submissions(
             "problem_pid": problem.pid,
             "problem_title": problem.title,
             "stage": sub.stage,
-            "tests_passed": sub.tests_passed,
+            "tests_passed": valid_test_summary(sub),
             "verdict": effective_verdict(sub),
             "created_at": sub.created_at.isoformat() if sub.created_at else "",
             "narrative": result_narrative(sub, diag.narrative if diag else "")[:120],

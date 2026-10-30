@@ -1,6 +1,7 @@
 import type { TestSummary } from "./api";
 
 export function resultState(verdict: string | null, tests?: TestSummary | null): { label: string; tone: string } {
+  if (verdict === "UNVERIFIED") return { label: "历史结果待核对", tone: "warn" };
   if (verdict === "AC") {
     const verified = tests?.scope === "package" && Number.isInteger(tests.total)
       && tests.total > 0 && tests.passed === tests.total;

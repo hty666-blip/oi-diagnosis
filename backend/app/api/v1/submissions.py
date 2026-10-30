@@ -18,7 +18,7 @@ from app.infra.db import get_session
 from app.orchestrator.graph import run_diagnosis
 from app.services.access import accessible_submission
 from app.services.job_service import JobService, job_out
-from app.services.judgement import effective_verdict, result_narrative
+from app.services.judgement import effective_verdict, result_narrative, valid_test_summary
 from app.services.submission_service import SubmissionService
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -81,7 +81,7 @@ def _to_out(
         verdict=effective_verdict(sub),
         time_ms=sub.time_ms,
         memory_kb=sub.memory_kb,
-        tests_passed=sub.tests_passed,
+        tests_passed=valid_test_summary(sub),
         job=job_out(job, can_cancel=user is not None and (user.role == "admin" or user.id == sub.student_id)),
         diagnosis=(
             {
@@ -298,7 +298,7 @@ async def get_lineage(submission_id: ObjectPathId, session: SessionDep, user: Cu
         seen.add(current.id)
         chain.append({"id": current.id, "parent_submission_id": current.parent_submission_id,
                       "code": current.code, "stage": current.stage,
-                      "verdict": effective_verdict(current), "tests_passed": current.tests_passed,
+                      "verdict": effective_verdict(current), "tests_passed": valid_test_summary(current),
                       "created_at": current.created_at.isoformat() if current.created_at else None})
         if current.parent_submission_id is None:
             return list(reversed(chain))
