@@ -83,7 +83,7 @@ class Finding:
     autofix: str | None = None
 
 
-def scan(src: str) -> list[Finding]:
+def scan(src: str, language: str = "cpp17") -> list[Finding]:
     """逐字符扫描，区分代码区 / 字符串 / 注释，只在代码区报错。"""
     findings: list[Finding] = []
     state = "code"          # code | line_comment | block_comment | string | char
@@ -103,6 +103,8 @@ def scan(src: str) -> list[Finding]:
             continue
 
         if state == "code":
+            if language == "python3" and ch == "#":
+                state = "line_comment"; i += 1; col += 1; continue
             if ch == "/" and nxt == "/":
                 state = "line_comment"; i += 2; col += 2; continue
             if ch == "/" and nxt == "*":
@@ -114,7 +116,7 @@ def scan(src: str) -> list[Finding]:
 
             if not ch.isascii():
                 fix = FULLWIDTH_MAP.get(ch)
-                if fix is None and "\u4e00" <= ch <= "\u9fff":
+                if fix is None and "\u4e00" <= ch <= "\u9fff" and language in ("c11", "cpp17"):
                     findings.append(Finding(
                         code="P0-CJK-IDENT", line=line, col=col, char=ch,
                         codepoint=f"U+{ord(ch):04X}",
@@ -122,14 +124,17 @@ def scan(src: str) -> list[Finding]:
                         suggestion="可能是输入法没切回来；变量名/函数名建议用英文。",
                     ))
                 elif fix is not None:
+                    language_name = {
+                        "c11": "C", "cpp17": "C++", "java17": "Java", "python3": "Python",
+                    }.get(language, "编程语言")
                     findings.append(Finding(
                         code="P0-FULLWIDTH", line=line, col=col, char=ch,
                         codepoint=f"U+{ord(ch):04X}",
-                        message=f"中文/全角符号「{ch}」不能用于 C++ 语法",
+                        message=f"中文/全角符号「{ch}」不能用于 {language_name} 语法",
                         suggestion=f"改成英文半角「{fix}」",
                         autofix=fix,
                     ))
-                else:
+                elif language in ("c11", "cpp17"):
                     findings.append(Finding(
                         code="P0-NONASCII", line=line, col=col, char=ch,
                         codepoint=f"U+{ord(ch):04X}",

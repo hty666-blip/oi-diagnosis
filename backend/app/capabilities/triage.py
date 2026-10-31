@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from app.capabilities.ce_classify import classify_compile
@@ -80,13 +81,13 @@ def _dedupe(findings: list[TriageFinding]) -> list[TriageFinding]:
 
 
 def triage(code: str, *, compile_stderr: str | None = None,
-           verdict: str | None = None) -> TriageResult:
+           verdict: str | None = None, language: str = "cpp17") -> TriageResult:
     """输入源码（可选编译日志与 verdict），输出分诊结论与路由。"""
     findings: list[TriageFinding] = []
     notes: list[str] = []
 
     # 1) P0：字符级，确定性
-    for f in scan_surface(code):
+    for f in scan_surface(code, language=language):
         findings.append(TriageFinding(
             p="P0",
             code=f.code,
@@ -105,6 +106,10 @@ def triage(code: str, *, compile_stderr: str | None = None,
                 p=c.nature, code=c.code, message=c.message, hint=c.hint,
                 line=c.line, col=c.col, confidence=c.confidence,
             ))
+        if not findings:
+            generic = _generic_compile_finding(compile_stderr, language)
+            if generic:
+                findings.append(generic)
         if not findings and str(compile_stderr).strip():
             notes.append("编译报错未能匹配已知规则，建议转人工或交给模型兜底")
 
@@ -130,6 +135,36 @@ def triage(code: str, *, compile_stderr: str | None = None,
 
     return TriageResult(route=route, findings=findings,
                         summary=_summarize(findings, route), notes=notes)
+
+
+def _generic_compile_finding(stderr: str, language: str) -> TriageFinding | None:
+    """为 Java/Python 提供不会误称为 GCC 的基础语法提示。"""
+    if language == "java17":
+        match = re.search(r"Main\.java:(\d+):\s*error:\s*(.+)", stderr)
+        if match:
+            message = match.group(2).strip()
+            return TriageFinding(
+                p="P1", code="P1-JAVA-COMPILE", line=int(match.group(1)),
+                message=f"Java 编译器报告：{message}",
+                hint="从该行及上一行检查分号、括号、类型和变量名；入口类必须命名为 Main。",
+                confidence=0.9,
+            )
+    if language == "python3":
+        error = re.search(r"^(SyntaxError|IndentationError|TabError):\s*(.+)$", stderr, re.M)
+        line = re.search(r'File "main\.py", line (\d+)', stderr)
+        if error:
+            kind, detail = error.groups()
+            hint = (
+                "统一使用 4 个空格缩进，并检查这一代码块的上下层级。"
+                if kind in ("IndentationError", "TabError")
+                else "检查该行及上一行的冒号、括号、引号和缩进。"
+            )
+            return TriageFinding(
+                p="P1", code=f"P1-PYTHON-{kind.upper()}",
+                line=int(line.group(1)) if line else None,
+                message=f"Python 报告 {kind}：{detail.strip()}", hint=hint, confidence=0.95,
+            )
+    return None
 
 
 def _summarize(findings: list[TriageFinding], route: str) -> str:

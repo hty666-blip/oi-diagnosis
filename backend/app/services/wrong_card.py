@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 class CardInput:
     pid: str
     title: str
+    language: str = "cpp17"
     verdict: str = ""
     narrative: str = ""
     nature: list[dict] = field(default_factory=list)
@@ -23,7 +24,7 @@ class CardInput:
     next_action: str = ""
 
 
-def _snippet(lines: list[str], focus: int | None, span: int = 3) -> str:
+def _snippet(lines: list[str], focus: int | None, language: str = "cpp17", span: int = 3) -> str:
     if not lines:
         return ""
     if focus is None or focus < 1 or focus > len(lines):
@@ -34,7 +35,10 @@ def _snippet(lines: list[str], focus: int | None, span: int = 3) -> str:
     for i in range(start, end + 1):
         mark = ">" if i == focus else " "
         out.append(f"{mark} {i:>3} | {lines[i - 1]}")
-    return "```cpp\n" + "\n".join(out) + "\n```"
+    fence = {"c11": "c", "cpp17": "cpp", "java17": "java", "python3": "python"}.get(
+        language, "text"
+    )
+    return f"```{fence}\n" + "\n".join(out) + "\n```"
 
 
 def render_card(c: CardInput) -> str:
@@ -61,7 +65,7 @@ def render_card(c: CardInput) -> str:
         if n.get("line"):
             focus = int(n["line"])
             break
-    snippet = _snippet(c.code_lines, focus or c.focus_line)
+    snippet = _snippet(c.code_lines, focus or c.focus_line, c.language)
     if snippet:
         parts += ["", "## 当时写的是", "", snippet]
 

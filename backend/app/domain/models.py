@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -26,10 +25,10 @@ class Problem(Base):
     pid: Mapped[str] = mapped_column(String(32), unique=True, index=True)  # P1046 / PTV-0001
     title: Mapped[str] = mapped_column(String(200), default="")
     statement_md: Mapped[str] = mapped_column(Text, default="")
-    samples: Mapped[list] = mapped_column(JSONB, default=list)
+    samples: Mapped[list] = mapped_column(JSON, default=list)
     difficulty: Mapped[str] = mapped_column(String(32), default="")
-    tags: Mapped[list] = mapped_column(JSONB, default=list)
-    knowledge_points: Mapped[list] = mapped_column(JSONB, default=list)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    knowledge_points: Mapped[list] = mapped_column(JSON, default=list)
 
     # A/B/C/D：决定这道题能支撑到哪一级诊断（架构 §9.6）
     package_level: Mapped[str] = mapped_column(String(2), default="C")
@@ -58,7 +57,7 @@ class Submission(Base):
     verdict: Mapped[str | None] = mapped_column(String(16), nullable=True)
     time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_kb: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tests_passed: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tests_passed: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 状态机（架构 §5.3）
     stage: Mapped[str] = mapped_column(String(24), default="RECEIVED", index=True)
@@ -87,7 +86,7 @@ class Evidence(Base):
     )
     # compile_log | run_trace | sanitizer | counterexample | timing_curve | static_alert
     type: Mapped[str] = mapped_column(String(32), index=True)
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
     reproducible: Mapped[bool] = mapped_column(Boolean, default=True)
     digest: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -104,18 +103,18 @@ class Diagnosis(Base):
     )
 
     # 机制轴：[{"code":"M01","conf":0.91,"evidence_ids":[1,2]}]
-    mechanism: Mapped[list] = mapped_column(JSONB, default=list)
+    mechanism: Mapped[list] = mapped_column(JSON, default=list)
     # 认知轴：[{"code":"C4","conf":0.62,"basis":"inferred"}]
-    cognition: Mapped[list] = mapped_column(JSONB, default=list)
+    cognition: Mapped[list] = mapped_column(JSON, default=list)
     # 性质轴（错因体系 v2）：[{"p":"P0","line":3,"col":12,"code":"P0-FULLWIDTH"}]
-    nature: Mapped[list] = mapped_column(JSONB, default=list)
+    nature: Mapped[list] = mapped_column(JSON, default=list)
 
     narrative: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float] = mapped_column(default=0.0)
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft/confirmed/needs_human/rejected
-    degraded: Mapped[list] = mapped_column(JSONB, default=list)
+    degraded: Mapped[list] = mapped_column(JSON, default=list)
     reviewer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    model_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    model_meta: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

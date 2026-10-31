@@ -2,15 +2,37 @@ import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import Markdown from "./Markdown";
 import {
-  api, cachedUser, clearSession, messageOf, readLocal, writeLocal,
+  api, ApiError, cachedUser, clearSession, getToken, messageOf, readLocal, removeLocal,
+  setSession, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
   type MySubmission, type Overview, type Problem, type ProblemDetail,
-  type SessionReply, type SubmissionResult, type TestSummary,
+  type SessionReply, type SubmissionLanguage, type SubmissionResult, type TestSummary,
 } from "./api";
 
 type View = "submit" | "my" | "coach" | "admin";
-const STARTER = "#include <iostream>\nusing namespace std;\n\nint main() {\n    // 在这里编写你的解题代码\n    return 0;\n}\n";
+const LANGUAGES: { value: SubmissionLanguage; label: string }[] = [
+  { value: "cpp17", label: "C++17" },
+  { value: "c11", label: "C11" },
+  { value: "java17", label: "Java 17" },
+  { value: "python3", label: "Python 3" },
+];
+const LANGUAGE_LABEL = Object.fromEntries(LANGUAGES.map((item) => [item.value, item.label]));
+const STARTERS: Record<SubmissionLanguage, string> = {
+  cpp17: "#include <iostream>\nusing namespace std;\n\nint main() {\n    // 在这里编写你的解题代码\n    return 0;\n}\n",
+  c11: "#include <stdio.h>\n\nint main(void) {\n    /* 在这里编写你的解题代码 */\n    return 0;\n}\n",
+  java17: "import java.io.*;\nimport java.util.*;\n\npublic class Main {\n    public static void main(String[] args) throws Exception {\n        // 在这里编写你的解题代码\n    }\n}\n",
+  python3: "# 在这里编写你的解题代码\n",
+};
+const DEFAULT_LANGUAGE: SubmissionLanguage = "cpp17";
 const ROLE_LABEL: Record<string, string> = { student: "学生", teacher: "教练", admin: "管理员" };
+
+function isLanguage(value: string | null): value is SubmissionLanguage {
+  return LANGUAGES.some((item) => item.value === value);
+}
+
+const hintSessionKey = (userId: number, submissionId: number) => `oi-hint-session:${userId}:${submissionId}`;
+const activeHintKey = (userId: number, pid: string) => `oi-active-hint:${userId}:${pid}`;
+const lastSubmissionKey = (userId: number, pid: string) => `oi-last-submission:${userId}:${pid}`;
 
 function resultLabel(verdict: string | null, tests?: TestSummary | null): string {
   if (verdict === "AC") return tests?.scope === "package" ? "题包测试通过" : "历史通过 · 范围待核对";
@@ -46,6 +68,7 @@ function CardDownload({ id }: { id: number }) {
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(cachedUser);
+  const [checkingSession, setCheckingSession] = useState(() => cachedUser() !== null);
   const [view, setView] = useState<View>(() => cachedUser()?.role === "student" ? "submit" : "coach");
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
   const [expired, setExpired] = useState(false);
@@ -55,6 +78,26 @@ export default function App() {
     window.addEventListener("oi-session-expired", onExpired);
     return () => window.removeEventListener("oi-session-expired", onExpired);
   }, []);
+
+  useEffect(() => {
+    if (!cachedUser()) return;
+    let active = true;
+    api.me().then((current) => {
+      if (!active) return;
+      setSession(getToken(), current);
+      setUser(current);
+      setView(current.role === "student" ? "submit" : "coach");
+    }).catch(() => {
+      if (!active) return;
+      clearSession();
+      setUser(null);
+    }).finally(() => {
+      if (active) setCheckingSession(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  if (checkingSession) return <div className="session-notice" role="status">正在验证登录状态…</div>;
 
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
@@ -99,8 +142,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const [problems, setProblems] = useState<Problem[]>([]);
   const [pid, setPid] = useState("");
   const [detail, setDetail] = useState<ProblemDetail | null>(null);
-  const [code, setCode] = useState(STARTER);
+  const [language, setLanguage] = useState<SubmissionLanguage>(DEFAULT_LANGUAGE);
+  const [code, setCode] = useState(STARTERS[DEFAULT_LANGUAGE]);
   const [savedCode, setSavedCode] = useState("");
+  const [savedLanguage, setSavedLanguage] = useState<SubmissionLanguage>(DEFAULT_LANGUAGE);
   const [loadingProblems, setLoadingProblems] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [problemError, setProblemError] = useState("");
@@ -120,18 +165,46 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const workRequest = useRef(0);
   const evidenceRequest = useRef(0);
   const hasSelection = useRef(false);
-  const draftKey = (nextPid: string) => "oi-draft:" + userId + ":" + nextPid;
+  const draftKey = (nextPid: string, nextLanguage: SubmissionLanguage) =>
+    `oi-draft:${userId}:${nextPid}:${nextLanguage}`;
+  const languageKey = (nextPid: string) => `oi-language:${userId}:${nextPid}`;
+
+  function savedDraft(nextPid: string, nextLanguage: SubmissionLanguage): string {
+    const current = readLocal(draftKey(nextPid, nextLanguage));
+    if (current !== null) return current;
+    // 兼容升级前仅按题目保存的 C++ 草稿。
+    if (nextLanguage === "cpp17") {
+      const legacy = readLocal(`oi-draft:${userId}:${nextPid}`);
+      if (legacy !== null) return legacy;
+    }
+    return STARTERS[nextLanguage];
+  }
 
   function selectProblem(nextPid: string) {
     hasSelection.current = true;
     workRequest.current += 1;
     evidenceRequest.current += 1;
     setPid(nextPid);
-    setCode(readLocal(draftKey(nextPid)) ?? STARTER);
+    const storedLanguage = readLocal(languageKey(nextPid));
+    const nextLanguage = isLanguage(storedLanguage) ? storedLanguage : DEFAULT_LANGUAGE;
+    setLanguage(nextLanguage);
+    setCode(savedDraft(nextPid, nextLanguage));
     writeLocal("oi-selected-problem:" + userId, nextPid);
     setSub(null); setDiag(null); setEvidence([]); setError(""); setDiagError("");
     setEvidenceLoading(false); setEvidenceError("");
     setTutorSubmission(null); setLatestSubmitted(null);
+    const lastId = Number(readLocal(lastSubmissionKey(userId, nextPid)));
+    const activeId = Number(readLocal(activeHintKey(userId, nextPid)));
+    if (lastId > 0 || activeId > 0) void restoreSubmission(lastId > 0 ? lastId : activeId, nextPid);
+  }
+
+  function selectLanguage(nextLanguage: SubmissionLanguage) {
+    if (!pid || nextLanguage === language || busy) return;
+    setLanguage(nextLanguage);
+    writeLocal(languageKey(pid), nextLanguage);
+    setCode(savedDraft(pid, nextLanguage));
+    setSub(null); setDiag(null); setEvidence([]); setError(""); setDiagError("");
+    setEvidenceLoading(false); setEvidenceError(""); setLatestSubmitted(null);
   }
 
   async function loadProblems() {
@@ -172,27 +245,45 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     }
   }
 
-  useEffect(() => {
-    if (!restore) return;
-    let active = true;
+  async function restoreSubmission(id: number, expectedPid?: string) {
     const generation = ++workRequest.current;
     evidenceRequest.current += 1;
     hasSelection.current = true;
     requestLock.current = true;
     setBusy("restore"); setError("");
-    api.getSubmission(restore.id).then(async (value) => {
-      if (!active || generation !== workRequest.current) return;
+    await api.getSubmission(id).then(async (value) => {
+      if (generation !== workRequest.current) return;
       if (!value.problem_pid || value.code === undefined) throw new Error("这条历史记录缺少题目或源码，请从题库重新打开题目。");
-      setPid(value.problem_pid); setCode(value.code); setSavedCode(value.code);
-      writeLocal(draftKey(value.problem_pid), value.code);
+      if (expectedPid && value.problem_pid !== expectedPid) throw new Error("保存的提交不属于当前题目，已忽略该恢复记录。");
+      const restoredLanguage = isLanguage(value.language) ? value.language : DEFAULT_LANGUAGE;
+      setPid(value.problem_pid); setLanguage(restoredLanguage);
+      setCode(value.code); setSavedCode(value.code); setSavedLanguage(restoredLanguage);
+      writeLocal(draftKey(value.problem_pid, restoredLanguage), value.code);
+      writeLocal(languageKey(value.problem_pid), restoredLanguage);
+      writeLocal(lastSubmissionKey(userId, value.problem_pid), String(value.id));
       writeLocal("oi-selected-problem:" + userId, value.problem_pid);
       setSub(value); setDiag(initialDiagnosis(value)); setDiagError("");
-      setTutorSubmission(null); setLatestSubmitted(null);
+      const activeHint = Number(readLocal(activeHintKey(userId, value.problem_pid)));
+      const sourceId = activeHint > 0 ? activeHint
+        : readLocal(hintSessionKey(userId, value.id)) ? value.id : null;
+      setTutorSubmission(sourceId);
+      setLatestSubmitted(sourceId && sourceId !== value.id ? value : null);
       await loadEvidence(value.id);
-    }).catch((e) => { if (active) setError(messageOf(e)); }).finally(() => {
-      if (active && generation === workRequest.current) { setBusy(null); requestLock.current = false; }
+    }).catch((e) => {
+      if (e instanceof ApiError && e.status === 404 && expectedPid) {
+        removeLocal(lastSubmissionKey(userId, expectedPid));
+        removeLocal(activeHintKey(userId, expectedPid));
+        return;
+      }
+      if (generation === workRequest.current) setError(messageOf(e));
+    }).finally(() => {
+      if (generation === workRequest.current) { setBusy(null); requestLock.current = false; }
     });
-    return () => { active = false; };
+  }
+
+  useEffect(() => {
+    if (!restore) return;
+    void restoreSubmission(restore.id);
   }, [restore]);
 
   async function diagnose(id: number, generation = workRequest.current) {
@@ -221,10 +312,13 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     requestLock.current = true; setBusy("judge"); setError(""); setDiagError("");
     setSub(null); setDiag(null); setEvidence([]); setEvidenceError("");
     const submittedCode = code;
+    const submittedLanguage = language;
     try {
-      const value = await api.submit(pid, submittedCode);
+      const value = await api.submit(pid, submittedCode, submittedLanguage);
       if (generation !== workRequest.current) return;
-      setSub(value); setSavedCode(submittedCode); setDiag(initialDiagnosis(value)); setLatestSubmitted(value);
+      setSub(value); setSavedCode(submittedCode); setSavedLanguage(submittedLanguage);
+      setDiag(initialDiagnosis(value)); setLatestSubmitted(value);
+      writeLocal(lastSubmissionKey(userId, pid), String(value.id));
       const evidenceTask = loadEvidence(value.id);
       if (!["AC", "SAMPLE_PASS", "NO_TESTS"].includes(value.verdict ?? "")) {
         setBusy("diagnose");
@@ -238,7 +332,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     }
   }
 
-  const hasChanged = sub !== null && code !== savedCode;
+  const hasChanged = sub !== null && (code !== savedCode || language !== savedLanguage);
   const canTutor = sub && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
 
   return (
@@ -271,8 +365,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
         </section>
         <section className="oj-work" aria-label="代码与执行结果">
           <div className="card">
-            <div className="card-head"><label htmlFor="solution-code"><strong>你的代码 · C++17</strong></label><span className="sub">Ctrl / ⌘ + Enter 提交</span></div>
-            <textarea id="solution-code" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid), e.target.value); }} onKeyDown={(e) => {
+            <div className="card-head editor-head"><label htmlFor="solution-code"><strong>你的代码</strong></label><div className="row"><label className="language-picker"><span className="sr-only">编程语言</span><select aria-label="编程语言" value={language} disabled={!!busy} onChange={(e) => selectLanguage(e.target.value as SubmissionLanguage)}>
+              {LANGUAGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select></label><span className="sub">Ctrl / ⌘ + Enter 提交</span></div></div>
+            <textarea id="solution-code" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid, language), e.target.value); }} onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void run(); }
             }} />
             <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || !detail || !code.trim()}>
@@ -281,7 +377,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             {hasChanged && <p className="scope-note">代码已有修改。下方结果对应上次提交，请重新提交验证改动。</p>}
           </div>
           {sub && <section className="card" aria-label="本次执行结果" aria-live="polite">
-            <div className="card-head"><h2>提交 #{sub.id}</h2><CardDownload id={sub.id} /></div>
+            <div className="card-head"><h2>提交 #{sub.id} · {LANGUAGE_LABEL[sub.language] ?? sub.language}</h2><CardDownload id={sub.id} /></div>
             <div className="verdict-bar"><VerdictBadge verdict={sub.verdict} tests={sub.tests_passed} />
               {sub.tests_passed && sub.tests_passed.total > 0 && <span className="muted">{sub.tests_passed.scope === "package" ? "题包测试" : sub.tests_passed.scope === "samples" ? "样例测试" : "历史测试"} {sub.tests_passed.passed} / {sub.tests_passed.total} 通过</span>}
             </div>
@@ -304,7 +400,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
               </li>)}</ul>}
             </div>}
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
-            {canTutor && !tutorSubmission && <button className="ghost" onClick={() => setTutorSubmission(sub.id)}>围绕这次提交获取提示</button>}
+            {canTutor && !tutorSubmission && <button className="ghost" onClick={() => {
+              writeLocal(activeHintKey(userId, pid), String(sub.id));
+              setTutorSubmission(sub.id);
+            }}>围绕这次提交获取提示</button>}
           </section>}
           {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} />}
         </section>
@@ -348,7 +447,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
   const sendLock = useRef(false);
   const verified = useRef(new Set<number>());
   const chatRef = useRef<HTMLDivElement>(null);
-  const sessionKey = "oi-hint-session:" + userId + ":" + submissionId;
+  const sessionKey = hintSessionKey(userId, submissionId);
 
   useEffect(() => {
     let active = true;
@@ -356,17 +455,23 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
     async function open() {
       const stored = Number(readLocal(sessionKey));
       if (stored > 0) {
-        const history = await api.getSession(stored);
-        if (!active) return;
-        setSession({ ...history, reply: "", action: "hint" });
-        setMessages(history.turns.map((turn) => ({ role: turn.role, level: turn.level, text: turn.content })));
-      } else {
-        const reply = await api.createSession(submissionId);
-        if (!active) return;
-        writeLocal(sessionKey, String(reply.session_id));
-        setSession(reply);
-        setMessages([{ role: "tutor", level: reply.level, text: reply.reply }]);
+        try {
+          const history = await api.getSession(stored);
+          if (!active) return;
+          if (history.verified_submission_id) verified.current.add(history.verified_submission_id);
+          setSession({ ...history, reply: "", action: "hint" });
+          setMessages(history.turns.map((turn) => ({ role: turn.role, level: turn.level, text: turn.content })));
+          return;
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.status !== 404) throw e;
+          removeLocal(sessionKey);
+        }
       }
+      const reply = await api.createSession(submissionId);
+      if (!active) return;
+      writeLocal(sessionKey, String(reply.session_id));
+      setSession(reply);
+      setMessages([{ role: "tutor", level: reply.level, text: reply.reply }]);
     }
     void open().catch((e) => { if (active) setError(messageOf(e)); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -400,6 +505,13 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
     } catch (e) { setError(messageOf(e)); } finally { setBusy(false); sendLock.current = false; }
   }
 
+  function restart() {
+    removeLocal(sessionKey);
+    verified.current.clear();
+    setSession(null); setMessages([]); setError(""); setVerifyError("");
+    setRetry((value) => value + 1);
+  }
+
   return <section className="card" aria-label="提示与修改验证">
     <div className="card-head"><h2>提示与修改验证</h2><span className="sub">围绕提交 #{submissionId}</span></div>
     <p className="muted">先说说你的判断。修改上方代码后重新提交，系统会用新的执行结果检查是否解决。</p>
@@ -415,7 +527,9 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
         <label className="sr-only" htmlFor={"hint-message-" + submissionId}>你的思路或问题</label>
         <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="我检查了……，还不理解的是……" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy || verifying} />
         <button type="submit" className="primary" disabled={!draft.trim() || busy || verifying}>{busy ? "发送中…" : "发送思考"}</button>
-      </form> : <p className="scope-note" role="status">{session.status === "resolved" ? "新提交已通过当前题包测试，本次问题已验证解决。" : "本次提示已暂停，请查看执行证据或联系教师继续检查。"}</p>}
+      </form> : session.status === "resolved"
+        ? <p className="scope-note" role="status">新提交已通过当前题包测试，本次问题已验证解决。</p>
+        : <div className="row recovery-actions"><p className="scope-note" role="status">本次提示已暂停，可以保留现有记录并重新开启一轮提示。</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
     </>}
   </section>;
 }
@@ -434,7 +548,7 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">
       {loading ? <div className="empty" role="status">正在加载提交记录…</div> : !rows.length && !error ? <div className="empty">还没有提交记录。从「练习与诊断」选择一道题，提交你的第一份代码。</div> : <div className="table-scroll"><table><thead><tr><th>题目 / 提交</th><th>执行结果</th><th>诊断摘要</th><th>操作</th></tr></thead><tbody>
-        {rows.map((row) => <tr key={row.id}><td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "尚无诊断，打开后可查看执行记录。"}</td><td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button><CardDownload id={row.id} /></div></td></tr>)}
+        {rows.map((row) => <tr key={row.id}><td><strong>{row.problem_pid || "题目记录"} {row.problem_title || ""}</strong><div className="dim">#{row.id} · {LANGUAGE_LABEL[row.language] ?? row.language}{row.created_at ? " · " + new Date(row.created_at).toLocaleString("zh-CN") : ""}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "尚无诊断，打开后可查看执行记录。"}</td><td><div className="row"><button className="ghost" onClick={() => onContinue(row.id)}>打开并继续</button><CardDownload id={row.id} /></div></td></tr>)}
       </tbody></table></div>}
     </div>
   </>;

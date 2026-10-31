@@ -1,4 +1,4 @@
-"""通过真实 PostgreSQL 与 HTTP 依赖验证归属、历史恢复和辅导核验。"""
+"""通过真实数据库与 HTTP 依赖验证归属、历史恢复和辅导核验。"""
 
 import pytest
 from sqlalchemy import func, select
@@ -118,6 +118,19 @@ async def test_verification_requires_new_same_problem_submission(api_context):
     result = await ctx.client.post(f"/api/v1/sessions/{session_id}/verify", headers=ctx.headers(),
                                    json={"submission_id": other_student.id})
     assert result.status_code == 404
+
+
+async def test_verification_can_continue_after_switching_language(api_context):
+    ctx = api_context
+    original = await ctx.submission(code_hash="same-text", lang="cpp17")
+    session_id = await _open(ctx, original)
+    candidate = await ctx.submission(code_hash="same-text", lang="python3")
+    result = await ctx.client.post(
+        f"/api/v1/sessions/{session_id}/verify",
+        headers=ctx.headers(), json={"submission_id": candidate.id},
+    )
+    assert result.status_code == 200
+    assert result.json()["verified_submission_id"] == candidate.id
 
 
 async def test_sample_pass_stays_open_package_ac_resolves_idempotently(api_context):

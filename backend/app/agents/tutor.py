@@ -29,7 +29,11 @@ CONFUSED = re.compile(
     r"(不知道|不会|不懂|不明白|没懂|没思路|真不会|还是不对|看不懂|什么意思|能讲|讲讲|仔细说|详细说)"
 )
 RESOLVED = re.compile(r"(改好了|过了|ac 了|ac了|通过了|成功了|对了)", re.I)
-FULL_PROGRAM = re.compile(r"int\s+main\s*\(", re.I)
+FULL_PROGRAM = re.compile(
+    r"int\s+main\s*\(|public\s+static\s+void\s+main\s*\(|"
+    r"if\s+__name__\s*==\s*['\"]__main__['\"]",
+    re.I,
+)
 MEANINGLESS = re.compile(r"^[\s\W_]*$")
 
 PROBES = [
@@ -51,6 +55,7 @@ ACK = {
 
 @dataclass
 class DiagnosisView:
+    language: str = "cpp17"
     p: str = "P2"
     code: str = ""
     message: str = ""

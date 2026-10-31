@@ -101,6 +101,7 @@ async def my_submissions(
             "problem_pid": problem.pid,
             "problem_title": problem.title,
             "stage": sub.stage,
+            "language": sub.lang,
             "tests_passed": sub.tests_passed,
             "verdict": effective_verdict(sub),
             "created_at": sub.created_at.isoformat() if sub.created_at else "",

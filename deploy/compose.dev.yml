@@ -1,25 +1,28 @@
 name: oi-diag
 
-# 开发环境：pg(+pgvector) / redis / minio / go-judge
+# 开发环境：MySQL / redis / minio / go-judge
 # 生产部署另见 deploy/compose.prod.yml（待 M6 补）
 
 services:
-  postgres:
-    # pgvector 已拉通（M5 的 RAG 需要向量列），直接用带扩展的官方镜像
-    image: pgvector/pgvector:pg16
-    container_name: oi-postgres
+  mysql:
+    image: mysql:8.4
+    container_name: oi-mysql
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-oiuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oipass}
-      POSTGRES_DB: ${POSTGRES_DB:-oidiag}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-oi_diagnosis}
+      MYSQL_USER: ${MYSQL_USER:-gesp_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-root-password}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${MYSQL_PORT:-3307}:3306"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mysqldata:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oiuser} -d ${POSTGRES_DB:-oidiag}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 20
 
   redis:
@@ -62,6 +65,9 @@ services:
     build:
       context: .
       dockerfile: judge.Dockerfile
+      args:
+        JUDGE_BASE_IMAGE: ${JUDGE_BASE_IMAGE:-criyle/go-judge:v1.13.3}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
     image: oi-judge:dev
     container_name: oi-judge
     privileged: true
@@ -76,7 +82,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
+  mysqldata:
   redisdata:
   miniodata:
 

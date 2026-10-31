@@ -60,6 +60,35 @@ async def test_compile_failure_keeps_stderr():
     assert "error: bad" in res.stderr
 
 
+@pytest.mark.parametrize(
+    ("language", "artifact", "source", "runtime"),
+    [
+        ("c11", "main", "main.c", "/usr/bin/gcc"),
+        ("java17", "main.jar", "Main.java", "/bin/bash"),
+        ("python3", "main.py", "main.py", "/usr/bin/python3"),
+    ],
+)
+async def test_compile_payload_supports_other_languages(language, artifact, source, runtime):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json=[_item(fileIds={artifact: "cached"})])
+
+    client = SandboxClient(base_url="http://judge", language=language)
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://judge"
+    )
+    result = await client.compile("source")
+    await client.close()
+    assert result.artifact_id == "cached"
+    command = captured["cmd"][0]
+    assert command["args"][0] == runtime
+    assert source in command["copyIn"]
+    assert command["copyOutCached"] == [f"{artifact}?"]
+
+
 @pytest.mark.asyncio
 async def test_run_requires_artifact():
     c = SandboxClient(base_url="http://judge")

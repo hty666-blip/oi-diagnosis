@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -25,6 +25,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 class SubmissionCreate(BaseModel):
     problem_pid: str = Field(..., examples=["P1001"])
     code: str = Field(..., min_length=1, max_length=100_000)
+    language: Literal["c11", "cpp17", "java17", "python3"] = "cpp17"
     student_id: int | None = None
 
     @field_validator("code")
@@ -38,6 +39,7 @@ class SubmissionCreate(BaseModel):
 class SubmissionOut(BaseModel):
     id: int
     code: str
+    language: str
     problem_pid: str
     problem_title: str
     stage: str
@@ -54,6 +56,7 @@ def _to_out(
     return SubmissionOut(
         id=sub.id,
         code=sub.code,
+        language=sub.lang,
         problem_pid=problem.pid if problem else "",
         problem_title=problem.title if problem else "",
         stage=sub.stage,
@@ -88,7 +91,9 @@ async def create_submission(
         raise HTTPException(status_code=403, detail="只能以当前登录账号提交代码")
     svc = SubmissionService(session)
     try:
-        sub = await svc.create(payload.problem_pid, payload.code, user.id)
+        sub = await svc.create(
+            payload.problem_pid, payload.code, user.id, language=payload.language,
+        )
     except SandboxError as e:
         raise HTTPException(status_code=503, detail=f"判题服务不可用: {e}") from e
     except ValueError as e:

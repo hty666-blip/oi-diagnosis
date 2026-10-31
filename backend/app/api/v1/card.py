@@ -45,6 +45,7 @@ async def get_card(submission_id: int, session: SessionDep, user: CurrentUser) -
     return render_card(CardInput(
         pid=problem.pid if problem else str(sub.problem_id),
         title=problem.title if problem else "",
+        language=sub.lang,
         verdict=verdict or "",
         narrative=diag.narrative if diag else "",
         nature=(

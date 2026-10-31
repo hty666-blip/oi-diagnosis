@@ -1,4 +1,4 @@
-"""真实 PostgreSQL 接口回归；RUN_DOCKER_TESTS=1 时额外执行真实 C++ 判题。"""
+"""真实数据库接口回归；RUN_DOCKER_TESTS=1 时额外执行真实 C++ 判题。"""
 
 import os
 

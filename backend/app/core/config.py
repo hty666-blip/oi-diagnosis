@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     app_port: int = 8000
 
     # 数据库
-    database_url: str = "postgresql+asyncpg://oiuser:oipass@localhost:5432/oidiag"
+    database_url: str = (
+        "mysql+asyncmy://gesp_user:change-me@127.0.0.1:3307/"
+        "oi_diagnosis?charset=utf8mb4&connect_timeout=5"
+    )
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""把 data/problems/*.json 导入 PostgreSQL 的 problem 表（幂等 upsert）。
+"""把 data/problems/*.json 导入 DATABASE_URL 的 problem 表（幂等 upsert）。
 
 用法（在 backend 目录下）:
     ..\\.venv\\Scripts\\python ..\\scripts\\import_problems.py

@@ -164,7 +164,10 @@ class TutorService:
         candidate = await accessible_submission(self.session, self.user, submission_id)
         if candidate.student_id != hs.student_id or candidate.problem_id != original.problem_id:
             raise HTTPException(status_code=409, detail="核验提交必须属于同一学生和同一道题")
-        if candidate.id <= original.id or candidate.code_hash == original.code_hash:
+        same_source = (
+            candidate.code_hash == original.code_hash and candidate.lang == original.lang
+        )
+        if candidate.id <= original.id or same_source:
             raise HTTPException(status_code=409, detail="请先修改代码并重新提交，再核验新提交")
         if candidate.stage != "READY" or candidate.verdict is None:
             raise HTTPException(status_code=409, detail="新提交尚未完成判题")
@@ -223,7 +226,8 @@ class TutorService:
         }
 
     async def _diagnosis_view(self, diag: Diagnosis | None, submission_id: int) -> DiagnosisView:
-        view = _diag_view(diag)
+        submission = await self.session.get(Submission, submission_id)
+        view = _diag_view(diag, submission.lang if submission else "cpp17")
         rows = (
             await self.session.execute(
                 select(Evidence).where(
@@ -261,13 +265,14 @@ class TutorService:
         }
 
 
-def _diag_view(diag: Diagnosis | None) -> DiagnosisView:
+def _diag_view(diag: Diagnosis | None, language: str = "cpp17") -> DiagnosisView:
     if diag is None:
-        return DiagnosisView()
+        return DiagnosisView(language=language)
     nature = diag.nature or []
     top = nature[0] if nature else {}
     mechanism = (diag.mechanism or [{}])[0]
     return DiagnosisView(
+        language=language,
         p=str(top.get("p", "P2")),
         code=str(top.get("code", mechanism.get("code", ""))),
         message=str(top.get("message", mechanism.get("explain", diag.narrative or ""))),

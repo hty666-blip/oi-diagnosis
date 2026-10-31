@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.ce_classify import classify_runtime
 from app.capabilities.docker_runner import DockerRunner
+from app.capabilities.languages import language_spec
 from app.capabilities.sandbox import CommandResult, CompileResult, SandboxClient, SandboxError
 from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
@@ -26,7 +27,7 @@ from app.core.config import settings
 from app.domain.models import Diagnosis, Evidence, Problem, Submission
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v4"
+PIPELINE_VER = "v5"
 
 
 def build_runner():
@@ -39,8 +40,9 @@ def normalize_code(code: str) -> str:
     return code.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def code_digest(code: str) -> str:
-    return hashlib.sha256(normalize_code(code).encode("utf-8")).hexdigest()
+def code_digest(code: str, language: str = "cpp17") -> str:
+    normalized = normalize_code(code)
+    return hashlib.sha256(f"{language}\0{normalized}".encode()).hexdigest()
 
 
 def outputs_equal(actual: str, expected: str) -> bool:
@@ -113,7 +115,9 @@ class SubmissionService:
         self.session = session
         self.sandbox = sandbox or build_runner()
 
-    async def create(self, problem_pid: str, code: str, student_id: int = 0) -> Submission:
+    async def create(self, problem_pid: str, code: str, student_id: int = 0,
+                     language: str = "cpp17") -> Submission:
+        language_spec(language)
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
         ).scalar_one_or_none()
@@ -123,7 +127,7 @@ class SubmissionService:
         normalized = normalize_code(code)
         if not normalized.strip():
             raise ValueError("代码不能为空")
-        digest = code_digest(normalized)
+        digest = code_digest(normalized, language)
         suite = load_suite(problem)
         # 题面、数据或资源限制变化后旧结果不可复用；保持 pipeline_ver 在原字段长度内。
         pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
@@ -148,6 +152,7 @@ class SubmissionService:
             student_id=student_id,
             code=normalized,
             code_hash=digest,
+            lang=language,
             pipeline_ver=pipeline_ver,
             stage="RECEIVED",
         )
@@ -177,6 +182,9 @@ class SubmissionService:
                 await close()
 
     async def _run(self, submission: Submission) -> VerdictResult:
+        configure_language = getattr(self.sandbox, "set_language", None)
+        if configure_language:
+            configure_language(submission.lang)
         problem = (
             await self.session.execute(select(Problem).where(Problem.id == submission.problem_id))
         ).scalar_one()
@@ -184,9 +192,10 @@ class SubmissionService:
         submission.pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
 
         # 1) Triage 前置：先做确定性的字符扫描
-        pre = triage(submission.code)
+        pre = triage(submission.code, language=submission.lang)
         await self._add_evidence(submission.id, "static_alert", {
             "kind": "surface_lint",
+            "language": submission.lang,
             "stage": "pre_compile",
             "route": pre.route,
             "count": len(pre.findings),
@@ -202,11 +211,15 @@ class SubmissionService:
 
         await self._add_evidence(submission.id, "compile_log", {
             "ok": comp.ok,
+            "language": submission.lang,
             "stderr": comp.stderr[:20000],
         })
 
         if not comp.ok:
-            tr = triage(submission.code, compile_stderr=comp.stderr, verdict="CE")
+            tr = triage(
+                submission.code, compile_stderr=comp.stderr,
+                verdict="CE", language=submission.lang,
+            )
             result = decide_verdict(comp, [], scope=suite.scope)
             await self._finalize(submission, result, tr, suite)
             return result
@@ -242,7 +255,7 @@ class SubmissionService:
         result.suite_digest = suite.digest
 
         # 4) 运行期错因（RE/TLE/MLE 才有意义）
-        tr = triage(submission.code, verdict=result.verdict)
+        tr = triage(submission.code, verdict=result.verdict, language=submission.lang)
         if result.verdict in ("RE", "TLE", "MLE") and runs:
             bad = next((r for _, r in runs if r.status != "Accepted"), runs[-1][1])
             for f in classify_runtime(bad.stderr, result.verdict).findings:
@@ -294,6 +307,7 @@ class SubmissionService:
             "route": tr.route,
             "autofixable": tr.autofixable,
             "pipeline_ver": PIPELINE_VER,
+            "language": submission.lang,
         }
         diag.degraded = tr.notes
         self.session.add(diag)

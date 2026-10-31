@@ -1,4 +1,4 @@
-"""可选 PostgreSQL 集成环境：TEST_DATABASE_URL 必须指向独立测试库。"""
+"""可选数据库集成环境：TEST_DATABASE_URL 必须指向独立测试库。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.main import app
 async def api_context(monkeypatch):
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("设置 TEST_DATABASE_URL 后运行 PostgreSQL HTTP 集成测试")
+        pytest.skip("设置 TEST_DATABASE_URL 后运行数据库 HTTP 集成测试")
     if "test" not in (make_url(url).database or "").lower():
         pytest.fail("TEST_DATABASE_URL 必须指向名称含 test 的独立测试数据库")
     monkeypatch.setattr(settings, "llm_enabled", False)

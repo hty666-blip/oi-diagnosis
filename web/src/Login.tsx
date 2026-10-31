@@ -55,7 +55,7 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
             修改后重新提交，用新的执行结果验证你的判断。
           </p>
         </div>
-        <div className="foot">本地教学工作台 · C++17</div>
+        <div className="foot">本地教学工作台 · C / C++ / Java / Python</div>
       </div>
 
       <div className="login-panel">

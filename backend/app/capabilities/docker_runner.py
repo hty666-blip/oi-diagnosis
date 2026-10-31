@@ -23,6 +23,7 @@ from contextlib import suppress
 from pathlib import Path
 from shlex import quote
 
+from app.capabilities.languages import language_spec
 from app.capabilities.sandbox import CommandResult, CompileResult, SandboxError
 
 IMAGE = "oi-judge:dev"
@@ -36,13 +37,18 @@ class _OutputLimitReached(Exception):
 
 
 class DockerRunner:
-    def __init__(self, image: str = IMAGE) -> None:
+    def __init__(self, image: str = IMAGE, language: str = "cpp17") -> None:
         self.image = image
+        self.set_language(language)
         self.run_root = RUN_ROOT.resolve()
         try:
             self.run_root.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             raise SandboxError("无法创建执行器工作根目录") from e
+
+    def set_language(self, language: str) -> None:
+        self.language = language
+        self.spec = language_spec(language)
 
     def _workdir(self, artifact_id: str | Path) -> Path:
         """只接受执行器根目录下的直接 job 子目录，清理前也使用同一校验。"""
@@ -56,8 +62,9 @@ class DockerRunner:
         if rc in DOCKER_FAILURE_CODES:
             raise SandboxError(f"Docker 执行环境不可用（{rc}）: {stderr[:1000]}")
 
-    async def compile(self, code: str, *, filename: str = "main.cpp",
+    async def compile(self, code: str, *, filename: str | None = None,
                       sanitize: bool = False, cpu_limit_ns: int = 10_000_000_000) -> CompileResult:
+        filename = filename or self.spec.filename
         if Path(filename).name != filename or filename in ("", ".", ".."):
             raise SandboxError("源码文件名无效")
         try:
@@ -66,9 +73,7 @@ class DockerRunner:
             raise SandboxError("无法准备编译工作目录") from e
         try:
             (work / filename).write_text(code, encoding="utf-8")
-            flags = (["-O1", "-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
-                     if sanitize else ["-O2"])
-            cmd = ["g++", *flags, "-std=c++17", "-Wall", "-o", "main", filename]
+            cmd = self.spec.compile_command(filename, sanitize=sanitize)
             rc, out, err = await self._docker(work, cmd, timeout_s=15,
                                              stdout_max=128 * 1024, stderr_max=128 * 1024)
             self._check_docker_failure(rc, err)
@@ -79,7 +84,7 @@ class DockerRunner:
                 return CompileResult(ok=False, stderr=err or out, raw=None)
             if rc != 0:
                 raise SandboxError(f"编译过程异常退出（{rc}），未完成编译验证")
-            if not (work / "main").is_file():
+            if not (work / self.spec.artifact).is_file():
                 raise SandboxError("编译器未返回可执行产物")
             return CompileResult(ok=True, stderr=err, artifact_id=str(work))
         except OSError as e:
@@ -95,7 +100,7 @@ class DockerRunner:
         if not artifact_id:
             raise SandboxError("缺少编译产物目录")
         work = self._workdir(artifact_id)
-        if not (work / "main").is_file():
+        if not (work / self.spec.artifact).is_file():
             raise SandboxError("编译产物不存在")
         if time_limit_ms <= 0 or memory_limit_mb <= 0 or stdout_max <= 0:
             raise SandboxError("执行限制必须为正数")
@@ -104,8 +109,9 @@ class DockerRunner:
         except OSError as e:
             raise SandboxError("无法准备执行输入") from e
         seconds = max(time_limit_ms / 1000.0, 0.5)
-        args = " ".join(quote(arg) for arg in (extra_args or []))
-        cmd = ["bash", "-c", f"timeout -k 1s {seconds:.3f}s ./main {args} < input.txt"]
+        program = [*self.spec.run_command(memory_limit_mb), *(extra_args or [])]
+        command = " ".join(quote(arg) for arg in program)
+        cmd = ["bash", "-c", f"timeout -k 1s {seconds:.3f}s {command} < input.txt"]
         rc, out, err = await self._docker(work, cmd, timeout_s=time_limit_ms / 1000.0 + 5,
                                           memory_mb=memory_limit_mb, stdout_max=stdout_max,
                                           stderr_max=32 * 1024)

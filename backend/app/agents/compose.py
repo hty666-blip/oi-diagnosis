@@ -43,6 +43,7 @@ async def compose(decision: TutorDecision, diag: DiagnosisView,
     user = (
         f"当前提示层级：L{decision.level}（{LEVEL_HINT.get(decision.level, '')}）\n"
         f"本轮任务：{decision.mode}（{decision.reason}）\n"
+        f"提交语言：{diag.language}\n"
         f"诊断信息：性质={diag.p}，说明={diag.message or '无'}，"
         f"位置={(f'第 {diag.line} 行') if diag.line else '未定位'}，"
         f"参考建议={diag.hint or '无'}\n"

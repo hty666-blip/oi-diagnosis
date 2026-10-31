@@ -324,9 +324,16 @@ tbody tr:hover { background: rgba(255,255,255,.02); }
   padding: 1px 6px; border-radius: 5px; font-size: 12.5px; color: #a9c1ff;
   font-family: "Cascadia Code", Consolas, monospace;
 }
-.md .math {
-  font-family: "Cambria Math", "Times New Roman", serif; color: #b9c7ff;
-  background: rgba(109,139,255,.07); padding: 0 4px; border-radius: 4px;
+.md .math-inline { color: #cbd5ff; margin: 0 .08em; }
+.md .math-display {
+  color: #cbd5ff; background: rgba(109,139,255,.06);
+  border: 1px solid var(--line-soft); border-radius: 8px;
+  margin: 12px 0; padding: 10px 14px; overflow-x: auto; text-align: center;
+}
+.md .math-display-inner { display: inline-block; min-width: max-content; }
+.md .katex { font-size: 1.05em; }
+.md .katex-error {
+  color: #ffb4b4; font-family: "Cascadia Code", Consolas, monospace;
 }
 
 /* ---------- 样例 ---------- */
@@ -352,7 +359,11 @@ button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visib
 }
 button:disabled { cursor: not-allowed; opacity: .6; }
 .problem-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.language-picker select { min-width: 118px; width: auto; padding: 7px 30px 7px 10px; }
+.editor-head > .row { flex-wrap: nowrap; }
 .editor-actions { margin-top: 12px; }
+.recovery-actions { justify-content: space-between; align-items: center; }
+.recovery-actions .scope-note { margin: 0; }
 .scope-note { color: #c4cde0; line-height: 1.8; margin: 12px 0 0; overflow-wrap: anywhere; }
 .diagnosis-block h3, .evidence-panel h3 { font-size: 14px; margin: 20px 0 10px; }
 .findings li { grid-template-columns: auto 1fr; border-left: 1px solid var(--line); }

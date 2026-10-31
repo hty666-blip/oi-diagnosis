@@ -18,6 +18,17 @@ export function writeLocal(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* 禁用存储时仍允许继续编辑。 */ }
 }
 
+export function removeLocal(key: string) {
+  try { localStorage.removeItem(key); } catch { /* 禁用存储时忽略清理失败。 */ }
+}
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export function getToken(): string {
   return readLocal(TOKEN_KEY) ?? "";
 }
@@ -58,6 +69,9 @@ async function checkResponse(res: Response, login = false): Promise<Response> {
     window.dispatchEvent(new Event("oi-session-expired"));
     throw new Error("登录已过期，请重新登录；本机代码草稿已保留。");
   }
+  if (login && res.status === 503) {
+    throw new Error("登录服务暂时不可用，请确认数据库和后端已经启动。");
+  }
   if (!res.ok) {
     let detail = "";
     try {
@@ -67,12 +81,12 @@ async function checkResponse(res: Response, login = false): Promise<Response> {
         detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
       }
     } catch { /* 不把服务器 HTML 或内部错误堆栈显示给学生。 */ }
-    throw new Error(detail || ({
+    throw new ApiError(detail || ({
       403: "没有权限进行此操作。",
       404: "记录不存在，或当前账号无权访问。",
       429: "操作过于频繁，请稍后重试。",
       503: "判题服务暂时不可用，代码已保留，请稍后再次提交。",
-    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。");
+    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status);
   }
   return res;
 }
@@ -147,6 +161,7 @@ export interface SubmissionResult {
   problem_pid?: string;
   problem_title?: string;
   code?: string;
+  language: SubmissionLanguage;
   diagnosis?: {
     narrative: string;
     status: string;
@@ -183,7 +198,7 @@ export interface SessionReply {
   level: number;
   action: string;
   reply: string;
-  verified_submission_id?: number;
+  verified_submission_id?: number | null;
   verdict?: string | null;
 }
 
@@ -191,6 +206,8 @@ export interface SessionHistory {
   session_id: number;
   status: string;
   level: number;
+  submission_id: number;
+  verified_submission_id?: number | null;
   turns: { role: "tutor" | "student"; level: number; content: string }[];
 }
 
@@ -205,7 +222,10 @@ export interface MySubmission {
   problem_title?: string;
   stage?: string;
   tests_passed?: TestSummary | null;
+  language: SubmissionLanguage;
 }
+
+export type SubmissionLanguage = "c11" | "cpp17" | "java17" | "python3";
 
 export interface CoachItem {
   diagnosis_id: number;
@@ -231,8 +251,8 @@ export const api = {
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
   getProblem: (pid: string) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid)),
-  submit: (pid: string, code: string) =>
-    post<SubmissionResult>("/submissions", { problem_pid: pid, code }),
+  submit: (pid: string, code: string, language: SubmissionLanguage) =>
+    post<SubmissionResult>("/submissions", { problem_pid: pid, code, language }),
   getSubmission: (id: number) => get<SubmissionResult>("/submissions/" + id),
   evidence: (id: number) => get<EvidenceItem[]>("/submissions/" + id + "/evidence"),
   diagnose: (id: number) => post<DiagResult>("/submissions/" + id + "/diagnose"),

@@ -4,9 +4,11 @@
 
 用法（后端已启动）:
     backend\\.venv\\Scripts\\python.exe scripts\\seed_demo.py
+    backend\\.venv\\Scripts\\python.exe scripts\\seed_demo.py --users-only
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import random
 import sys
@@ -104,6 +106,13 @@ async def ensure_users() -> None:
         await s.commit()
 
 
+async def ensure_users_and_close() -> None:
+    try:
+        await ensure_users()
+    finally:
+        await dispose_engine()
+
+
 def login(cli: httpx.Client, username: str) -> str:
     r = cli.post(f"{BASE}/auth/login", json={"username": username, "password": PASSWORD})
     r.raise_for_status()
@@ -111,13 +120,22 @@ def login(cli: httpx.Client, username: str) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--users-only",
+        action="store_true",
+        help="只创建演示登录账号，不调用判题和诊断接口",
+    )
+    args = parser.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:  # noqa: BLE001
         pass
 
-    asyncio.run(ensure_users())
+    asyncio.run(ensure_users_and_close())
     print(f"账号就绪：{len(STUDENTS)} 名学生 + teacher01 + admin（密码 {PASSWORD}）")
+    if args.users_only:
+        return 0
 
     random.seed(42)
     total = 0
@@ -157,7 +175,6 @@ def main() -> int:
                      json={"content": "改好了，过了！"})
             print(f"  [{username}] 会话 #{sess} 完成")
 
-    asyncio.run(dispose_engine())
     print("\n演示数据生成完毕。登录：student01 / teacher01 / admin，密码 123456")
     return 0
 
