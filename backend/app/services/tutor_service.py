@@ -15,11 +15,12 @@ from app.agents.tutor import (
     safe_output,
 )
 from app.core.config import settings
+from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
+from app.services.evidence_text import has_escaped_input
 from app.services.judgement import effective_verdict
-from app.services.submission_service import outputs_equal
 
 
 class TutorService:
@@ -194,7 +195,7 @@ class TutorService:
         )
         if complete:
             hs.status = "resolved"
-        elif effective_verdict(candidate) not in ("SAMPLE_PASS", "NO_TESTS"):
+        elif effective_verdict(candidate) not in ("SAMPLE_PASS", "NO_TESTS", "UNVERIFIED"):
             hs.failed_attempts += 1
 
         result = self._verification_reply(hs, candidate)
@@ -213,6 +214,8 @@ class TutorService:
                 text = "修改后的代码已通过当前题包测试，这次答疑已解决。"
             elif effective_verdict(candidate) == "SAMPLE_PASS":
                 text = "修改后的代码仅通过公开样例；答疑保留，仍需检查边界数据。"
+            elif effective_verdict(candidate) == "UNVERIFIED":
+                text = "历史测试计数无法核对，答疑保留；请重新提交并运行正式测试后再核验。"
             elif effective_verdict(candidate) == "NO_TESTS":
                 text = "目前没有可执行测试，无法核验修改是否正确；请补充测试或请教师复核。"
             else:
@@ -238,12 +241,17 @@ class TutorService:
         for evidence in rows:
             payload = evidence.payload or {}
             failed = (
-                payload.get("status") != "Accepted"
+                payload.get("matched") is False
+                or payload.get("status") != "Accepted"
                 or payload.get("exit_code", 0) != 0
-                or not outputs_equal(str(payload.get("stdout", "")), str(payload.get("expected", "")))
+                or (payload.get("matched") is not True and not outputs_equal(
+                    str(payload.get("stdout", "")), str(payload.get("expected", ""))
+                ))
             )
             if failed:
-                view.counterexample = str(payload.get("stdin", payload.get("input", "")))[:4000]
+                if not payload.get("input_truncated") and not has_escaped_input(payload):
+                    view.counterexample = str(payload.get("stdin", payload.get("input", "")))
+                view.counterexample_minimized = False
                 break
         return view
 
@@ -279,6 +287,9 @@ def _diag_view(diag: Diagnosis | None, language: str = "cpp17") -> DiagnosisView
         line=top.get("line"),
         col=top.get("col"),
         hint=str(top.get("hint", (diag.model_meta or {}).get("hint_seed", ""))),
+        evidence_summary=diag.narrative or "",
+        hypothesis="llm_hypothesis" in (diag.degraded or [])
+                   and (diag.reviewer_id is None or diag.status != "confirmed"),
     )
 
 

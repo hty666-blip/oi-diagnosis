@@ -19,6 +19,8 @@ from app.core.config import settings  # noqa: E402
 
 
 async def ensure_database() -> None:
+    if settings.app_env.strip().lower() != "dev":
+        raise RuntimeError("数据库初始化脚本仅允许开发环境")
     url = make_url(settings.database_url)
     if not url.drivername.startswith("mysql"):
         print(f"数据库初始化跳过：当前驱动为 {url.drivername}")
@@ -51,10 +53,10 @@ def main() -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         url = make_url(settings.database_url)
-        target = url.render_as_string(hide_password=True)
+        target = f"{url.host}:{url.port}/{url.database}"
         print(
             f"数据库初始化失败：无法访问 {target}。"
-            f"请确认服务已启动、端口可达且账号具有 CREATE DATABASE 权限。原因：{exc}",
+            f"请确认服务已启动、端口可达且账号具有 CREATE DATABASE 权限。错误类型：{type(exc).__name__}",
             file=sys.stderr,
         )
         return 1

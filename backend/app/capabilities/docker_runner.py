@@ -21,7 +21,6 @@ import tempfile
 import uuid
 from contextlib import suppress
 from pathlib import Path
-from shlex import quote
 
 from app.capabilities.languages import language_spec
 from app.capabilities.sandbox import CommandResult, CompileResult, SandboxError
@@ -109,12 +108,39 @@ class DockerRunner:
         except OSError as e:
             raise SandboxError("无法准备执行输入") from e
         seconds = max(time_limit_ms / 1000.0, 0.5)
+        exit_file = work / f".exit-{uuid.uuid4().hex}"
+        # timeout 和 Docker 有自己的保留退出码，不能直接使用学生程序的退出码。
+        # 独立文件保留学生原始状态，内层只返回 0/1；参数不经 shell 字符串插值。
         program = [*self.spec.run_command(memory_limit_mb), *(extra_args or [])]
-        command = " ".join(quote(arg) for arg in program)
-        cmd = ["bash", "-c", f"timeout -k 1s {seconds:.3f}s {command} < input.txt"]
-        rc, out, err = await self._docker(work, cmd, timeout_s=time_limit_ms / 1000.0 + 5,
-                                          memory_mb=memory_limit_mb, stdout_max=stdout_max,
-                                          stderr_max=32 * 1024)
+        script = ('result_file=$1; shift; "$@" < input.txt; student_rc=$?; '
+                  'printf "%s" "$student_rc" > "$result_file" || exit 125; '
+                  '[ "$student_rc" -eq 0 ]')
+        guard = ('artifact=$1; runtime=$2; shift 2; '
+                 '[ -f "$artifact" ] && [ -x "$runtime" ] || exit 126; exec "$@"')
+        cmd = ["bash", "-c", guard, "oi-run", self.spec.artifact, program[0],
+               "timeout", "-k", "1s", f"{seconds:.3f}s", "bash", "-c", script,
+               "oi-student", exit_file.name, *program]
+        student_rc = None
+        try:
+            rc, out, err = await self._docker(work, cmd, timeout_s=time_limit_ms / 1000.0 + 5,
+                                              memory_mb=memory_limit_mb, stdout_max=stdout_max,
+                                              stderr_max=32 * 1024)
+            if rc in (0, 1) and len(out.encode("utf-8")) <= stdout_max and len(err.encode("utf-8")) <= 32 * 1024:
+                try:
+                    if exit_file.is_symlink():
+                        raise ValueError("退出状态文件不能是链接")
+                    with exit_file.open("rb") as source:
+                        raw = source.read(4)
+                    if not raw.isdigit() or not 0 <= int(raw) <= 255:
+                        raise ValueError("退出状态无效")
+                    student_rc = int(raw)
+                    if (rc == 0) != (student_rc == 0):
+                        raise ValueError("退出状态不一致")
+                except (OSError, ValueError) as exc:
+                    raise SandboxError("无法确认学生程序退出状态") from exc
+        finally:
+            with suppress(OSError):
+                exit_file.unlink(missing_ok=True)
         self._check_docker_failure(rc, err)
         status = "Accepted"
         if (rc == OUTPUT_LIMIT_EXIT or len(out.encode("utf-8")) > stdout_max
@@ -128,7 +154,7 @@ class DockerRunner:
         elif rc != 0:
             status = "Non Zero Exit Status"
         return CommandResult(
-            status=status, exit_code=0 if rc == 0 else rc,
+            status=status, exit_code=student_rc if student_rc is not None else rc,
             time_ns=0, memory_bytes=0,
             stdout=out.encode("utf-8")[:stdout_max].decode("utf-8", "replace"),
             stderr=err.encode("utf-8")[:32 * 1024].decode("utf-8", "replace"),

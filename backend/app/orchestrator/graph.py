@@ -29,6 +29,7 @@ MAX_ATTEMPTS = 2
 class DiagState(TypedDict, total=False):
     submission_id: int
     code: str
+    language: str
     verdict: str | None
     evidence: list[dict]
     draft: DiagnosisDraft
@@ -40,12 +41,14 @@ class DiagState(TypedDict, total=False):
 
 
 async def diagnose_node(state: DiagState) -> dict:
-    draft = diagnose(state.get("evidence", []), state.get("verdict"), state.get("code", ""))
+    draft = diagnose(state.get("evidence", []), state.get("verdict"), state.get("code", ""),
+                     language=state.get("language", "cpp17"))
     # 规则判不了（need_human）才动用模型；能确定性判的绝不问模型
     if draft.need_human and state.get("verdict") not in ("SAMPLE_PASS", "NO_TESTS"):
         better = await llm_hypothesis(
             draft, state.get("evidence", []), state.get("verdict"),
             state.get("code", ""), state.get("llm"),
+            language=state.get("language", "cpp17"),
         )
         if better is not None:
             draft = better
@@ -112,10 +115,11 @@ GRAPH = build_graph()
 
 
 async def run_diagnosis(*, submission_id: int, code: str, verdict: str | None,
-                        evidence: list[dict]) -> dict:
+                        evidence: list[dict], language: str = "cpp17") -> dict:
     out = await GRAPH.ainvoke({
         "submission_id": submission_id,
         "code": code,
+        "language": language,
         "verdict": verdict,
         "evidence": evidence,
         "attempts": 0,

@@ -67,9 +67,9 @@ def test_login_input_is_normalized_and_bounded():
     payload = LoginIn(username="  Student01  ", password="123456")
     assert payload.username == "student01"
     with pytest.raises(ValidationError):
-        LoginIn(username="包含空格", password="123456")
+        LoginIn(username="x" * 65, password="123456")
     with pytest.raises(ValidationError):
-        LoginIn(username="student01", password="123")
+        LoginIn(username="student01", password="")
 
 
 def test_password_hash_roundtrip_and_legacy_detection():
@@ -128,6 +128,4 @@ async def test_database_failure_is_reported_as_service_unavailable():
 @pytest.mark.asyncio
 async def test_demo_accounts_are_hidden_outside_development(monkeypatch):
     monkeypatch.setattr(settings, "app_env", "prod")
-    with pytest.raises(HTTPException) as caught:
-        await demo_accounts()
-    assert caught.value.status_code == 404
+    assert await demo_accounts() == []

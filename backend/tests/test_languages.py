@@ -1,9 +1,11 @@
 import pytest
 
+from app.agents.diagnostician import diagnose
 from app.agents.tutor import safe_output
 from app.api.v1.submissions import SubmissionCreate
 from app.capabilities.languages import language_spec
 from app.capabilities.triage import triage
+from app.services.submission_service import code_digest
 
 
 @pytest.mark.parametrize(
@@ -62,3 +64,28 @@ def test_python_and_java_compile_errors_receive_actionable_hints():
 )
 def test_safe_output_blocks_complete_programs_in_all_languages(text):
     assert not safe_output(text)
+
+
+def test_language_participates_in_cache_digest():
+    assert code_digest("int main(){}", "c11") != code_digest("int main(){}", "cpp17")
+    assert code_digest("print(1)\r\n", "python3") == code_digest("print(1)\n", "python3")
+
+
+@pytest.mark.parametrize("language", ["java17", "python3"])
+def test_diagnosis_fallback_preserves_valid_unicode_identifiers(language):
+    draft = diagnose([], "WA", "结果 = 1", language=language)
+    assert not draft.nature
+
+
+@pytest.mark.parametrize(
+    ("language", "stderr", "line"),
+    [
+        ("java17", "Main.java:3: error: ';' expected\n", 3),
+        ("python3", '  File "main.py", line 2\nSyntaxError: invalid syntax\n', 2),
+    ],
+)
+def test_second_diagnosis_keeps_language_specific_compile_evidence(language, stderr, line):
+    draft = diagnose([{"id": 1, "type": "compile_log", "payload": {"stderr": stderr}}],
+                     "CE", language=language)
+    assert draft.nature and draft.nature[0].line == line
+    assert draft.nature[0].code.startswith("P1-JAVA" if language == "java17" else "P1-PYTHON")

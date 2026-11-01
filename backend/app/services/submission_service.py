@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.ce_classify import classify_runtime
@@ -24,10 +26,15 @@ from app.capabilities.sandbox import CommandResult, CompileResult, SandboxClient
 from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
-from app.domain.models import Diagnosis, Evidence, Problem, Submission
+from app.domain.judging import outputs_equal
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.infra.db_lock import acquire_submission_lock
+from app.services.evidence_text import has_escaped_input, prepare_evidence_payload
+from app.services.job_service import JobLease, require_lease
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v5"
+PIPELINE_VER = "v7"
+logger = logging.getLogger(__name__)
 
 
 def build_runner():
@@ -43,17 +50,6 @@ def normalize_code(code: str) -> str:
 def code_digest(code: str, language: str = "cpp17") -> str:
     normalized = normalize_code(code)
     return hashlib.sha256(f"{language}\0{normalized}".encode()).hexdigest()
-
-
-def outputs_equal(actual: str, expected: str) -> bool:
-    """与 OJ 一致的宽松比较：忽略行尾空格与末尾多余空行。"""
-    a = [ln.rstrip() for ln in actual.replace("\r\n", "\n").split("\n")]
-    b = [ln.rstrip() for ln in expected.replace("\r\n", "\n").split("\n")]
-    while a and a[-1] == "":
-        a.pop()
-    while b and b[-1] == "":
-        b.pop()
-    return a == b
 
 
 @dataclass
@@ -111,18 +107,28 @@ def decide_verdict(comp: CompileResult, runs: list[tuple[dict, CommandResult]], 
 
 
 class SubmissionService:
-    def __init__(self, session: AsyncSession, sandbox=None) -> None:
+    def __init__(self, session: AsyncSession, sandbox=None, *, lease: JobLease | None = None) -> None:
         self.session = session
         self.sandbox = sandbox or build_runner()
+        self.was_created = False
+        self.lease = lease
 
     async def create(self, problem_pid: str, code: str, student_id: int = 0,
-                     language: str = "cpp17") -> Submission:
+                     parent_submission_id: int | None = None, *, language: str = "cpp17",
+                     background: bool = False) -> Submission:
         language_spec(language)
+        self.was_created = False
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
         ).scalar_one_or_none()
         if problem is None:
             raise ValueError(f"题目不存在: {problem_pid}")
+        if parent_submission_id is not None:
+            parent = await self.session.get(Submission, parent_submission_id)
+            if parent is None or parent.student_id != student_id:
+                raise ValueError("上次提交不存在或不属于当前账号")
+            if parent.problem_id != problem.id:
+                raise ValueError("上次提交必须属于同一道题")
 
         normalized = normalize_code(code)
         if not normalized.strip():
@@ -131,20 +137,31 @@ class SubmissionService:
         suite = load_suite(problem)
         # 题面、数据或资源限制变化后旧结果不可复用；保持 pipeline_ver 在原字段长度内。
         pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
+        # 短事务内串行化同一请求；执行器运行时不占用数据库锁。
+        lock_key = hashlib.sha256(
+            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}".encode()
+        ).digest()[:8]
+        await acquire_submission_lock(self.session, int.from_bytes(lock_key, "big", signed=True))
 
-        existing = (
-            await self.session.execute(
-                select(Submission).where(
-                    Submission.problem_id == problem.id,
-                    Submission.code_hash == digest,
-                    Submission.student_id == student_id,
-                    Submission.pipeline_ver == pipeline_ver,
-                    Submission.stage == "READY",
-                )
-                .order_by(Submission.id.desc()).limit(1)
-            )
-        ).scalar_one_or_none()
+        cached = select(Submission).where(
+            Submission.problem_id == problem.id,
+            Submission.code_hash == digest,
+            Submission.lang == language,
+            Submission.student_id == student_id,
+            Submission.pipeline_ver == pipeline_ver,
+            Submission.parent_submission_id == parent_submission_id,
+            Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
+        )
+        if background:
+            cached = cached.where(or_(
+                Submission.stage == "READY",
+                select(JudgeJob.id).where(JudgeJob.submission_id == Submission.id).exists(),
+            ))
+        existing = (await self.session.execute(
+            cached.order_by(Submission.id.desc()).limit(1)
+        )).scalar_one_or_none()
         if existing is not None:
+            await self.session.commit()
             return existing
 
         sub = Submission(
@@ -154,32 +171,78 @@ class SubmissionService:
             code_hash=digest,
             lang=language,
             pipeline_ver=pipeline_ver,
-            stage="RECEIVED",
+            stage="QUEUED" if background else "RECEIVED",
+            parent_submission_id=parent_submission_id,
         )
         self.session.add(sub)
+        if background:
+            await self.session.flush()
+            self.session.add(JudgeJob(submission_id=sub.id,
+                                      max_attempts=max(1, settings.judge_job_max_attempts)))
         await self.session.commit()
         await self.session.refresh(sub)
+        self.was_created = True
         return sub
 
     async def run(self, submission: Submission) -> VerdictResult:
         """失败保持为系统错误，且无论成败都释放执行器资源。"""
         self._artifact_id = None
+        submission_id = submission.id
         try:
+            if self.lease is not None:
+                await require_lease(self.session, self.lease)
             return await self._run(submission)
         except SandboxError:
+            if self.lease is not None:
+                raise
             submission.stage = "SANDBOX_ERROR"
             submission.verdict = None
             submission.tests_passed = None
             await self.session.commit()
             raise
+        except asyncio.CancelledError:
+            if self.lease is not None:
+                raise
+            # 请求取消不能留下永远“运行中”的缓存记录。
+            await self.session.rollback()
+            await self.session.execute(update(Submission).where(Submission.id == submission_id).values(
+                stage="INTERRUPTED", verdict=None, tests_passed=None,
+            ))
+            await self.session.commit()
+            raise
+        except Exception as exc:
+            if self.lease is not None:
+                # 工作器负责事务恢复和重试，包含 LeaseLost 在内的异常必须原样传播。
+                raise
+            try:
+                # 证据写入失败可能已使事务失效，不能在原事务里修改提交状态。
+                await self.session.rollback()
+                await self.session.execute(update(Submission).where(
+                    Submission.id == submission_id,
+                    Submission.stage != "READY",
+                ).values(stage="SANDBOX_ERROR", verdict=None, tests_passed=None))
+                await self.session.commit()
+            except Exception:
+                logger.warning("无法保存判题系统错误状态", exc_info=False)
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    logger.warning("无法回滚判题事务", exc_info=False)
+            raise SandboxError("判题执行未完成") from exc
         finally:
             artifact_id = getattr(self, "_artifact_id", None)
             cleanup = getattr(self.sandbox, "cleanup", None)
             if artifact_id and cleanup:
-                await cleanup(artifact_id)
+                try:
+                    await cleanup(artifact_id)
+                except Exception:
+                    logger.warning("判题结束后的产物清理失败", exc_info=False)
             close = getattr(self.sandbox, "close", None)
             if close:
-                await close()
+                try:
+                    await close()
+                except Exception:
+                    logger.warning("判题连接关闭失败", exc_info=False)
 
     async def _run(self, submission: Submission) -> VerdictResult:
         configure_language = getattr(self.sandbox, "set_language", None)
@@ -203,7 +266,7 @@ class SubmissionService:
         })
 
         submission.stage = "COMPILING"
-        await self.session.commit()
+        await self._commit()
 
         # 2) 编译
         comp = await self.sandbox.compile(submission.code)
@@ -226,7 +289,7 @@ class SubmissionService:
 
         # 3) 运行本次固定的测试集，记录输入以便重现失败。
         submission.stage = "RUNNING"
-        await self.session.commit()
+        await self._commit()
 
         runs: list[tuple[dict, CommandResult]] = []
         for idx, sample in enumerate(suite.cases, start=1):
@@ -242,14 +305,19 @@ class SubmissionService:
                 "scope": suite.scope,
                 "suite_digest": suite.digest,
                 "input": sample["input"][:8000],
+                "input_truncated": len(sample["input"]) > 8000,
                 "status": res.status,
+                "matched": res.status == "Accepted" and res.exit_code == 0
+                           and outputs_equal(res.stdout, sample["output"]),
                 "exit_code": res.exit_code,
                 "time_ms": res.time_ms,
                 "memory_kb": res.memory_kb,
                 "stdout": res.stdout[:4000],
+                "stdout_truncated": len(res.stdout) > 4000,
                 "stderr": res.stderr[:4000],
                 "expected": str(sample.get("output", ""))[:4000],
-            })
+                "expected_truncated": len(sample["output"]) > 4000,
+            }, reproducible=len(sample["input"]) <= 8000)
 
         result = decide_verdict(comp, runs, scope=suite.scope)
         result.suite_digest = suite.digest
@@ -271,6 +339,9 @@ class SubmissionService:
 
     async def _finalize(self, submission: Submission, result: VerdictResult,
                         tr: TriageResult, suite: JudgeSuite) -> None:
+        if self.lease is not None:
+            # 在修改 Submission 和查询 Diagnosis 可能触发 autoflush 之前先锁定所有者。
+            await require_lease(self.session, self.lease)
         submission.verdict = result.verdict
         result.suite_digest = suite.digest
         submission.tests_passed = {"passed": result.passed, "total": result.total,
@@ -311,15 +382,33 @@ class SubmissionService:
         }
         diag.degraded = tr.notes
         self.session.add(diag)
-        await self.session.commit()
+        await self._commit(complete_job=True)
 
-    async def _add_evidence(self, submission_id: int, kind: str, payload: dict) -> Evidence:
+    async def _add_evidence(self, submission_id: int, kind: str, payload: dict,
+                            *, reproducible: bool = True) -> Evidence:
         import json
+        payload = prepare_evidence_payload(payload)
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest()[:32]
-        ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest)
+        ev = Evidence(submission_id=submission_id, type=kind, payload=payload, digest=digest,
+                      reproducible=reproducible and not has_escaped_input(payload))
         self.session.add(ev)
-        await self.session.commit()
+        await self._commit()
         return ev
+
+    async def _commit(self, *, complete_job: bool = False) -> None:
+        if self.lease is not None:
+            job = await require_lease(self.session, self.lease)
+            if complete_job:
+                from sqlalchemy import func
+
+                job.status = "succeeded"
+                # 完成令牌仅用于心跳确认清理归属；非 running 状态始终不能写回。
+                job.lease_expires_at = None
+                job.last_error = None
+                job.finished_at = func.now()
+        await self.session.commit()
+        if complete_job and self.lease is not None:
+            self.lease.committed.set()
 

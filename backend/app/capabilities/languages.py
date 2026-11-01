@@ -29,7 +29,7 @@ class LanguageSpec:
         if self.key == "java17":
             return [
                 "/bin/bash", "-lc",
-                f"/usr/bin/javac -encoding UTF-8 {source} && /usr/bin/jar cf main.jar Main*.class",
+                f"/usr/bin/javac -encoding UTF-8 {source} && /usr/bin/jar cf main.jar *.class",
             ]
         return ["/usr/bin/python3", "-m", "py_compile", source]
 

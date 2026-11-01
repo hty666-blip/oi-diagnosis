@@ -1,55 +1,99 @@
-﻿# 一键启动开发环境（PowerShell）
-# 用法: .\scripts\dev.ps1 [-SkipCompose] [-SkipJudge]
+# 一键启动本地开发环境（PowerShell）；可先用 -CheckOnly 检查参数。
 param(
     [switch]$SkipCompose,
-    [switch]$SkipJudge
+    [switch]$SkipJudge,
+    [switch]$SkipInstall,
+    [switch]$DisableLlm,
+    [switch]$NoReload,
+    [switch]$Reload,
+    [switch]$CheckOnly,
+    [ValidateRange(1024, 65535)][int]$Port = 8000
 )
 
-$ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
-Set-Location $Root
-$env:PYTHONUTF8 = "1"
+$ErrorActionPreference = 'Stop'
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $ProjectRoot
+$env:PYTHONUTF8 = '1'
+if ($DisableLlm) { $env:LLM_ENABLED = 'false' }
+$BackendPath = Join-Path $ProjectRoot 'backend'
+$PythonPath = Join-Path $BackendPath '.venv\Scripts\python.exe'
+
+function Assert-NativeSuccess([string]$Step) {
+    if ($LASTEXITCODE -ne 0) { throw "$Step 失败（退出码 $LASTEXITCODE），请处理后重新启动。" }
+}
 
 function Wait-For([string]$Name, [scriptblock]$Check, [int]$TimeoutSec = 90) {
     Write-Host "等待 $Name ..." -ForegroundColor Cyan
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        if (& $Check) { Write-Host "  $Name 就绪" -ForegroundColor Green; return $true }
+        try {
+            if (& $Check) { Write-Host "  $Name 就绪" -ForegroundColor Green; return }
+        } catch { }
         Start-Sleep -Seconds 2
     }
-    Write-Host "  $Name 超时（$TimeoutSec s）" -ForegroundColor Yellow
-    return $false
+    throw "$Name 在 $TimeoutSec 秒内未就绪，已停止启动，请检查容器状态。"
+}
+
+if (-not (Test-Path -LiteralPath $PythonPath)) {
+    Get-Command python -ErrorAction Stop | Out-Null
+    if (Test-Path -LiteralPath (Join-Path $BackendPath '.venv')) {
+        throw '现有 backend\.venv 缺少 Windows Python，请检查环境，不会自动覆盖。'
+    }
+}
+if (-not $SkipCompose) { Get-Command docker -ErrorAction Stop | Out-Null }
+if ($CheckOnly) {
+    Write-Host "启动参数检查通过：API 端口 $Port；未安装依赖或启动服务。"
+    exit 0
 }
 
 if (-not $SkipCompose) {
-    $services = @("mysql", "redis")
-    if (-not $SkipJudge) { $services += "judge" }
-    docker compose --env-file .env -f deploy/compose.dev.yml up -d @services
-    Wait-For "mysql" { (docker inspect --format '{{.State.Health.Status}}' oi-mysql 2>$null) -eq "healthy" } | Out-Null
-    Wait-For "redis" { (docker exec oi-redis redis-cli ping 2>$null) -match "PONG" } | Out-Null
+    $ComposeArgs = @('compose')
+    $EnvironmentPath = Join-Path $ProjectRoot '.env'
+    if (Test-Path -LiteralPath $EnvironmentPath) { $ComposeArgs += @('--env-file', $EnvironmentPath) }
+    $ComposeArgs += @('-f', (Join-Path $ProjectRoot 'deploy\compose.dev.yml'))
+    $Services = @('mysql', 'redis')
+    if (-not $SkipJudge) { $Services += 'judge' }
+    & docker @ComposeArgs up -d @Services
+    Assert-NativeSuccess '开发基础设施启动'
+    foreach ($serviceName in @('mysql', 'redis')) {
+        Wait-For $serviceName {
+            $containerId = & docker @ComposeArgs ps -q $serviceName
+            if ($LASTEXITCODE -ne 0 -or -not $containerId) { return $false }
+            $health = & docker inspect --format '{{.State.Health.Status}}' $containerId 2>$null
+            return $LASTEXITCODE -eq 0 -and $health -eq 'healthy'
+        }
+    }
     if (-not $SkipJudge) {
-        Wait-For "judge" { (Invoke-WebRequest -Uri http://localhost:5050/version -TimeoutSec 3 -UseBasicParsing).StatusCode -eq 200 } | Out-Null
+      Wait-For 'judge' {
+        $containerId = & docker @ComposeArgs ps -q judge
+        if ($LASTEXITCODE -ne 0 -or -not $containerId) { return $false }
+        $running = & docker inspect --format '{{.State.Running}}' $containerId 2>$null
+        return $LASTEXITCODE -eq 0 -and $running -eq 'true'
+      }
     }
 }
 
-if (-not (Test-Path "backend\.venv")) {
-    Write-Host "创建虚拟环境 ..." -ForegroundColor Cyan
-    python -m venv backend\.venv
-    & backend\.venv\Scripts\python.exe -m pip install -q -e "backend[dev]"
+if (-not (Test-Path -LiteralPath $PythonPath)) {
+    & python -m venv (Join-Path $BackendPath '.venv')
+    Assert-NativeSuccess 'Python 环境创建'
 }
 
-Write-Host "初始化数据库 ..." -ForegroundColor Cyan
-& backend\.venv\Scripts\python.exe scripts\init_database.py
-if ($LASTEXITCODE -ne 0) { throw "数据库初始化失败" }
-
-Write-Host "执行迁移 ..." -ForegroundColor Cyan
-Push-Location backend
-& .\.venv\Scripts\alembic.exe upgrade head
-Pop-Location
-
-Write-Host "启动 API: http://127.0.0.1:8000/docs" -ForegroundColor Green
-Push-Location backend
-# Windows 下 Uvicorn 的 --reload 会使用 SelectorEventLoop，无法启动 Docker 判题子进程。
-# 保持单进程运行；修改后端代码后手动重启此脚本即可。
-& .\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
-Pop-Location
+Push-Location $BackendPath
+try {
+    if (-not $SkipInstall) {
+        & $PythonPath -m pip install -e '.[dev]'
+        Assert-NativeSuccess '后端依赖安装'
+    }
+    & $PythonPath -c "import sys; from app.core.config import settings; sys.exit(0 if settings.app_env.strip().lower() == 'dev' else 2)"
+    Assert-NativeSuccess '开发环境检查：该脚本仅允许 APP_ENV=dev'
+    & $PythonPath (Join-Path $ProjectRoot 'scripts\init_database.py')
+    Assert-NativeSuccess 'MySQL 数据库初始化'
+    & $PythonPath -m alembic upgrade head
+    Assert-NativeSuccess '数据库迁移'
+    Write-Host "启动 API: http://127.0.0.1:$Port/docs" -ForegroundColor Green
+    $ServerArgs = @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', "$Port")
+    # Windows Docker 子进程需要默认事件循环，重载仅在明确指定时启用。
+    if ($Reload -and -not $NoReload) { $ServerArgs += '--reload' }
+    & $PythonPath @ServerArgs
+    Assert-NativeSuccess 'API 服务'
+} finally { Pop-Location }

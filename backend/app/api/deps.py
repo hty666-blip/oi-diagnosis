@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_token
+from app.core.security import USER_ROLES, decode_token
 from app.domain.models import User
 from app.infra.db import get_session
 
@@ -30,6 +30,8 @@ async def get_current_user(
     user = await session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在")
+    if user.role not in USER_ROLES:
+        raise HTTPException(status_code=401, detail="无效的账号状态")
     return user
 
 

@@ -78,8 +78,8 @@ class LLMClient:
                                           json=payload, headers=headers)
                 latency = int((time.time() - t0) * 1000)
                 if resp.status_code >= 400:
-                    # 不打印任何 header / key，只记状态码与错误体前 200 字
-                    logger.warning("LLM HTTP %s: %s", resp.status_code, resp.text[:200])
+                    # 服务端错误体可能回显请求或密钥，只记录状态码。
+                    logger.warning("LLM HTTP %s", resp.status_code)
                     self.last_call = LLMCall(model=payload["model"], latency_ms=latency, ok=False,
                                              error=f"http_{resp.status_code}")
                     if resp.status_code in (401, 403):
@@ -87,14 +87,15 @@ class LLMClient:
                     continue
 
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                usage = data.get("usage") or {}
+                content, usage = _response_content(data)
+                parsed = _parse_json(content)
                 self.last_call = LLMCall(
                     model=data.get("model", payload["model"]), latency_ms=latency,
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
+                    ok=parsed is not None, error="" if parsed is not None else "invalid_json",
                 )
-                return _parse_json(content)
+                return parsed
             except Exception as e:  # noqa: BLE001
                 latency = int((time.time() - t0) * 1000)
                 self.last_call = LLMCall(model=payload["model"], latency_ms=latency, ok=False,
@@ -125,21 +126,20 @@ class LLMClient:
                     resp = await cli.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
                 latency = int((time.time() - t0) * 1000)
                 if resp.status_code >= 400:
-                    logger.warning("LLM(text) HTTP %s: %s", resp.status_code, resp.text[:160])
+                    logger.warning("LLM(text) HTTP %s", resp.status_code)
                     self.last_call = LLMCall(model=payload["model"], latency_ms=latency,
                                              ok=False, error=f"http_{resp.status_code}")
                     if resp.status_code in (401, 403):
                         return None
                     continue
                 data = resp.json()
-                usage = data.get("usage") or {}
+                text, usage = _response_content(data)
                 self.last_call = LLMCall(
                     model=data.get("model", payload["model"]), latency_ms=latency,
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
                 )
-                text = (data["choices"][0]["message"]["content"] or "").strip()
-                return text or None
+                return text.strip()
             except Exception as e:  # noqa: BLE001
                 self.last_call = LLMCall(model=payload["model"], latency_ms=0, ok=False,
                                          error=type(e).__name__)
@@ -168,7 +168,7 @@ class LLMClient:
 
 
 def _parse_json(content: str) -> dict | None:
-    if not content:
+    if not isinstance(content, str) or not content:
         return None
     text = FENCE.sub("", content).strip()
     try:
@@ -183,5 +183,27 @@ def _parse_json(content: str) -> dict | None:
             except json.JSONDecodeError:
                 return None
     return None
+
+
+def _response_content(data: object) -> tuple[str, dict]:
+    """兼容协议只接受可用的文本，拒绝把对象、列表和空内容当回复。"""
+    if not isinstance(data, dict):
+        raise ValueError("invalid_response")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("invalid_choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("invalid_message")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("invalid_content")
+    usage = data.get("usage") or {}
+    if not isinstance(usage, dict) or any(
+        type(usage.get(key, 0)) is not int or usage.get(key, 0) < 0
+        for key in ("prompt_tokens", "completion_tokens")
+    ):
+        raise ValueError("invalid_usage")
+    return content, usage
 
 

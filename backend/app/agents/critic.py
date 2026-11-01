@@ -24,8 +24,9 @@ def review(draft: DiagnosisDraft, evidence_ids: set[int]) -> Critique:
         if not claim.evidence_ids:
             issues.append(f"{claim.code} 没有绑定任何证据")
 
-    # 2) 防代做：出现 ``` 且带 main() 视为给完整程序
-    if not safe_output(draft.narrative):
+    # 不依赖代码围栏；完整程序放在假设解释里也不能绕过检查。
+    if not all(safe_output(text) for text in [draft.narrative, draft.hint_seed,
+                                             *(claim.explain for claim in draft.mechanism)]):
         issues.append("narrative 里出现完整程序（防代做红线）")
 
     # 3) 叙述质量

@@ -19,6 +19,7 @@
 | `backend/`，激活 `.venv` 后 | `pytest -q` | 运行后端测试 |
 | `web/` | `pnpm install --frozen-lockfile` | 按锁文件安装前端依赖 |
 | `web/` | `pnpm dev` | 启动前端（5173），代理 `/api` 到后端 |
+| `web/` | `pnpm test` | 检查认证、复核请求与判定呈现边界 |
 | `web/` | `pnpm build` | 执行 TypeScript 检查并构建生产资源 |
 | 根目录 | `backend\.venv\Scripts\python.exe tools\check_package.py --dir problems` | 校验自建题包 |
 
@@ -28,7 +29,7 @@ Python 使用 4 空格缩进、类型标注、`snake_case` 函数和模块、`Pa
 
 ## 测试要求
 
-使用 pytest 与 pytest-asyncio，文件命名为 `test_*.py`，函数命名为 `test_*`；异步测试支持自动模式。为诊断规则、证据校验、模型降级和辅导防代做行为补充回归用例，外部 HTTP 调用优先使用 `httpx.MockTransport`。CI 尚未强制覆盖率阈值，前端尚未配置自动化测试；界面变更需通过构建并手动验证相关流程。
+使用 pytest 与 pytest-asyncio，文件命名为 `test_*.py`，函数命名为 `test_*`；异步测试支持自动模式。为诊断规则、证据校验、模型降级和辅导防代做行为补充回归用例，外部 HTTP 调用优先使用 `httpx.MockTransport`。CI 尚未强制覆盖率阈值；前端契约测试位于 `web/tests/`，使用 Node 内置测试运行器。界面变更还需通过构建并手动验证相关流程。
 
 ## 提交与 Pull Request
 

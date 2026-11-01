@@ -209,7 +209,8 @@ class SandboxClient:
                 "cpuLimit": time_limit_ms * 1_000_000,
                 "clockLimit": (time_limit_ms + 2000) * 1_000_000,
                 "memoryLimit": memory_limit_mb * 1024 * 1024,
-                "procLimit": 1,
+                # JVM 的运行时线程也计入进程上限，单进程限制会在启动阶段失败。
+                "procLimit": 64 if self.language == "java17" else 1,
                 "copyIn": {self.spec.artifact: {"fileId": artifact_id}},
                 "copyOut": ["stdout", "stderr"],
             }],

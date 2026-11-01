@@ -7,18 +7,48 @@ M4 阶段先做**确定性版本**（规则/模板），LLM 版本通过同一�
 
 from __future__ import annotations
 
+import math
+import re
+
 from app.agents.contracts import CauseClaim, DiagnosisDraft, NatureTag
-from app.capabilities.ce_classify import classify_compile, classify_runtime
+from app.agents.tutor import safe_output
+from app.capabilities.ce_classify import classify_runtime
 from app.capabilities.triage import triage
+from app.domain.judging import outputs_equal
 
 HINT_LEVEL_BY_P = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 2, "P5": 3}
+UNSUPPORTED_DISPATCH = re.compile(r"已.{0,8}(通知|同步|转交|请).{0,8}老师|同步给老师|老师.{0,6}已.{0,6}(确认|收到|复核)")
 
 
 def _payload(ev: dict) -> dict:
     return ev.get("payload") or {}
 
 
-def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> DiagnosisDraft:
+def failure_summary(evidence: list[dict]) -> str:
+    """只复述真实执行差异，不把现象提升为未经验证的根因。"""
+    for ev in evidence:
+        if ev.get("type") != "run_trace":
+            continue
+        payload = _payload(ev)
+        actual, expected = payload.get("stdout"), payload.get("expected")
+        if (payload.get("status") != "Accepted" or payload.get("exit_code", 0) != 0
+                or not isinstance(actual, str) or not isinstance(expected, str)
+                or (payload.get("matched") is not False and outputs_equal(actual, expected))):
+            continue
+        raw_input = payload.get("input", payload.get("stdin"))
+        input_label = "输入片段" if (isinstance(raw_input, str) and len(raw_input) > 240
+                                    or payload.get("input_truncated")) else "输入"
+        input_note = f"{input_label}={raw_input[:240]!r}；" if isinstance(raw_input, str) else "输入未保存；"
+        truncated = (payload.get("stdout_truncated") or payload.get("expected_truncated")
+                     or len(actual) > 240 or len(expected) > 240)
+        limit_note = "（输出展示已截断，差异可能位于未展示部分）" if truncated else ""
+        return (f"证据 #{ev.get('id')}：{input_note}实际输出={actual[:240]!r}；"
+                f"预期输出={expected[:240]!r}{limit_note}。当前只能确认输出不一致，尚未定位具体错因。")
+    return ""
+
+
+def diagnose(evidence: list[dict], verdict: str | None, code: str = "", *,
+             language: str = "cpp17") -> DiagnosisDraft:
     nature: list[NatureTag] = []
     mechanism: list[CauseClaim] = []
     cognition: list[CauseClaim] = []
@@ -41,9 +71,9 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
         stderr = _payload(ev).get("stderr", "")
         if not stderr:
             continue
-        for f in classify_compile(stderr).findings:
+        for f in triage("", compile_stderr=stderr, language=language).findings:
             nature.append(NatureTag(
-                p=f.nature, code=f.code, line=f.line, col=f.col,
+                p=f.p, code=f.code, line=f.line, col=f.col,
                 message=f.message, hint=f.hint,
             ))
             if f.code.startswith("M"):
@@ -64,7 +94,7 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
 
     # --- 4) 兜底：用 triage 的规则再扫一遍源码（防止证据不全）---
     if not nature and code:
-        tr = triage(code, verdict=verdict)
+        tr = triage(code, verdict=verdict, language=language)
         for f in tr.findings:
             nature.append(NatureTag(p=f.p, code=f.code, line=f.line, col=f.col,
                                     message=f.message, hint=f.hint))
@@ -86,7 +116,8 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
     worst = min(nature, key=lambda n: n.p, default=None) if nature else None
     hint_level = HINT_LEVEL_BY_P.get(worst.p, 1) if worst else 2
 
-    narrative = _narrative(nature, verdict)
+    observed = failure_summary(evidence) if verdict == "WA" else ""
+    narrative = _narrative(nature, verdict) if nature else observed or _narrative(nature, verdict)
     need_human = not nature and verdict not in ("AC", "SAMPLE_PASS", "NO_TESTS", None)
 
     return DiagnosisDraft(
@@ -96,7 +127,7 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
         narrative=narrative,
         confidence=conf,
         first_hint_level=hint_level,
-        hint_seed=_hint_seed(worst),
+        hint_seed=_hint_seed(worst) if worst else "先手算已记录的失败输入，找出实际与预期最早不同的一步。" if observed else "",
         need_human=need_human,
         degraded=degraded,
     )
@@ -172,21 +203,23 @@ def _evidence_digest(evidence: list[dict]) -> str:
         if ev.get("type") == "static_alert":
             lines.append(f"[证据 {ev['id']}] 表层扫描: {p.get('count')} 处 {p.get('findings', [])[:2]}")
         elif ev.get("type") == "compile_log":
-            lines.append(f"[证据 {ev['id']}] 编译错误: {str(p.get('stderr', ''))[:300]}")
+            lines.append(f"[证据 {ev['id']}] 编译记录: {str(p.get('stderr', ''))[:300]}")
         elif ev.get("type") == "run_trace":
             lines.append(f"[证据 {ev['id']}] 运行: status={p.get('status')} "
+                         f"input={str(p.get('input', p.get('stdin', '')))[:80]} "
                          f"stdout={str(p.get('stdout'))[:80]} expected={str(p.get('expected'))[:80]}")
     return "\n".join(lines)[:2000]
 
 
 async def llm_hypothesis(draft: DiagnosisDraft, evidence: list[dict], verdict: str | None,
-                         code: str, llm) -> DiagnosisDraft | None:
+                         code: str, llm, *, language: str = "cpp17") -> DiagnosisDraft | None:
     """规则判不了时，让模型提假设——但结论仍必须绑定证据，置信度封顶 0.6。"""
     if llm is None or not getattr(llm, "available", False) or not evidence:
         return None
 
-    user = (f"判题结果: {verdict}\n\n证据:\n{_evidence_digest(evidence)}\n\n"
-            f"学生代码（截断）:\n```cpp\n{code[:2500]}\n```")
+    fence = {"c11": "c", "cpp17": "cpp", "java17": "java", "python3": "python"}.get(language, "text")
+    user = (f"提交语言: {language}\n判题结果: {verdict}\n\n证据:\n{_evidence_digest(evidence)}\n\n"
+            f"学生代码（截断）:\n```{fence}\n{code[:2500]}\n```")
     try:
         data = await llm.chat_json(SYSTEM_PROMPT, user)
     except Exception:  # 模型服务失败不能掩盖已保存的判题证据。
@@ -194,7 +227,7 @@ async def llm_hypothesis(draft: DiagnosisDraft, evidence: list[dict], verdict: s
     if not isinstance(data, dict):
         return None
 
-    valid_ids = {ev["id"] for ev in evidence}
+    valid_ids = {ev["id"] for ev in evidence if type(ev.get("id")) is int}
     mechanism: list[CauseClaim] = []
     items = data.get("mechanism")
     if not isinstance(items, list):
@@ -206,31 +239,49 @@ async def llm_hypothesis(draft: DiagnosisDraft, evidence: list[dict], verdict: s
         if not isinstance(raw_ids, list):
             continue
         ids = [i for i in raw_ids if type(i) is int and i in valid_ids]
-        if not ids:
+        if not ids or len(ids) != len(raw_ids):
             continue  # 禁止替模型随意补一个真实编号，伪造证据关联。
         claim_code = item.get("code")
-        if claim_code not in {f"M{i:02d}" for i in range(1, 12)}:
+        if not isinstance(claim_code, str) or claim_code not in {f"M{i:02d}" for i in range(1, 12)}:
             continue
         try:
-            confidence = min(float(item.get("confidence", 0.5)), 0.6)
+            raw_confidence = item.get("confidence", 0.5)
+            if type(raw_confidence) not in (int, float) or not math.isfinite(raw_confidence):
+                continue
+            confidence = min(raw_confidence, 0.6)
             if not 0 <= confidence <= 0.6:
                 continue
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            continue
+        explanation = item.get("explain", "")
+        if not isinstance(explanation, str) or not explanation.strip() or not safe_output(explanation):
+            continue
+        if UNSUPPORTED_DISPATCH.search(explanation) or "最小反例" in explanation:
+            continue
+        if not any(n.line for n in draft.nature) and re.search(r"第\s*\d+\s*行", explanation):
             continue
         mechanism.append(CauseClaim(
             code=claim_code,
             confidence=confidence,
             evidence_ids=ids,
-            explain=str(item.get("explain", ""))[:200],
+            explain=explanation[:200],
         ))
 
     if not mechanism:
         return None
 
-    narrative = str(data.get("narrative") or draft.narrative)[:500]
+    narrative = data.get("narrative", "")
+    if not isinstance(narrative, str) or not safe_output(narrative):
+        return None
+    if not any(n.line for n in draft.nature) and re.search(r"第\s*\d+\s*行", narrative):
+        return None
+    # 保留执行事实，模型文字始终标为假设；不承诺尚未发生的人工派发。
+    narrative = (f"{draft.narrative}\n待核对的模型假设："
+                 + "；".join(claim.explain for claim in mechanism)
+                 + "。这些原因尚未证实，可带上本次证据请老师复核。")
     return draft.model_copy(update={
         "mechanism": mechanism,
-        "narrative": narrative or "这是一个推测性结论，已请老师确认。",
+        "narrative": narrative,
         "confidence": min(max(c.confidence for c in mechanism), 0.6),
         "need_human": True,
         "degraded": [*draft.degraded, "llm_hypothesis"],

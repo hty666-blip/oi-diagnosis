@@ -16,6 +16,9 @@
 - 修改代码后重新提交，并用正式题包验证是否真正解决问题。
 - 按用户、题目和语言保存草稿，恢复最近提交、提示记录及验证状态。
 - 学生错题卡导出，以及教师班级诊断查看。
+- 持久后台判题、刷新恢复、取消与有限重试；教师可查看授权范围内的队列。
+- 同题修改父链、正式测试核验，以及教师确认/修订/退回的追加审计。
+- 历史测试计数异常显示 `UNVERIFIED`，不凭口头声明、布尔计数或样例通过结束答疑。
 
 判题结果中，公开样例通过记为 `SAMPLE_PASS`，没有测试数据记为 `NO_TESTS`；只有当前正式题包的非空测试全部通过才记为 `AC`。测试通过仅代表通过当前题包，不能证明学生已经掌握知识点。
 
@@ -33,7 +36,7 @@ FastAPI 接口与业务服务 ──────► MySQL 8
                   └──► GCC / G++ / Java 17 / Python 3
 ```
 
-Redis 已作为开发基础设施预留；MinIO 为可选的 `full` profile。当前核心同步提交流程不依赖 MinIO。
+Redis 已作为开发基础设施预留；MinIO 为可选的 `full` profile。任务、租约和复核审计保存在 MySQL，核心判题流程不依赖 MinIO。
 
 ## 项目目录
 
@@ -215,7 +218,7 @@ backend\.venv\Scripts\python.exe scripts\import_packages.py
 创建演示账号：
 
 ```powershell
-backend\.venv\Scripts\python.exe scripts\seed_demo.py --users-only
+backend\.venv\Scripts\python.exe scripts\prepare_demo.py --users-only
 ```
 
 本地演示账号包括 `student01`、`teacher01`、`admin`，初始密码均为 `123456`。这些账号只用于本地演示，部署到共享环境前必须修改或删除。
@@ -307,7 +310,7 @@ backend\.venv\Scripts\python.exe tools\check_package.py --dir problems
 
 设置 `TEST_DATABASE_URL` 后可以执行真实数据库接口回归。测试数据库名称必须包含 `test`，并先对该连接执行 `alembic upgrade head`；不要把测试连接指向业务数据库。设置 `RUN_DOCKER_TESTS=1` 后，可以执行真实 Docker 判题集成测试。
 
-最近一次本机验证结果为：159 项测试通过、20 项条件性集成测试跳过；Ruff、前端生产构建以及四种语言的真实 Docker 判题通过。跳过项需要单独配置测试数据库或显式启用 Docker 集成测试。
+本次合并验证：MySQL 常规回归 434 项通过，另将 10 项条件性 Docker 测试全部启用并通过，合计覆盖 444 项；Ruff、前端 29 项契约测试与生产构建通过。四种语言均完成真实正式题包判题；测试与迁移使用独立数据库，外部模型关闭。
 
 ## 常见问题
 
@@ -347,3 +350,11 @@ Java 入口类必须命名为 `Main`，即使用 `public class Main`。前端的
 - Docker 执行器只用于本地开发和受控演示，尚未完成开放互联网环境的沙箱隔离验收。
 - 当前没有完整的生产 Compose、TLS、反向代理、备份恢复和监控方案，因此不应直接作为公网生产服务部署。
 - 当前题包规模较小，教师复核写回、完整提交谱系和真实教学效果评估仍待完善。
+
+## 合并后的后台任务与验证
+
+网页使用持久后台任务提交（`Prefer: respond-async`），202 只表示接受任务，不代表通过。API 默认内嵌工作器，也可设置 `JUDGE_WORKER_ENABLED=false` 后单独运行 `python -m app.worker`。本人或管理员可以取消排队/运行任务；成功结果和教师审定不可被旧执行者覆盖。
+
+运行集成测试前，为 `TEST_DATABASE_URL` 配置名称含 `test` 的独立 MySQL 库并执行迁移；并发回归会创建独立测试数据库，测试账号需要相应 CREATE/DROP 权限，业务账号无需这些额外权限。禁止把业务库当测试库；测试设置 `LLM_ENABLED=false`。
+
+`prepare_demo.py` 只准备题包和演示账号，不调用模型或自动提交学生代码。教师复核只在授权班级范围内追加审计。主线此前的 PostgreSQL 验收记录保留为历史材料；本分支的当前运行与 CI 目标统一为 MySQL 8.4，合并验证结果以 `docs/分支冲突解决验收.md` 为准。

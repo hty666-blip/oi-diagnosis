@@ -87,6 +87,9 @@ async def test_compile_payload_supports_other_languages(language, artifact, sour
     assert command["args"][0] == runtime
     assert source in command["copyIn"]
     assert command["copyOutCached"] == [f"{artifact}?"]
+    if language == "java17":
+        # 同一 Main.java 可以合法声明非 public 顶层类，产物也必须打入 jar。
+        assert "main.jar *.class" in command["args"][-1]
 
 
 @pytest.mark.asyncio
@@ -117,6 +120,29 @@ async def test_run_sends_file_id_and_keeps_plain_stdout():
     assert set(captured) == {"cmd"}
     assert res.stdout == "3\n"
     assert res.time_ms == 1
+
+
+@pytest.mark.parametrize("language", ["c11", "cpp17", "java17", "python3"])
+async def test_language_runtime_and_process_limit_preserve_jvm_startup(language):
+    import json
+
+    captured = {}
+
+    def handler(request):
+        captured.update(json.loads(request.content))
+        return httpx.Response(200, json=[_item()])
+
+    client = SandboxClient(base_url="http://judge", language=language)
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://judge")
+    try:
+        result = await client.run("cached", memory_limit_mb=512)
+    finally:
+        await client.close()
+    command = captured["cmd"][0]
+    assert command["copyIn"] == {client.spec.artifact: {"fileId": "cached"}}
+    assert command["args"] == client.spec.run_command(512)
+    assert command["procLimit"] == (64 if language == "java17" else 1)
+    assert result.stdout == "3\n"
 
 
 @pytest.mark.asyncio
