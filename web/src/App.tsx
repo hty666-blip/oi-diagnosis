@@ -1,3 +1,4 @@
+import { verifyWithRefresh } from "./tutor-verification";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import Markdown from "./Markdown";
@@ -609,7 +610,20 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
     if (!session || !latestSubmitted || busy || latestSubmitted.id === submissionId || verified.current.has(latestSubmitted.id)) return;
     let active = true;
     setVerifying(true); setVerifyError("");
-    api.verifySession(session.session_id, latestSubmitted.id).then((reply) => {
+    verifyWithRefresh({
+      verify: () => api.verifySession(session.session_id, latestSubmitted.id),
+      refresh: () => api.getSession(session.session_id),
+    }).then((result) => {
+      if (!active) return;
+      if (!result.reply) {
+        setVerifyError(messageOf(result.error));
+        setSession((previous) => previous ? { ...previous,
+          status: result.history?.status ?? "unavailable",
+          verified_submission_id: result.history ? result.history.verified_submission_id : previous.verified_submission_id,
+        } : previous);
+        return;
+      }
+      const reply = result.reply;
       if (!active) return;
       verified.current.add(latestSubmitted.id);
       setSession(reply);
@@ -652,8 +666,8 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
         <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="我检查了……，还不理解的是……" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy || verifying} />
         <button type="submit" className="primary" disabled={!draft.trim() || busy || verifying}>{busy ? "发送中…" : "发送思考"}</button>
       </form> : session.status === "resolved"
-        ? <p className="scope-note" role="status">新提交已通过当前题包测试，本次问题已验证解决。</p>
-        : <div className="row recovery-actions"><p className="scope-note" role="status">本次提示已暂停，可以保留现有记录并重新开启一轮提示。</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
+        ? <p className="scope-note" role="status">{session.verified_submission_id ? "提交 #" + session.verified_submission_id : "新提交"}已通过当前题包测试，本次问题已验证解决。</p>
+        : <div className="row recovery-actions"><p className="scope-note" role="status">{session.status === "unverified" ? "历史核验结果待核对，请重新提交正式测试后新建答疑。" : session.status === "unavailable" ? "暂时无法确认核验状态，请重新查询；现有记录已保留。" : "本次提示已暂停，可以保留现有记录并重新开启一轮提示。"}</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
     </>}
   </section>;
 }

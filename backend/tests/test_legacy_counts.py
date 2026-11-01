@@ -85,3 +85,40 @@ async def test_integer_package_counts_still_display_ac_and_resolve_tutoring(api_
     assert verified.status_code == 200, verified.text
     assert verified.json()["status"] == "resolved"
     assert verified.json()["verified_submission_id"] == candidate.id
+
+
+@pytest.mark.parametrize("invalid", ["counts", "stage", "missing_binding"])
+async def test_resolved_history_with_untrusted_counts_never_claims_still_verified(api_context, invalid):
+    ctx = api_context
+    original = await ctx.submission(code_hash="original")
+    opened = await ctx.client.post("/api/v1/sessions", headers=ctx.headers(),
+                                   json={"submission_id": original.id})
+    session_id = opened.json()["session_id"]
+    candidate = await ctx.submission(code_hash="changed", verdict="AC",
+                                    tests_passed={"scope": "package", "total": 1, "passed": 1})
+    endpoint = f"/api/v1/sessions/{session_id}"
+    completed = await ctx.client.post(endpoint + "/verify", headers=ctx.headers(),
+                                      json={"submission_id": candidate.id})
+    assert completed.json()["status"] == "resolved"
+    if invalid == "counts":
+        candidate.tests_passed = {"scope": "package", "total": True, "passed": 1}
+    elif invalid == "stage":
+        candidate.stage, candidate.verdict = "RUNNING", None
+    else:
+        (await ctx.session.get(HintSession, session_id)).verified_submission_id = None
+    await ctx.session.flush()
+    restored = await ctx.client.get(endpoint, headers=ctx.headers())
+    assert restored.json()["status"] == "unverified"
+    repeated = await ctx.client.post(endpoint + "/verify", headers=ctx.headers(),
+                                     json={"submission_id": candidate.id})
+    if invalid == "counts":
+        assert repeated.json()["status"] == "unverified"
+        assert repeated.json()["action"] != "resolved"
+    else:
+        assert repeated.status_code == 409
+    reply = await ctx.client.post(endpoint + "/messages", headers=ctx.headers(),
+                                  json={"content": "已经通过了吗"})
+    assert reply.json()["status"] == "unverified"
+    assert "待核对" in reply.json()["reply"]
+    assert (await ctx.session.get(HintSession, session_id)).status == "resolved"
+    assert candidate.verdict == (None if invalid == "stage" else "AC")

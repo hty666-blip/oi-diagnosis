@@ -28,6 +28,14 @@ class TutorService:
         self.session = session
         self.user = user
 
+    async def _visible_status(self, hs: HintSession) -> str:
+        if hs.status != "resolved":
+            return hs.status
+        verified = await self.session.get(Submission, hs.verified_submission_id) if hs.verified_submission_id else None
+        if verified is None or verified.stage != "READY" or effective_verdict(verified) != "AC":
+            return "unverified"
+        return "resolved"
+
     async def create(self, submission_id: int) -> tuple[HintSession, HintTurn]:
         sub = await accessible_submission(self.session, self.user, submission_id, lock=True)
         if sub.stage != "READY" or sub.verdict is None:
@@ -79,8 +87,10 @@ class TutorService:
     async def reply(self, session_id: int, message: str) -> dict:
         hs = await accessible_hint_session(self.session, self.user, session_id, lock=True)
         if hs.status in ("resolved", "escalated", "blocked"):
-            return {"session_id": hs.id, "status": hs.status, "level": hs.level,
-                    "reply": "这次会话已经结束，可以开一个新的。", "action": "closed"}
+            status = await self._visible_status(hs)
+            return {"session_id": hs.id, "status": status, "level": hs.level,
+                    "reply": ("历史核验结果待核对，请重新提交正式测试后新建答疑。" if status == "unverified"
+                              else "这次会话已经结束，可以开一个新的。"), "action": "closed"}
 
         source_submission_id = hs.verified_submission_id or hs.submission_id
         diag = (
@@ -209,6 +219,10 @@ class TutorService:
 
     @staticmethod
     def _verification_reply(hs: HintSession, candidate: Submission, text: str = "") -> dict:
+        status = hs.status
+        if status == "resolved" and (candidate.stage != "READY" or effective_verdict(candidate) != "AC"):
+            status = "unverified"
+            text = "历史核验结果待核对，请重新提交正式测试后新建答疑。"
         if not text:
             if hs.status == "resolved":
                 text = "修改后的代码已通过当前题包测试，这次答疑已解决。"
@@ -221,8 +235,8 @@ class TutorService:
             else:
                 text = "修改后的代码仍有失败测试，请对照这次提交的证据继续检查。"
         return {
-            "session_id": hs.id, "status": hs.status, "level": hs.level,
-            "action": "resolved" if hs.status == "resolved" else "verify",
+            "session_id": hs.id, "status": status, "level": hs.level,
+            "action": "resolved" if status == "resolved" else "verify",
             "reply": text, "mastery": None,
             "verified_submission_id": hs.verified_submission_id,
             "verdict": effective_verdict(candidate),
@@ -264,7 +278,7 @@ class TutorService:
         ).scalars().all()
         return {
             "session_id": hs.id,
-            "status": hs.status,
+            "status": await self._visible_status(hs),
             "level": hs.level,
             "cheat_flags": hs.cheat_flags,
             "submission_id": hs.submission_id,
