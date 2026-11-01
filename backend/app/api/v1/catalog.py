@@ -76,7 +76,7 @@ async def coach_queue(
             "verdict": effective_verdict(sub),
             "route": (diag.model_meta or {}).get("route"),
             "confidence": diag.confidence,
-            "narrative": diag.narrative,
+            "narrative": result_narrative(sub, diag.narrative),
             "mechanism": diag.mechanism,
             "student_id": sub.student_id,
             "student_name": (student.display_name or student.username) if student else "",

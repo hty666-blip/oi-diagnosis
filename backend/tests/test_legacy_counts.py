@@ -1,8 +1,9 @@
 """存量测试计数必须能证明正式通过，布尔值不能冒充执行次数。"""
 
 import pytest
+from sqlalchemy import select
 
-from app.domain.models import HintSession
+from app.domain.models import Diagnosis, HintSession
 
 
 @pytest.mark.parametrize("counts", [
@@ -85,6 +86,41 @@ async def test_integer_package_counts_still_display_ac_and_resolve_tutoring(api_
     assert verified.status_code == 200, verified.text
     assert verified.json()["status"] == "resolved"
     assert verified.json()["verified_submission_id"] == candidate.id
+
+
+@pytest.mark.parametrize("total, expected_verdict", [(True, "UNVERIFIED"), (1, "AC")],
+                         ids=["untrusted-counts", "verified-counts"])
+async def test_teacher_queue_uses_current_result_scope_without_rewriting_history(
+    api_context, total, expected_verdict,
+):
+    ctx = api_context
+    submission = await ctx.submission(
+        verdict="AC", tests_passed={"scope": "package", "total": total, "passed": 1},
+    )
+    diagnosis = await ctx.session.scalar(
+        select(Diagnosis).where(Diagnosis.submission_id == submission.id)
+    )
+    original_narrative = "当前题包测试全部通过，本轮无需继续修正。"
+    diagnosis.status = "needs_human"
+    diagnosis.narrative = original_narrative
+    await ctx.session.flush()
+
+    queue = await ctx.client.get("/api/v1/coach/queue", headers=ctx.headers(ctx.users.teacher))
+    assert queue.status_code == 200, queue.text
+    assert len(queue.json()) == 1
+    record = queue.json()[0]
+    assert record["submission_id"] == submission.id
+    assert record["verdict"] == expected_verdict
+    detail = await ctx.client.get(f"/api/v1/submissions/{submission.id}", headers=ctx.headers())
+    assert detail.status_code == 200, detail.text
+    assert record["narrative"] == detail.json()["diagnosis"]["narrative"]
+    if expected_verdict == "UNVERIFIED":
+        assert "请重新提交验证" in record["narrative"]
+    else:
+        assert record["narrative"] == original_narrative
+    await ctx.session.refresh(diagnosis)
+    assert diagnosis.narrative == original_narrative
+    assert submission.verdict == "AC"
 
 
 @pytest.mark.parametrize("invalid", ["counts", "stage", "missing_binding"])
