@@ -30,6 +30,21 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("训练提交显式携带任务编号，自由练习不带；发布与草稿是不同操作", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ id: 1 }); };
+  await api.submitAsync("PTV-0001", "code", "cpp17", undefined, undefined, 7);
+  await api.submitAsync("PTV-0001", "code", "cpp17");
+  assert.equal(calls[0].body.training_id, 7);
+  assert.equal(Object.hasOwn(calls[1].body, "training_id"), false);
+  const draft = { title: "训练", class_name: "A", problems: [{ pid: "PTV-0001", required: true }] };
+  await api.saveTraining(draft);
+  await api.saveTraining(draft, 7);
+  await api.publishTraining(7);
+  assert.deepEqual(calls.slice(2).map((c) => c.url), ["/api/v1/trainings", "/api/v1/trainings/7/draft", "/api/v1/trainings/7/publish"]);
+  assert.deepEqual(calls[2].body, draft);
+});
+
 test("错误密码不会触发已登录会话过期；401 受保护请求会清凭证并保留草稿", async () => {
   globalThis.fetch = async () => json({ detail: "unauthorized" }, 401);
   await assert.rejects(api.login("student01", "wrong"), (error) =>

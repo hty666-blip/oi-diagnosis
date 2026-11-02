@@ -2,6 +2,7 @@ import { sameSource, verificationRecovery, verifyWithRefresh } from "./tutor-ver
 import { indentedNewline, shouldSendMessage } from "./editor-input";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
+import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
 import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
@@ -15,7 +16,7 @@ import {
   type SessionReply, type SubmissionLanguage, type SubmissionResult,
 } from "./api";
 
-type View = "submit" | "my" | "coach" | "admin";
+type View = "submit" | "my" | "coach" | "admin" | "trainings";
 const LANGUAGES: { value: SubmissionLanguage; label: string }[] = [
   { value: "cpp17", label: "C++17" },
   { value: "c11", label: "C11" },
@@ -37,14 +38,15 @@ function isLanguage(value: string | null | undefined): value is SubmissionLangua
 }
 
 const hintSessionKey = (userId: number, submissionId: number) => `oi-hint-session:${userId}:${submissionId}`;
-const activeHintKey = (userId: number, pid: string) => `oi-active-hint:${userId}:${pid}`;
-const lastSubmissionKey = (userId: number, pid: string) => `oi-last-submission:${userId}:${pid}`;
+const activeHintKey = (userId: number | string, pid: string) => `oi-active-hint:${userId}:${pid}`;
+const lastSubmissionKey = (userId: number | string, pid: string) => `oi-last-submission:${userId}:${pid}`;
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(cachedUser);
   const [checkingSession, setCheckingSession] = useState(() => cachedUser() !== null);
-  const [view, setView] = useState<View>(() => cachedUser()?.role === "student" ? "submit" : "coach");
+  const [view, setView] = useState<View>("trainings");
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
+  const [practice, setPractice] = useState<TrainingPractice | null>(null);
   const [sessionNotice, setSessionNotice] = useState("");
 
   useEffect(() => {
@@ -71,7 +73,7 @@ export default function App() {
       if (!active) return;
       // 请求已核对会话快照；验证身份不重新写共享存储，避免旧标签页覆盖新登录。
       setUser(current);
-      setView(current.role === "student" ? "submit" : "coach");
+      setView("trainings");
     }).catch((error: unknown) => {
       if (!active || (error instanceof Error && error.name === "AbortError")) return;
       clearSession(); setUser(null); setSessionNotice(messageOf(error));
@@ -85,19 +87,19 @@ export default function App() {
     setUser(next);
     setSessionNotice("");
     setRestore(null);
-    setView(next.role === "student" ? "submit" : "coach");
+    setPractice(null); setView("trainings");
   }} />{sessionNotice && <div className="session-notice" role="status">{sessionNotice}</div>}</>;
 
   const nav: { key: View; label: string }[] = user.role === "student"
-    ? [{ key: "submit", label: "练习与诊断" }, { key: "my", label: "提交记录" }]
-    : [{ key: "coach", label: "待复核记录" }, ...(user.role === "admin" ? [{ key: "admin" as View, label: "系统概览" }] : [])];
+    ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "my", label: "提交记录" }]
+    : [{ key: "trainings", label: "训练工作台" }, { key: "coach", label: "诊断复核" }, ...(user.role === "admin" ? [{ key: "admin" as View, label: "系统概览" }] : [])];
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand"><span className="dot" aria-hidden="true" /><span className="name">OI 诊断<small>看证据，自己改对</small></span></div>
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => setView(item.key)}>{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } setView(item.key); }}>{item.label}</button>)}
         </nav>
         <div className="sidebar-foot"><div className="user-card">
           <div className="avatar" aria-hidden="true">{(user.display_name || user.username).slice(0, 1)}</div>
@@ -106,8 +108,9 @@ export default function App() {
         </div></div>
       </aside>
       <main className="main" id="main">
-        {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={user.id} userId={user.id} restore={restore} /></div>}
-        {view === "my" && <MyView onContinue={(id) => { setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
+        {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={`${user.id}:${practice?.id ?? "free"}:${practice?.pid ?? ""}`} userId={user.id} restore={restore} training={practice ?? undefined} /></div>}
+        {view === "trainings" && <TrainingWorkspace user={user} onPractice={(value) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); }} />}
+        {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminView />}
       </main>
@@ -120,7 +123,8 @@ function initialDiagnosis(sub: SubmissionResult): DiagResult | null {
   return { ...sub.diagnosis, submission_id: sub.id, verdict: sub.verdict, route: sub.diagnosis.route ?? "" };
 }
 
-function SubmitView({ userId, restore }: { userId: number; restore: { id: number; tick: number } | null }) {
+function SubmitView({ userId, restore, training }: { userId: number; restore: { id: number; tick: number } | null; training?: TrainingPractice }) {
+  const storageId = training ? `${userId}:training:${training.id}` : userId;
   const [problems, setProblems] = useState<Problem[]>([]);
   const [pid, setPid] = useState("");
   const [detail, setDetail] = useState<ProblemDetail | null>(null);
@@ -156,16 +160,16 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const submitController = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const draftKey = (nextPid: string, nextLanguage: SubmissionLanguage) =>
-    `oi-draft:${userId}:${nextPid}:${nextLanguage}`;
-  const languageKey = (nextPid: string) => `oi-language:${userId}:${nextPid}`;
-  const pendingHintKey = (nextPid: string) => "oi-pending-hint:" + userId + ":" + nextPid;
+    `oi-draft:${storageId}:${nextPid}:${nextLanguage}`;
+  const languageKey = (nextPid: string) => `oi-language:${storageId}:${nextPid}`;
+  const pendingHintKey = (nextPid: string) => "oi-pending-hint:" + storageId + ":" + nextPid;
 
   function savedDraft(nextPid: string, nextLanguage: SubmissionLanguage): string {
     const current = readLocal(draftKey(nextPid, nextLanguage));
     if (current !== null) return current;
     // 兼容升级前仅按题目保存的 C++ 草稿。
     if (nextLanguage === "cpp17") {
-      const legacy = readLocal(`oi-draft:${userId}:${nextPid}`);
+      const legacy = readLocal(`oi-draft:${storageId}:${nextPid}`);
       if (legacy !== null) return legacy;
     }
     return STARTERS[nextLanguage];
@@ -185,14 +189,14 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
 
   async function finishSubmission(value: SubmissionResult, nextPid: string, generation: number) {
     if (generation !== workRequest.current) return;
-    if (parsePendingId(readLocal(pendingKey(userId, nextPid))) === value.id) {
-      removeLocal(pendingKey(userId, nextPid));
+    if (parsePendingId(readLocal(pendingKey(storageId, nextPid))) === value.id) {
+      removeLocal(pendingKey(storageId, nextPid));
       removeLocal(pendingHintKey(nextPid));
     }
     setPendingId(null); setTaskError(""); setSub(value); setDiag(initialDiagnosis(value));
     setSavedCode(value.code ?? ""); setSavedLanguage(isLanguage(value.language) ? value.language : DEFAULT_LANGUAGE);
     setLatestSubmitted(value);
-    writeLocal(lastSubmissionKey(userId, nextPid), String(value.id));
+    writeLocal(lastSubmissionKey(storageId, nextPid), String(value.id));
     const evidenceTask = loadEvidence(value.id);
     if (!["AC", "SAMPLE_PASS", "NO_TESTS"].includes(value.verdict ?? "") && !value.diagnosis?.reviewer_id) {
       requestLock.current = true; setBusy("diagnose");
@@ -207,7 +211,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     const controller = new AbortController();
     taskController.current = controller;
     setPendingId(id); setPolling(true); setTaskError("");
-    writeLocal(pendingKey(userId, nextPid), String(id));
+    writeLocal(pendingKey(storageId, nextPid), String(id));
     const result = await pollSubmission({
       id, signal: controller.signal,
       fetchRecord: async (recordId, signal) => {
@@ -227,7 +231,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     if (result.reason === "complete" && result.record) await finishSubmission(result.record, nextPid, generation);
     else if (result.reason === "paused") {
       if (result.error instanceof ApiError && [403, 404].includes(result.error.status)) {
-        removeLocal(pendingKey(userId, nextPid)); removeLocal(pendingHintKey(nextPid));
+        removeLocal(pendingKey(storageId, nextPid)); removeLocal(pendingHintKey(nextPid));
         setPendingId(null); setSub(null);
         setError("保存的任务不存在或当前账号无权访问。本机草稿已保留，请从提交记录核对，或重新提交代码。");
       } else setTaskError(result.error ? messageOf(result.error) : "已暂停自动查询。任务仍保存在服务器，点击继续查询即可查看，无需重新提交。");
@@ -250,13 +254,13 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     writeLocal("oi-selected-problem:" + userId, nextPid);
     setSub(null); setDiag(null); setEvidence([]); setError(""); setDiagError("");
     setEvidenceLoading(false); setEvidenceError("");
-    const storedId = parsePendingId(readLocal(pendingKey(userId, nextPid)));
+    const storedId = parsePendingId(readLocal(pendingKey(storageId, nextPid)));
     setTutorSubmission(storedId ? parsePendingId(readLocal(pendingHintKey(nextPid))) : null);
     setLatestSubmitted(null);
     if (storedId) void watchTask(storedId, nextPid, workRequest.current);
     else {
-      const lastId = parsePendingId(readLocal(lastSubmissionKey(userId, nextPid)));
-      const activeId = parsePendingId(readLocal(activeHintKey(userId, nextPid)));
+      const lastId = parsePendingId(readLocal(lastSubmissionKey(storageId, nextPid)));
+      const activeId = parsePendingId(readLocal(activeHintKey(storageId, nextPid)));
       if (lastId || activeId) void restoreSubmission(lastId ?? activeId!, nextPid);
     }
   }
@@ -275,7 +279,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       setProblems(rows);
       if (!hasSelection.current && rows.length) {
         const stored = readLocal("oi-selected-problem:" + userId);
-        const first = rows.find((row) => row.pid === stored) ?? rows.find((row) => row.pid.startsWith("PTV-")) ?? rows[0];
+        const first = rows.find((row) => row.pid === (training?.pid ?? stored)) ?? rows.find((row) => row.pid.startsWith("PTV-")) ?? rows[0];
         selectProblem(first.pid);
       }
     } catch (e) { setProblemError(messageOf(e)); } finally { setLoadingProblems(false); }
@@ -318,6 +322,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     api.getSubmission(id, controller.signal).then(async (value) => {
       if (generation !== workRequest.current) return;
       if (!value.problem_pid || value.code === undefined) throw new Error("这条历史记录缺少题目或源码，请从题库重新打开题目。");
+      if (training && (value.training_id !== training.id || value.problem_pid !== training.pid)) throw new Error("这条提交不属于当前训练题目。");
       if (expectedPid && value.problem_pid !== expectedPid) throw new Error("保存的提交不属于当前题目，已忽略该恢复记录。");
       const restoredLanguage = isLanguage(value.language) ? value.language : DEFAULT_LANGUAGE;
       setPid(value.problem_pid); setSavedCode(value.code); setSavedLanguage(restoredLanguage);
@@ -327,14 +332,14 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
         writeLocal(draftKey(value.problem_pid, restoredLanguage), value.code);
         writeLocal(languageKey(value.problem_pid), restoredLanguage);
       }
-      writeLocal(lastSubmissionKey(userId, value.problem_pid), String(value.id));
+      writeLocal(lastSubmissionKey(storageId, value.problem_pid), String(value.id));
       writeLocal("oi-selected-problem:" + userId, value.problem_pid);
       setSub(value); setDiag(initialDiagnosis(value)); setDiagError("");
-      const activeHint = parsePendingId(readLocal(activeHintKey(userId, value.problem_pid)));
+      const activeHint = parsePendingId(readLocal(activeHintKey(storageId, value.problem_pid)));
       const sourceId = activeHint ?? (readLocal(hintSessionKey(userId, value.id)) ? value.id : null);
       setTutorSubmission(sourceId); setLatestSubmitted(null);
       if (submissionPhase(value) === "pending") {
-        const stored = parsePendingId(readLocal(pendingKey(userId, value.problem_pid)));
+        const stored = parsePendingId(readLocal(pendingKey(storageId, value.problem_pid)));
         if (stored === value.id) setTutorSubmission(parsePendingId(readLocal(pendingHintKey(value.problem_pid))) ?? sourceId);
         void watchTask(value.id, value.problem_pid, generation);
       } else if (submissionPhase(value) === "failed" || submissionPhase(value) === "cancelled") {
@@ -346,8 +351,8 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     }).catch((e) => {
       if (generation !== workRequest.current) return;
       if (e instanceof ApiError && e.status === 404 && expectedPid) {
-        removeLocal(lastSubmissionKey(userId, expectedPid));
-        removeLocal(activeHintKey(userId, expectedPid));
+        removeLocal(lastSubmissionKey(storageId, expectedPid));
+        removeLocal(activeHintKey(storageId, expectedPid));
       } else if (!(e instanceof Error && e.name === "AbortError")) setError(messageOf(e));
     }).finally(() => {
       if (generation === workRequest.current) { setBusy(null); requestLock.current = false; }
@@ -400,10 +405,10 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     const controller = new AbortController();
     submitController.current?.abort(); submitController.current = controller;
     try {
-      const value = await api.submitAsync(pid, submittedCode, submittedLanguage, parentId, controller.signal);
+      const value = await api.submitAsync(pid, submittedCode, submittedLanguage, parentId, controller.signal, training?.id ?? sub?.training_id ?? undefined);
       if (generation !== workRequest.current) return;
       setSub(value); setSavedCode(submittedCode); setSavedLanguage(submittedLanguage); setDiag(null);
-      writeLocal(lastSubmissionKey(userId, pid), String(value.id));
+      writeLocal(lastSubmissionKey(storageId, pid), String(value.id));
       if (submissionPhase(value) === "complete") await finishSubmission(value, pid, generation);
       else {
         setLatestSubmitted(null);
@@ -452,7 +457,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
       setSavedLanguage(isLanguage(result.record.language) ? result.record.language : DEFAULT_LANGUAGE);
       if (result.confirmed) {
         setDiag(null); setEvidence([]); setLatestSubmitted(null);
-        writeLocal(pendingKey(userId, pid), String(result.record.id));
+        writeLocal(pendingKey(storageId, pid), String(result.record.id));
         removeLocal(pendingHintKey(pid));
       } else if (submissionPhase(result.record) === "complete") await finishSubmission(result.record, pid, generation);
       else if (submissionPhase(result.record) === "pending") {
@@ -479,8 +484,8 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
 
   return (
     <>
-      <div className="page-head"><div><h1>练习与诊断</h1><p>先看执行证据，再检查代码；修改后重新提交验证。</p></div>
-        <label className="problem-picker"><span className="dim">选择题目</span><select aria-label="选择题目" value={pid} disabled={!!busy || loadingProblems} onChange={(e) => selectProblem(e.target.value)}>
+      <div className="page-head"><div><h1>{training ? training.title : "练习与诊断"}</h1><p>先看执行证据，再检查代码；修改后重新提交验证。</p></div>
+        <label className="problem-picker"><span className="dim">选择题目</span><select aria-label="选择题目" value={pid} disabled={!!busy || loadingProblems || !!training} onChange={(e) => selectProblem(e.target.value)}>
           {!pid && <option value="">{loadingProblems ? "正在加载题目…" : "暂无可用题目"}</option>}
           {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + problem.title}</option>)}
         </select></label>
@@ -564,7 +569,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             </div>}
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
             {canTutor && !tutorSubmission && <button className="ghost" onClick={() => {
-              writeLocal(activeHintKey(userId, pid), String(sub.id));
+              writeLocal(activeHintKey(storageId, pid), String(sub.id));
               setTutorSubmission(sub.id);
             }}>讲解已提交的代码</button>}
             </>}

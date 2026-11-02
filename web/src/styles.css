@@ -267,6 +267,41 @@ textarea.code:focus { outline: none; border-color: var(--accent); box-shadow: 0 
 .composer { display: flex; gap: 10px; margin-top: 16px; }
 .composer input { flex: 1; }
 
+/* 训练任务：列表与完成矩阵沿用现有工作区表格。 */
+.training-roster { margin-bottom: 24px; color: var(--muted); }
+.training-roster summary { cursor: pointer; color: var(--text); }
+.training-layout { display: grid; grid-template-columns: minmax(190px, 240px) minmax(0, 1fr); gap: 28px; }
+.training-list { border-right: 1px solid var(--line); padding-right: 20px; }
+.training-item { width: 100%; text-align: left; display: grid; gap: 7px; padding: 14px 12px; margin-bottom: 8px; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--text); cursor: pointer; }
+.training-item span { color: var(--muted); font-size: 12px; }
+.training-item:hover, .training-item.selected { background: var(--panel-2); border-color: var(--line); }
+.training-detail { min-width: 0; }
+.training-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.training-form { margin-bottom: 28px; }
+.training-form form, .training-form label { display: grid; gap: 8px; }
+.training-form form { gap: 16px; }
+.training-fields { display: grid; grid-template-columns: 2fr 1fr 1.5fr; gap: 16px; }
+.training-form input:not([type=checkbox]), .training-form select, .training-form textarea { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--bg-soft); }
+.training-form input:focus-visible, .training-form select:focus-visible, .training-form textarea:focus-visible, .training-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.training-selected { padding-left: 24px; }
+.training-selected li, .training-problems li { padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.training-selected li { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.training-selected li span { flex: 1; }
+.training-selected li label { display: flex; align-items: center; }
+.training-bank { max-height: 280px; overflow-y: auto; border-block: 1px solid var(--line); }
+.training-bank .row { justify-content: space-between; padding: 8px 0; }
+.training-problems { padding-left: 22px; }
+.training-problems li { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+.training-matrix th, .training-matrix td { min-width: 125px; vertical-align: top; }
+.training-matrix small { display: block; margin-block: 6px; color: var(--muted); font-weight: normal; }
+.training-matrix .ghost { margin-top: 6px; font-size: 12px; }
+@media (max-width: 800px) {
+  .training-layout, .training-fields { grid-template-columns: 1fr; }
+  .training-list { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 16px; }
+  .training-item { margin-bottom: 4px; }
+  .training-problems li { align-items: flex-start; flex-wrap: wrap; }
+}
+
 /* 表格 */
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }

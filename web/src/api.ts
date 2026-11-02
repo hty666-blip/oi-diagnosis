@@ -216,6 +216,7 @@ export interface TestSummary {
 
 export interface SubmissionResult {
   id: number;
+  training_id?: number | null;
   parent_submission_id?: number | null;
   stage: string;
   verdict: string | null;
@@ -387,7 +388,29 @@ export interface JudgingQueue {
   }[];
 }
 
+export interface TrainingInput {
+  title: string; class_name: string; objective: string; description: string; due_at: string;
+  problems: { pid: string; required: boolean }[];
+}
+export interface Training extends TrainingInput {
+  id: number; teacher_id: number; status: "draft" | "published"; published_at: string | null;
+}
+export interface TrainingDetail extends Training {
+  problems: { pid: string; required: boolean; title: string; package_level: string }[];
+  rows: { student_id: number; name: string; complete: boolean; cells: (null | {
+    id: number; stage: string; verdict: string | null; tests_passed: TestSummary | null;
+    state: "complete" | "pending" | "failed" | "cancelled"; passed: boolean; late: boolean; attempts: number;
+  })[] }[];
+  summary: { students: number; participated: number; completed: number; late_submissions: number };
+  observed_at: string;
+}
+
 export const api = {
+  trainings: () => get<Training[]>("/trainings"),
+  training: (id: number) => get<TrainingDetail>("/trainings/" + id),
+  trainingRoster: () => get<{ id: number; name: string; class_name: string }[]>("/trainings/roster"),
+  saveTraining: (body: TrainingInput, id?: number) => post<TrainingDetail>(id ? `/trainings/${id}/draft` : "/trainings", body),
+  publishTraining: (id: number) => post<TrainingDetail>(`/trainings/${id}/publish`),
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
@@ -398,9 +421,10 @@ export const api = {
     post<SubmissionResult>("/submissions", {
       problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
     }),
-  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal) =>
+  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal, trainingId?: number) =>
     post<SubmissionResult>("/submissions", {
       problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      ...(trainingId === undefined ? {} : { training_id: trainingId }),
     }, { signal, headers: { Prefer: "respond-async" } }),
   retrySubmission: (id: number, signal?: AbortSignal) =>
     post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),

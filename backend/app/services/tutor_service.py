@@ -193,6 +193,8 @@ class TutorService:
         candidate = await accessible_submission(self.session, self.user, submission_id)
         if candidate.student_id != hs.student_id or candidate.problem_id != original.problem_id:
             raise HTTPException(status_code=409, detail="核验提交必须属于同一学生和同一道题")
+        if candidate.training_id != original.training_id:
+            raise HTTPException(status_code=409, detail="核验提交必须属于同一次训练或自由练习")
         same_source = (
             candidate.code_hash == original.code_hash and candidate.lang == original.lang
         )

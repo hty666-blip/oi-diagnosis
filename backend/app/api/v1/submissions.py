@@ -32,6 +32,7 @@ class SubmissionCreate(BaseModel):
     language: Literal["c11", "cpp17", "java17", "python3"] = "cpp17"
     student_id: ObjectId | None = None
     parent_submission_id: ObjectId | None = None
+    training_id: ObjectId | None = None
 
     @field_validator("code", "problem_pid", mode="before")
     @classmethod
@@ -54,6 +55,7 @@ class SubmissionCreate(BaseModel):
 
 class SubmissionOut(BaseModel):
     id: int
+    training_id: int | None = None
     code: str
     language: str
     problem_pid: str
@@ -75,6 +77,7 @@ def _to_out(
 ) -> SubmissionOut:
     return SubmissionOut(
         id=sub.id,
+        training_id=sub.training_id,
         code=sub.code,
         language=sub.lang,
         problem_pid=problem.pid if problem else "",
@@ -122,6 +125,7 @@ async def create_submission(
         sub = await svc.create(
             payload.problem_pid, payload.code, user.id, payload.parent_submission_id,
             language=payload.language, background=background,
+            **({"training_id": payload.training_id} if payload.training_id is not None else {}),
         )
     except SandboxError as e:
         logger.warning("提交尚未进入判题：%s", type(e).__name__)

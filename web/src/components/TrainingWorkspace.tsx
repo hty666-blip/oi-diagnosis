@@ -1,0 +1,123 @@
+import { useEffect, useRef, useState } from "react";
+import { api, messageOf, type AuthUser, type Problem, type Training, type TrainingDetail, type TrainingInput } from "../api";
+import { ErrorNotice, VerdictBadge } from "./RecordUI";
+import ReviewPanel from "./ReviewPanel";
+
+export type TrainingPractice = { id: number; pid: string; title: string; submissionId?: number };
+const dateLabel = (value: string) => new Date(value).toLocaleString("zh-CN");
+const localDate = (value: string) => {
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+const emptyDraft = (className: string): TrainingInput => ({ title: "", class_name: className, objective: "", description: "",
+  due_at: new Date(Date.now() + 7 * 86400000).toISOString(), problems: [] });
+
+export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser; onPractice: (value: TrainingPractice) => void }) {
+  const teacher = user.role !== "student";
+  const [items, setItems] = useState<Training[]>([]);
+  const [detail, setDetail] = useState<TrainingDetail | null>(null);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [roster, setRoster] = useState<{ id: number; name: string; class_name: string }[]>([]);
+  const [draft, setDraft] = useState<TrainingInput | null>(null);
+  const [editingId, setEditingId] = useState<number>();
+  const [selectedCode, setSelectedCode] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [search, setSearch] = useState("");
+  const generation = useRef(0);
+  const saveLock = useRef(false);
+  const groups = [...new Set(roster.map((s) => s.class_name))];
+
+  async function load(id?: number) {
+    const current = ++generation.current;
+    setLoading(true); setError(""); setSelectedCode(null);
+    try {
+      const [list, members, bank] = await Promise.all([api.trainings(), teacher ? api.trainingRoster() : Promise.resolve([]), teacher ? api.problems() : Promise.resolve([])]);
+      const record = id ? await api.training(id) : null;
+      if (current !== generation.current) return;
+      setItems(list); setRoster(members); setProblems(bank); setDetail(record);
+    } catch (e) { if (current === generation.current) setError(messageOf(e)); }
+    finally { if (current === generation.current) setLoading(false); }
+  }
+  useEffect(() => { void load(); return () => { generation.current++; }; }, [user.id]);
+
+  async function save(publish = false) {
+    if (saveLock.current || (!publish && !draft) || (publish && !detail)) return;
+    saveLock.current = true; setSaving(true); setError("");
+    try {
+      const record = publish ? await api.publishTraining(detail!.id) : await api.saveTraining(draft!, editingId);
+      setDraft(null); setEditingId(undefined);
+      setNotice(publish ? "训练已发布，名单中的学生现在可以进入练习。" : "草稿已保存，请核对题目与截止时间后发布。");
+      await load(record.id);
+    } catch (e) { setError(messageOf(e)); }
+    finally { saveLock.current = false; setSaving(false); }
+  }
+
+  function edit(record?: TrainingDetail) {
+    setDraft(record ? { title: record.title, class_name: record.class_name, objective: record.objective,
+      description: record.description, due_at: record.due_at, problems: record.problems.map((p) => ({ pid: p.pid, required: p.required })) }
+      : emptyDraft(user.class_name || groups[0] || ""));
+    setEditingId(record?.id); setError(""); setNotice("");
+  }
+
+  return <>
+    <div className="page-head"><div><h1>{teacher ? "训练工作台" : "我的训练"}</h1><p>{teacher ? "布置训练，按学生和题目查看真实完成情况。" : "进入教练布置的训练，提交代码并继续提问。"}</p></div>
+      <div className="row"><button className="ghost" disabled={loading || saving} onClick={() => void load(detail?.id)}>刷新训练</button>
+      {teacher && !draft && <button className="primary" disabled={loading || saving || !groups.length} onClick={() => edit()}>布置训练</button>}</div></div>
+    <ErrorNotice message={error} onRetry={draft ? undefined : () => void load(detail?.id)} />
+    {notice && <p role="status" className="scope-note">{notice}</p>}
+    {loading && <p role="status">正在读取训练与完成记录…</p>}
+    {teacher && !loading && <details className="training-roster"><summary>班级名单 · {roster.length} 人</summary>
+      {!roster.length ? <p>当前账号没有可用班级名单，请由管理员为学生和教练配置班级后再布置训练。</p> : groups.map((group) => <p key={group}><strong>{group}</strong>：{roster.filter((s) => s.class_name === group).map((s) => s.name).join("、")}</p>)}
+      <p className="dim">名单沿用账号的班级信息，发布时保存训练名单。学生转班后不能继续访问原班训练。</p></details>}
+    {draft && <section className="card training-form"><h2>{editingId ? "编辑训练草稿" : "布置新训练"}</h2>
+      <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <div className="training-fields"><label>训练名称<input required maxLength={120} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
+        <label>班级<select value={draft.class_name} onChange={(e) => setDraft({ ...draft, class_name: e.target.value })}>{groups.map((g) => <option key={g}>{g}</option>)}</select></label>
+        <label>截止时间<input required type="datetime-local" value={localDate(draft.due_at)} onChange={(e) => { if (e.target.value) setDraft({ ...draft, due_at: new Date(e.target.value).toISOString() }); }} /></label></div>
+        <label>训练目标<input maxLength={500} value={draft.objective} onChange={(e) => setDraft({ ...draft, objective: e.target.value })} placeholder="例如：理解累计更新，检查整数范围" /></label>
+        <label>训练说明<textarea rows={3} maxLength={5000} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+        <h3>已选题目 · {draft.problems.length} / 20</h3>
+        {!draft.problems.length && <p className="muted">从下方题库添加题目，至少保留一道必做题。</p>}
+        <ol className="training-selected">{draft.problems.map((item, i) => <li key={item.pid}>
+          <span>{item.pid} · {problems.find((p) => p.pid === item.pid)?.title}</span>
+          <label><input type="checkbox" checked={item.required} onChange={(e) => setDraft({ ...draft, problems: draft.problems.map((p) => p.pid === item.pid ? { ...p, required: e.target.checked } : p) })} />必做</label>
+          <button type="button" className="ghost" disabled={!i} aria-label={"上移 " + item.pid} onClick={() => { const next = [...draft.problems]; [next[i - 1], next[i]] = [next[i], next[i - 1]]; setDraft({ ...draft, problems: next }); }}>上移</button>
+          <button type="button" className="ghost" onClick={() => setDraft({ ...draft, problems: draft.problems.filter((p) => p.pid !== item.pid) })}>移除</button>
+        </li>)}</ol>
+        <label>查找题目<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="题号或标题" /></label>
+        <div className="training-bank">{problems.filter((p) => (p.pid + p.title).toLowerCase().includes(search.toLowerCase())).map((p) => <div className="row" key={p.pid}><span>{p.pid} · {p.title} <span className="dim">题包等级 {p.package_level}</span></span><button type="button" className="ghost" disabled={draft.problems.some((v) => v.pid === p.pid) || draft.problems.length >= 20} onClick={() => setDraft({ ...draft, problems: [...draft.problems, { pid: p.pid, required: true }] })}>添加</button></div>)}</div>
+        <p className="scope-note">正式题包全部通过才计入完成。只有样例或缺少测试的题目可用于练习，暂不能计入正式完成。</p>
+        <div className="row"><button className="primary" disabled={saving || !draft.title.trim() || !draft.problems.some((p) => p.required)}>{saving ? "正在保存…" : "保存草稿并预览"}</button><button type="button" className="ghost" disabled={saving} onClick={() => setDraft(null)}>取消编辑</button></div>
+      </form></section>}
+    <div className="training-layout" aria-busy={loading}>
+      <section className="training-list" aria-label="训练列表"><h2>{teacher ? "训练任务" : "收到的训练"}</h2>
+        {!items.length && !loading && <p className="empty">{teacher ? "还没有训练。先选择题目并保存一份草稿。" : "暂未收到训练，可以先到自由练习中选题。"}</p>}
+        {items.map((item) => <button key={item.id} className={"training-item " + (item.id === detail?.id ? "selected" : "")} disabled={loading || saving || !!draft} onClick={() => void load(item.id)} aria-pressed={item.id === detail?.id}>
+          <strong>{item.title}</strong><span>{item.class_name} · {item.status === "draft" ? "草稿" : new Date(item.due_at).getTime() < Date.now() ? "已截止 · 可补交" : "进行中"}</span><span>截止 {dateLabel(item.due_at)}</span></button>)}
+      </section>
+      <section className="training-detail" aria-label="训练详情">
+        {!detail && !loading && <p className="empty">选择一份训练查看题目和完成情况。</p>}
+        {detail && !draft && <><div className="card-head"><h2>{detail.title}</h2>{teacher && detail.status === "draft" && <div className="row"><button className="ghost" disabled={saving || loading} onClick={() => edit(detail)}>编辑草稿</button><button className="primary" disabled={saving || loading} onClick={() => void save(true)}>{saving ? "正在发布…" : "发布到班级"}</button></div>}</div>
+          <p className="muted">{detail.class_name} · 截止 {dateLabel(detail.due_at)} · {detail.status === "draft" ? "尚未发布，学生不可见" : "已发布"}</p>
+          {detail.objective && <p><strong>训练目标：</strong>{detail.objective}</p>}
+          {detail.description && <p className="training-description">{detail.description}</p>}
+          <ol className="training-problems">{detail.problems.map((p, i) => <li key={p.pid}><span><strong>{p.pid} · {p.title}</strong> <span className="dim">{p.required ? "必做" : "选做"}</span></span>{!teacher && <button className="ghost" onClick={() => onPractice({ id: detail.id, pid: p.pid, title: detail.title, submissionId: detail.rows[0]?.cells[i]?.id })}>进入练习</button>}</li>)}</ol>
+          {detail.status === "published" && <><h3>{teacher ? "完成矩阵" : "我的完成情况"}</h3>
+            <p className="muted">{teacher ? `名单内 ${detail.summary.students} 人，已参与 ${detail.summary.participated} 人，完成全部必做题 ${detail.summary.completed} 人。` : "按本次训练中的最新提交展示。"}补交提交 {detail.summary.late_submissions} 条。</p>
+            <div className="table-scroll"><table className="training-matrix"><thead><tr><th>学生</th>{detail.problems.map((p) => <th key={p.pid}>{p.pid}<small>{p.required ? "必做" : "选做"}</small></th>)}</tr></thead><tbody>
+              {detail.rows.map((row) => <tr key={row.student_id}><th scope="row">{row.name}{row.complete && <small>必做题已完成</small>}</th>{row.cells.map((cell, i) => <td key={detail.problems[i].pid}>{!cell ? <span className="dim">未提交</span> : <>
+                {cell.state === "complete" ? <VerdictBadge verdict={cell.verdict} tests={cell.tests_passed} /> : <span>{({ pending: "判题中", failed: "执行故障", cancelled: "已取消" })[cell.state]}</span>}
+                <small>{cell.attempts} 次提交{cell.late ? " · 补交" : ""}</small>
+                <button className="ghost" onClick={() => teacher ? setSelectedCode(cell.id) : onPractice({ id: detail.id, pid: detail.problems[i].pid, title: detail.title, submissionId: cell.id })}>{teacher ? "查看代码与证据" : "继续练习"}</button>
+              </>}</td>)}</tr>)}</tbody></table></div>
+            {!detail.rows.length && <p className="empty">当前班级没有仍具访问权限的发布名单成员。</p>}
+            <p className="scope-note">每名学生每题只看本次训练的最新提交；自由练习和其他训练不计入。执行故障不算代码错误。数据更新于 {dateLabel(detail.observed_at)}。</p></>}
+        </>}
+      </section>
+    </div>
+    {teacher && selectedCode && <ReviewPanel key={selectedCode} submissionId={selectedCode} onReviewed={() => void load(detail?.id)} />}
+  </>;
+}

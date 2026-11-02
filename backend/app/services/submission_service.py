@@ -115,7 +115,7 @@ class SubmissionService:
 
     async def create(self, problem_pid: str, code: str, student_id: int = 0,
                      parent_submission_id: int | None = None, *, language: str = "cpp17",
-                     background: bool = False) -> Submission:
+                     background: bool = False, training_id: int | None = None) -> Submission:
         language_spec(language)
         self.was_created = False
         problem = (
@@ -123,12 +123,17 @@ class SubmissionService:
         ).scalar_one_or_none()
         if problem is None:
             raise ValueError(f"题目不存在: {problem_pid}")
+        if training_id is not None:
+            from app.services.training_service import validate_training_submission
+            await validate_training_submission(self.session, student_id, training_id, problem.id)
         if parent_submission_id is not None:
             parent = await self.session.get(Submission, parent_submission_id)
             if parent is None or parent.student_id != student_id:
                 raise ValueError("上次提交不存在或不属于当前账号")
             if parent.problem_id != problem.id:
                 raise ValueError("上次提交必须属于同一道题")
+            if parent.training_id != training_id:
+                raise ValueError("上次提交必须属于同一次训练或自由练习")
 
         normalized = normalize_code(code)
         if not normalized.strip():
@@ -139,7 +144,7 @@ class SubmissionService:
         pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
         # 短事务内串行化同一请求；执行器运行时不占用数据库锁。
         lock_key = hashlib.sha256(
-            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}".encode()
+            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}:{training_id}".encode()
         ).digest()[:8]
         await acquire_submission_lock(self.session, int.from_bytes(lock_key, "big", signed=True))
 
@@ -148,6 +153,7 @@ class SubmissionService:
             Submission.code_hash == digest,
             Submission.lang == language,
             Submission.student_id == student_id,
+            Submission.training_id == training_id,
             Submission.pipeline_ver == pipeline_ver,
             Submission.parent_submission_id == parent_submission_id,
             Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
@@ -173,6 +179,7 @@ class SubmissionService:
             pipeline_ver=pipeline_ver,
             stage="QUEUED" if background else "RECEIVED",
             parent_submission_id=parent_submission_id,
+            training_id=training_id,
         )
         self.session.add(sub)
         if background:

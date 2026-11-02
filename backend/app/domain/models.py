@@ -65,6 +65,7 @@ class Submission(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id", ondelete="CASCADE"), index=True)
     student_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)  # user 表后续补
+    training_id: Mapped[int | None] = mapped_column(ForeignKey("training.id"), nullable=True, index=True)
     parent_submission_id: Mapped[int | None] = mapped_column(
         ForeignKey("submission.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -269,3 +270,33 @@ class SubmissionLock(Base):
     __tablename__ = "submission_lock"
 
     lock_key: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+
+
+class Training(Base):
+    __tablename__ = "training"
+    __table_args__ = (CheckConstraint("status IN ('draft', 'published')", name="ck_training_status"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    class_name: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(120))
+    objective: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft")
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingProblem(Base):
+    __tablename__ = "training_problem"
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer)
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TrainingMember(Base):
+    __tablename__ = "training_member"
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)

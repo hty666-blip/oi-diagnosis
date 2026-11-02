@@ -9,7 +9,17 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from app.api.errors import request_validation_error_handler
-from app.api.v1 import auth, card, catalog, operations, reviews, submissions, system, tutor
+from app.api.v1 import (
+    auth,
+    card,
+    catalog,
+    operations,
+    reviews,
+    submissions,
+    system,
+    trainings,
+    tutor,
+)
 from app.core.config import settings
 from app.core.security import validate_security_settings
 from app.infra.db import dispose_engine, ping
@@ -46,6 +56,7 @@ app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
+app.include_router(trainings.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["ops"])
