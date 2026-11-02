@@ -3,6 +3,7 @@ import { api, messageOf, type AuthUser, type Problem, type Training, type Traini
 import { ErrorNotice, VerdictBadge } from "./RecordUI";
 import ReviewPanel from "./ReviewPanel";
 import TrainingLessonPanel from "./TrainingLessonPanel";
+import TrainingFeedbackPanel from "./TrainingFeedbackPanel";
 
 export type TrainingPractice = { id: number; pid: string; title: string; submissionId?: number };
 const dateLabel = (value: string) => new Date(value).toLocaleString("zh-CN");
@@ -13,7 +14,7 @@ const localDate = (value: string) => {
 const emptyDraft = (className: string): TrainingInput => ({ title: "", class_name: className, objective: "", description: "",
   due_at: new Date(Date.now() + 7 * 86400000).toISOString(), problems: [] });
 
-export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser; onPractice: (value: TrainingPractice) => void }) {
+export default function TrainingWorkspace({ user, onPractice, initialTrainingId }: { user: AuthUser; onPractice: (value: TrainingPractice) => void; initialTrainingId?: number }) {
   const teacher = user.role !== "student";
   const [items, setItems] = useState<Training[]>([]);
   const [detail, setDetail] = useState<TrainingDetail | null>(null);
@@ -22,6 +23,7 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
   const [draft, setDraft] = useState<TrainingInput | null>(null);
   const [editingId, setEditingId] = useState<number>();
   const [selectedCode, setSelectedCode] = useState<number | null>(null);
+  const [feedbackStudent, setFeedbackStudent] = useState<number>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -33,7 +35,7 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
 
   async function load(id?: number) {
     const current = ++generation.current;
-    setLoading(true); setError(""); setSelectedCode(null);
+    setLoading(true); setError(""); setSelectedCode(null); setFeedbackStudent(undefined);
     try {
       const [list, members, bank] = await Promise.all([api.trainings(), teacher ? api.trainingRoster() : Promise.resolve([]), teacher ? api.problems() : Promise.resolve([])]);
       const record = id ? await api.training(id) : null;
@@ -42,7 +44,7 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
     } catch (e) { if (current === generation.current) setError(messageOf(e)); }
     finally { if (current === generation.current) setLoading(false); }
   }
-  useEffect(() => { void load(); return () => { generation.current++; }; }, [user.id]);
+  useEffect(() => { void load(initialTrainingId); return () => { generation.current++; }; }, [user.id, initialTrainingId]);
 
   async function save(publish = false) {
     if (saveLock.current || (!publish && !draft) || (publish && !detail)) return;
@@ -58,9 +60,17 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
 
   function edit(record?: TrainingDetail) {
     setDraft(record ? { title: record.title, class_name: record.class_name, objective: record.objective,
-      description: record.description, due_at: record.due_at, problems: record.problems.map((p) => ({ pid: p.pid, required: p.required })) }
+      description: record.description, due_at: record.due_at, student_ids: record.student_ids ?? null, source_training_id: record.source_training_id ?? null, problems: record.problems.map((p) => ({ pid: p.pid, required: p.required })) }
       : emptyDraft(user.class_name || groups[0] || ""));
     setEditingId(record?.id); setError(""); setNotice("");
+  }
+
+  function remediate(studentId: number) {
+    if (!detail || !teacher) return;
+    setDraft({ ...emptyDraft(detail.class_name), title: `${detail.title} · 定向补练`.slice(0, 120),
+      objective: detail.objective, description: "根据原训练反馈完成补练，并重新提交验证修改。",
+      problems: detail.problems.map((p) => ({ pid: p.pid, required: p.required })), student_ids: [studentId], source_training_id: detail.id });
+    setEditingId(undefined); setNotice(""); setError(""); window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   return <>
@@ -74,12 +84,16 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
       {!roster.length ? <p>当前账号没有可用班级名单，请由管理员为学生和教练配置班级后再布置训练。</p> : groups.map((group) => <p key={group}><strong>{group}</strong>：{roster.filter((s) => s.class_name === group).map((s) => s.name).join("、")}</p>)}
       <p className="dim">名单沿用账号的班级信息，发布时保存训练名单。学生转班后不能继续访问原班训练。</p></details>}
     {draft && <section className="card training-form"><h2>{editingId ? "编辑训练草稿" : "布置新训练"}</h2>
-      <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <form onSubmit={(e) => { e.preventDefault(); void save(); }}><fieldset disabled={saving} className="training-form-fields">
         <div className="training-fields"><label>训练名称<input required maxLength={120} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
-        <label>班级<select value={draft.class_name} onChange={(e) => setDraft({ ...draft, class_name: e.target.value })}>{groups.map((g) => <option key={g}>{g}</option>)}</select></label>
+        <label>班级<select value={draft.class_name} onChange={(e) => setDraft({ ...draft, class_name: e.target.value, student_ids: null, source_training_id: null })}>{groups.map((g) => <option key={g}>{g}</option>)}</select></label>
         <label>截止时间<input required type="datetime-local" value={localDate(draft.due_at)} onChange={(e) => { if (e.target.value) setDraft({ ...draft, due_at: new Date(e.target.value).toISOString() }); }} /></label></div>
         <label>训练目标<input maxLength={500} value={draft.objective} onChange={(e) => setDraft({ ...draft, objective: e.target.value })} placeholder="例如：理解累计更新，检查整数范围" /></label>
         <label>训练说明<textarea rows={3} maxLength={5000} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+        {draft.source_training_id && <p className="scope-note">补练关联原训练 #{draft.source_training_id}，请核对目标学生和补练题目后发布。</p>}
+        <label>布置范围<select value={draft.student_ids == null ? "class" : "selected"} onChange={(e) => setDraft({ ...draft, student_ids: e.target.value === "class" ? null : [] })}>
+          {!draft.source_training_id && <option value="class">发布时的全班名单</option>}<option value="selected">指定学生</option></select></label>
+        {draft.student_ids != null && <div className="training-audience" role="group" aria-label="指定学生名单">{roster.filter((student) => student.class_name === draft.class_name).map((student) => <label key={student.id}><input type="checkbox" checked={draft.student_ids!.includes(student.id)} onChange={(e) => setDraft({ ...draft, student_ids: e.target.checked ? [...draft.student_ids!, student.id] : draft.student_ids!.filter((id) => id !== student.id) })} />{student.name}</label>)}</div>}
         <h3>已选题目 · {draft.problems.length} / 20</h3>
         {!draft.problems.length && <p className="muted">从下方题库添加题目，至少保留一道必做题。</p>}
         <ol className="training-selected">{draft.problems.map((item, i) => <li key={item.pid}>
@@ -91,8 +105,8 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
         <label>查找题目<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="题号或标题" /></label>
         <div className="training-bank">{problems.filter((p) => (p.pid + p.title).toLowerCase().includes(search.toLowerCase())).map((p) => <div className="row" key={p.pid}><span>{p.pid} · {p.title} <span className="dim">题包等级 {p.package_level}</span></span><button type="button" className="ghost" disabled={draft.problems.some((v) => v.pid === p.pid) || draft.problems.length >= 20} onClick={() => setDraft({ ...draft, problems: [...draft.problems, { pid: p.pid, required: true }] })}>添加</button></div>)}</div>
         <p className="scope-note">正式题包全部通过才计入完成。只有样例或缺少测试的题目可用于练习，暂不能计入正式完成。</p>
-        <div className="row"><button className="primary" disabled={saving || !draft.title.trim() || !draft.problems.some((p) => p.required)}>{saving ? "正在保存…" : "保存草稿并预览"}</button><button type="button" className="ghost" disabled={saving} onClick={() => setDraft(null)}>取消编辑</button></div>
-      </form></section>}
+        <div className="row"><button className="primary" disabled={saving || !draft.title.trim() || !draft.problems.some((p) => p.required) || draft.student_ids?.length === 0}>{saving ? "正在保存…" : "保存草稿并预览"}</button><button type="button" className="ghost" disabled={saving} onClick={() => setDraft(null)}>取消编辑</button></div>
+      </fieldset></form></section>}
     <div className="training-layout" aria-busy={loading}>
       <section className="training-list" aria-label="训练列表"><h2>{teacher ? "训练任务" : "收到的训练"}</h2>
         {!items.length && !loading && <p className="empty">{teacher ? "还没有训练。先选择题目并保存一份草稿。" : "暂未收到训练，可以先到自由练习中选题。"}</p>}
@@ -103,20 +117,22 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
         {!detail && !loading && <p className="empty">选择一份训练查看题目和完成情况。</p>}
         {detail && !draft && <><div className="card-head"><h2>{detail.title}</h2>{teacher && detail.status === "draft" && <div className="row"><button className="ghost" disabled={saving || loading} onClick={() => edit(detail)}>编辑草稿</button><button className="primary" disabled={saving || loading} onClick={() => void save(true)}>{saving ? "正在发布…" : "发布到班级"}</button></div>}</div>
           <p className="muted">{detail.class_name} · 截止 {dateLabel(detail.due_at)} · {detail.status === "draft" ? "尚未发布，学生不可见" : "已发布"}</p>
+          {detail.source_training_id && <p className="scope-note">补练来源：训练 #{detail.source_training_id}</p>}
+          {teacher && detail.status === "draft" && <p className="muted">布置范围：{detail.student_ids == null ? "发布时全班学生" : detail.student_ids.map((id) => roster.find((student) => student.id === id)?.name ?? `学生 #${id}（请核对名单）`).join("、")}</p>}
           {detail.objective && <p><strong>训练目标：</strong>{detail.objective}</p>}
           {detail.description && <p className="training-description">{detail.description}</p>}
           <ol className="training-problems">{detail.problems.map((p, i) => <li key={p.pid}><span><strong>{p.pid} · {p.title}</strong> <span className="dim">{p.required ? "必做" : "选做"}</span></span>{!teacher && <button className="ghost" onClick={() => onPractice({ id: detail.id, pid: p.pid, title: detail.title, submissionId: detail.rows[0]?.cells[i]?.id })}>进入练习</button>}</li>)}</ol>
           {detail.status === "published" && <><h3>{teacher ? "完成矩阵" : "我的完成情况"}</h3>
             <p className="muted">{teacher ? `名单内 ${detail.summary.students} 人，已参与 ${detail.summary.participated} 人，完成全部必做题 ${detail.summary.completed} 人。` : "按本次训练中的最新提交展示。"}补交提交 {detail.summary.late_submissions} 条。</p>
             <div className="table-scroll"><table className="training-matrix"><thead><tr><th>学生</th>{detail.problems.map((p) => <th key={p.pid}>{p.pid}<small>{p.required ? "必做" : "选做"}</small></th>)}</tr></thead><tbody>
-              {detail.rows.map((row) => <tr key={row.student_id}><th scope="row">{row.name}{row.complete && <small>必做题已完成</small>}</th>{row.cells.map((cell, i) => <td key={detail.problems[i].pid}>{!cell ? <span className="dim">未提交</span> : <>
+              {detail.rows.map((row) => <tr key={row.student_id}><th scope="row">{row.name}{row.complete && <small>必做题已完成</small>}{teacher && <button className="ghost" onClick={() => { setFeedbackStudent(row.student_id); document.getElementById(`training-feedback-${detail.id}`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }}>指导与补练</button>}</th>{row.cells.map((cell, i) => <td key={detail.problems[i].pid}>{!cell ? <span className="dim">未提交</span> : <>
                 {cell.state === "complete" ? <VerdictBadge verdict={cell.verdict} tests={cell.tests_passed} /> : <span>{({ pending: "判题中", failed: "执行故障", cancelled: "已取消" })[cell.state]}</span>}
                 <small>{cell.attempts} 次提交{cell.late ? " · 补交" : ""}</small>
                 <button className="ghost" onClick={() => teacher ? setSelectedCode(cell.id) : onPractice({ id: detail.id, pid: detail.problems[i].pid, title: detail.title, submissionId: cell.id })}>{teacher ? "查看代码与证据" : "继续练习"}</button>
               </>}</td>)}</tr>)}</tbody></table></div>
             {!detail.rows.length && <p className="empty">当前班级没有仍具访问权限的发布名单成员。</p>}
             <p className="scope-note">每名学生每题只看本次训练的最新提交；自由练习和其他训练不计入。执行故障不算代码错误。数据更新于 {dateLabel(detail.observed_at)}。</p></>}
-          {detail.status === "published" && <TrainingLessonPanel key={detail.id} trainingId={detail.id} teacher={teacher} refreshToken={detail.observed_at} onEvidence={setSelectedCode} />}
+          {detail.status === "published" && <><TrainingFeedbackPanel key={`feedback-${detail.id}`} detail={detail} user={user} targetStudentId={feedbackStudent} onRemediate={remediate} /><TrainingLessonPanel key={detail.id} trainingId={detail.id} teacher={teacher} refreshToken={detail.observed_at} onEvidence={setSelectedCode} /></>}
         </>}
       </section>
     </div>

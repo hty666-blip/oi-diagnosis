@@ -30,6 +30,34 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("个别反馈重试保留请求编号，标记查看是独立操作，补练明确指定接收人", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ items: [] }); };
+  await api.sendTrainingFeedback(7, 2, "逐轮检查累计值。", "b7b1cce6-a0bf-4493-aeab-5b42ad80b197", 42);
+  await api.sendTrainingFeedback(7, 2, "逐轮检查累计值。", "b7b1cce6-a0bf-4493-aeab-5b42ad80b197", 42);
+  await api.markFeedbackRead(7, 9);
+  await api.saveTraining({ title: "补练", class_name: "A", problems: [{ pid: "PTV-0001", required: true }], student_ids: [2], source_training_id: 7 });
+  assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[2].url, "/api/v1/trainings/7/feedback/9/read");
+  assert.deepEqual(calls[3].body.student_ids, [2]);
+  assert.equal(calls[3].body.source_training_id, 7);
+});
+
+test("档案导出正文迟到且账号切换后不生成下载", async () => {
+  let finish, started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  globalThis.fetch = async () => {
+    const response = json({});
+    response.blob = () => { started(); return new Promise((resolve) => { finish = resolve; }); };
+    return response;
+  };
+  const pending = api.downloadStudentProfile(1);
+  await entered;
+  setSession("second-test-token", secondUser);
+  finish(new Blob(["private report"]));
+  await assert.rejects(pending, /账号|会话|登录/);
+});
+
 test("讲评草稿保留正文换行、依据摘要和预期版本；生成与发布独立请求", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ published: null }); };

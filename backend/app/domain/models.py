@@ -282,6 +282,8 @@ class Training(Base):
     title: Mapped[str] = mapped_column(String(120))
     objective: Mapped[str] = mapped_column(String(500), default="")
     description: Mapped[str] = mapped_column(Text, default="")
+    student_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    source_training_id: Mapped[int | None] = mapped_column(ForeignKey("training.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft")
     due_at: Mapped[datetime] = mapped_column(UTCDateTime())
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
@@ -323,4 +325,21 @@ class TrainingLessonPublication(Base):
     training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
     lesson_revision_id: Mapped[int] = mapped_column(ForeignKey("training_lesson_revision.id"), unique=True)
     published_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingFeedback(Base):
+    """个别指导追加保存；学生查看仅记录明确标记，不代表理解。"""
+    __tablename__ = "training_feedback"
+    __table_args__ = (UniqueConstraint("training_id", "student_id", "request_id", name="uq_training_feedback_request"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    author_name: Mapped[str] = mapped_column(String(64))
+    content: Mapped[str] = mapped_column(Text)
+    submission_id: Mapped[int | None] = mapped_column(ForeignKey("submission.id"), nullable=True)
+    after_submission_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    request_id: Mapped[str] = mapped_column(String(36))
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())

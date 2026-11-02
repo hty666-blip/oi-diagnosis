@@ -8,9 +8,15 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, TeacherUser
-from app.api.input_types import ObjectPathId
+from app.api.input_types import ObjectId, ObjectPathId
 from app.domain.models import Problem, Training, TrainingMember, TrainingProblem, User
 from app.infra.db import get_session
+from app.services.student_followup_service import (
+    FeedbackCreate,
+    create_feedback,
+    feedback_history,
+    mark_feedback_read,
+)
 from app.services.training_analysis import analyze_training
 from app.services.training_lesson_service import LessonExpected, LessonSave, TrainingLessonService
 from app.services.training_service import accessible_training, training_detail, training_out
@@ -31,6 +37,8 @@ class TrainingInput(BaseModel):
     description: str = Field(default="", max_length=5000)
     due_at: AwareDatetime
     problems: list[TrainingProblemInput] = Field(min_length=1, max_length=20)
+    student_ids: list[ObjectId] | None = Field(default=None, min_length=1, max_length=200)
+    source_training_id: ObjectId | None = None
 
     @field_validator("title", "class_name", "objective", "description")
     @classmethod
@@ -58,7 +66,7 @@ async def list_trainings(session: SessionDep, user: CurrentUser):
             TrainingMember.student_id == user.id, Training.status == "published", Training.class_name == user.class_name)
     elif user.role == "teacher":
         stmt = stmt.where(Training.teacher_id == user.id, Training.class_name == user.class_name)
-    return [training_out(row) for row in (await session.scalars(stmt.limit(100))).all()]
+    return [training_out(row, include_audience=user.role != "student") for row in (await session.scalars(stmt.limit(100))).all()]
 
 
 async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, row: Training | None):
@@ -77,10 +85,21 @@ async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, 
     members = await roster(session, user)
     if not any(m["class_name"] == payload.class_name for m in members):
         raise HTTPException(422, "这个班级暂无可布置训练的学生")
+    valid_members = {m["id"] for m in members if m["class_name"] == payload.class_name}
+    if payload.student_ids is not None and (len(set(payload.student_ids)) != len(payload.student_ids)
+                                           or not set(payload.student_ids).issubset(valid_members)):
+        raise HTTPException(422, "指定学生重复、不存在或不属于当前班级")
+    if payload.source_training_id is not None:
+        source = await accessible_training(session, user, payload.source_training_id)
+        if source.status != "published" or source.class_name != payload.class_name or (row and row.id == source.id):
+            raise HTTPException(422, "补练必须关联本班已发布的原训练")
+        source_ids = set((await session.scalars(select(TrainingMember.student_id).where(TrainingMember.training_id == source.id))).all())
+        if payload.student_ids is None or not set(payload.student_ids).issubset(source_ids):
+            raise HTTPException(422, "补练必须明确选择原训练名单中的学生")
     if row is None:
         row = Training(teacher_id=user.id)
         session.add(row)
-    for key in ("title", "class_name", "objective", "description", "due_at"):
+    for key in ("title", "class_name", "objective", "description", "due_at", "student_ids", "source_training_id"):
         setattr(row, key, getattr(payload, key))
     await session.flush()
     await session.execute(delete(TrainingProblem).where(TrainingProblem.training_id == row.id))
@@ -116,6 +135,12 @@ async def publish_training(training_id: ObjectPathId, session: SessionDep, user:
             raise HTTPException(409, "草稿已过截止时间，请先修改截止时间")
         students = (await session.scalars(select(User).where(
             User.role == "student", User.class_name == row.class_name))).all()
+        if row.student_ids is not None:
+            students = [s for s in students if s.id in row.student_ids]
+            if len(students) != len(row.student_ids):
+                raise HTTPException(409, "指定学生的班级或账号已变化，请编辑名单后重新发布")
+        if row.source_training_id is not None:
+            await accessible_training(session, user, row.source_training_id)
         if not students:
             raise HTTPException(409, "班级暂无学生，无法发布")
         session.add_all([TrainingMember(training_id=row.id, student_id=s.id) for s in students])
@@ -149,3 +174,18 @@ async def save_lesson(training_id: ObjectPathId, payload: LessonSave, session: S
 @router.post("/{training_id}/lesson/publish")
 async def publish_lesson(training_id: ObjectPathId, payload: LessonExpected, session: SessionDep, user: TeacherUser):
     return await TrainingLessonService(session, user).publish(training_id, payload.expected_revision)
+
+
+@router.get("/{training_id}/students/{student_id}/feedback")
+async def get_feedback(training_id: ObjectPathId, student_id: ObjectPathId, session: SessionDep, user: CurrentUser):
+    return await feedback_history(session, user, training_id, student_id)
+
+
+@router.post("/{training_id}/students/{student_id}/feedback")
+async def post_feedback(training_id: ObjectPathId, student_id: ObjectPathId, payload: FeedbackCreate, session: SessionDep, user: TeacherUser):
+    return await create_feedback(session, user, training_id, student_id, payload)
+
+
+@router.post("/{training_id}/feedback/{feedback_id}/read")
+async def read_feedback(training_id: ObjectPathId, feedback_id: ObjectPathId, session: SessionDep, user: CurrentUser):
+    return await mark_feedback_read(session, user, training_id, feedback_id)

@@ -3,6 +3,7 @@ import { indentedNewline, shouldSendMessage } from "./editor-input";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
+import StudentProfiles from "./components/StudentProfiles";
 import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
@@ -16,7 +17,7 @@ import {
   type SessionReply, type SubmissionLanguage, type SubmissionResult,
 } from "./api";
 
-type View = "submit" | "my" | "coach" | "admin" | "trainings";
+type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles";
 const LANGUAGES: { value: SubmissionLanguage; label: string }[] = [
   { value: "cpp17", label: "C++17" },
   { value: "c11", label: "C11" },
@@ -47,6 +48,7 @@ export default function App() {
   const [view, setView] = useState<View>("trainings");
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
   const [practice, setPractice] = useState<TrainingPractice | null>(null);
+  const [trainingTarget, setTrainingTarget] = useState<number>();
   const [sessionNotice, setSessionNotice] = useState("");
 
   useEffect(() => {
@@ -87,19 +89,20 @@ export default function App() {
     setUser(next);
     setSessionNotice("");
     setRestore(null);
-    setPractice(null); setView("trainings");
+    setPractice(null); setTrainingTarget(undefined); setView("trainings");
   }} />{sessionNotice && <div className="session-notice" role="status">{sessionNotice}</div>}</>;
 
   const nav: { key: View; label: string }[] = user.role === "student"
-    ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "my", label: "提交记录" }]
-    : [{ key: "trainings", label: "训练工作台" }, { key: "coach", label: "诊断复核" }, ...(user.role === "admin" ? [{ key: "admin" as View, label: "系统概览" }] : [])];
+    ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
+    : [{ key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }, ...(user.role === "admin" ? [{ key: "admin" as View, label: "系统概览" }] : [])];
+  const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand"><span className="dot" aria-hidden="true" /><span className="name">OI 诊断<small>看证据，自己改对</small></span></div>
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } setView(item.key); }}>{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}>{item.label}</button>)}
         </nav>
         <div className="sidebar-foot"><div className="user-card">
           <div className="avatar" aria-hidden="true">{(user.display_name || user.username).slice(0, 1)}</div>
@@ -109,7 +112,8 @@ export default function App() {
       </aside>
       <main className="main" id="main">
         {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={`${user.id}:${practice?.id ?? "free"}:${practice?.pid ?? ""}`} userId={user.id} restore={restore} training={practice ?? undefined} /></div>}
-        {view === "trainings" && <TrainingWorkspace user={user} onPractice={(value) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); }} />}
+        {view === "trainings" && <TrainingWorkspace user={user} initialTrainingId={trainingTarget} onPractice={openPractice} />}
+        {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminView />}

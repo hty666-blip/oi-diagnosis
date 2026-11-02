@@ -15,6 +15,7 @@ from app.api.v1 import (
     catalog,
     operations,
     reviews,
+    students,
     submissions,
     system,
     trainings,
@@ -57,6 +58,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")
+app.include_router(students.router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["ops"])

@@ -391,6 +391,8 @@ export interface JudgingQueue {
 export interface TrainingInput {
   title: string; class_name: string; objective: string; description: string; due_at: string;
   problems: { pid: string; required: boolean }[];
+  student_ids?: number[] | null;
+  source_training_id?: number | null;
 }
 export interface Training extends TrainingInput {
   id: number; teacher_id: number; status: "draft" | "published"; published_at: string | null;
@@ -424,6 +426,22 @@ export interface TrainingLesson {
   analysis?: TrainingAnalysis;
 }
 
+export interface StudentFeedback {
+  id: number; content: string; author: string; created_at: string; read_at: string | null;
+  submission_id: number | null; source_pid: string | null;
+  followup: { has_new_submission: boolean; passed: boolean; latest_submission_id: number | null };
+}
+export interface FeedbackHistory {
+  student: { id: number; name: string }; items: StudentFeedback[]; truncated: boolean; observed_at: string;
+}
+export interface StudentProfile {
+  student: { id: number; name: string; class_name: string };
+  summary: { trainings: number; completed: number; remedial: number };
+  truncated: boolean; observed_at: string;
+  items: (Omit<Training, "problems"> & { complete: boolean; feedback_count: number; latest_feedback: StudentFeedback | null;
+    problems: { pid: string; title: string; required: boolean; cell: TrainingDetail["rows"][number]["cells"][number] }[] })[];
+}
+
 export const api = {
   trainings: () => get<Training[]>("/trainings"),
   training: (id: number) => get<TrainingDetail>("/trainings/" + id),
@@ -435,6 +453,20 @@ export const api = {
   saveTrainingLesson: (id: number, revision: number, content: string, digest: string) =>
     post<TrainingLesson>(`/trainings/${id}/lesson/draft`, { expected_revision: revision, content, basis_digest: digest }),
   publishTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/publish`, { expected_revision: revision }),
+  studentProfile: (id: number) => get<StudentProfile>(`/students/${id}/profile`),
+  trainingFeedback: (trainingId: number, studentId: number) => get<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`),
+  sendTrainingFeedback: (trainingId: number, studentId: number, content: string, requestId: string, submissionId?: number | null) =>
+    post<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`, { content, request_id: requestId, submission_id: submissionId ?? null }),
+  markFeedbackRead: (trainingId: number, feedbackId: number) => post<FeedbackHistory>(`/trainings/${trainingId}/feedback/${feedbackId}/read`),
+  downloadStudentProfile: async (id: number) => {
+    const { response, snapshot, signal } = await request(`/students/${id}/profile/report`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; link.download = `学生训练档案-${id}.md`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),

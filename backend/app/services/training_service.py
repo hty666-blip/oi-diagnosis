@@ -18,11 +18,14 @@ from app.services.job_service import job_out
 from app.services.judgement import effective_verdict, valid_test_summary
 
 
-def training_out(row: Training) -> dict:
-    return {key: getattr(row, key) for key in (
+def training_out(row: Training, *, include_audience=False) -> dict:
+    out = {key: getattr(row, key) for key in (
         "id", "teacher_id", "class_name", "title", "objective", "description", "status",
-        "due_at", "published_at", "created_at",
+        "due_at", "published_at", "created_at", "source_training_id",
     )}
+    if include_audience:
+        out["student_ids"] = row.student_ids
+    return out
 
 
 async def accessible_training(session: AsyncSession, user: User, training_id: int, *, lock=False) -> Training:
@@ -47,10 +50,21 @@ async def validate_training_submission(session: AsyncSession, user_id: int, trai
     user = await session.get(User, user_id)
     if user is None or user.role != "student":
         raise HTTPException(403, "训练提交仅限名单中的学生")
-    row = await accessible_training(session, user, training_id)
+    row = await accessible_training(session, user, training_id, lock=True)
     if await session.get(TrainingProblem, (row.id, problem_id)) is None:
         raise HTTPException(422, "这道题不属于当前训练")
     return row
+
+
+def submission_cell(sub: Submission, job: JudgeJob | None, due_at: datetime, attempts: int) -> dict:
+    verdict = effective_verdict(sub)
+    state = ("cancelled" if job and job.status == "cancelled" else
+             "failed" if (job and job.status == "failed") or sub.stage == "SANDBOX_ERROR" else
+             "pending" if sub.stage != "READY" or (job and job.status in ("queued", "running")) else "complete")
+    return {"id": sub.id, "stage": sub.stage, "verdict": verdict,
+            "tests_passed": valid_test_summary(sub), "job": job_out(job),
+            "state": state, "passed": state == "complete" and verdict == "AC",
+            "late": sub.created_at > due_at, "attempts": attempts}
 
 
 async def training_detail(session: AsyncSession, user: User, row: Training) -> dict:
@@ -75,22 +89,13 @@ async def training_detail(session: AsyncSession, user: User, row: Training) -> d
     for sub, job in records:
         key = (sub.student_id, sub.problem_id)
         attempts = cells.get(key, {}).get("attempts", 0) + 1
-        verdict = effective_verdict(sub)
-        state = ("cancelled" if job and job.status == "cancelled" else
-                 "failed" if (job and job.status == "failed") or sub.stage == "SANDBOX_ERROR" else
-                 "pending" if sub.stage != "READY" or (job and job.status in ("queued", "running")) else "complete")
-        cells[key] = {
-            "id": sub.id, "stage": sub.stage, "verdict": verdict,
-            "tests_passed": valid_test_summary(sub), "job": job_out(job),
-            "state": state, "passed": state == "complete" and verdict == "AC",
-            "late": sub.created_at > row.due_at, "attempts": attempts,
-        }
+        cells[key] = submission_cell(sub, job, row.due_at, attempts)
     required = [item.problem_id for item, _ in problems if item.required]
     rows = [{"student_id": member.id, "name": member.display_name or member.username,
              "cells": [cells.get((member.id, item.problem_id)) for item, _ in problems],
              "complete": bool(required) and all(cells.get((member.id, pid), {}).get("passed") for pid in required)}
             for member in members]
-    return {**training_out(row), "problems": [
+    return {**training_out(row, include_audience=user.role != "student"), "problems": [
         {"pid": problem.pid, "title": problem.title, "required": item.required,
          "package_level": problem.package_level} for item, problem in problems
     ], "rows": rows, "summary": {
