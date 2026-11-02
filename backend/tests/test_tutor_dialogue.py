@@ -79,7 +79,10 @@ async def test_model_receives_code_and_history_and_cannot_request_the_same_outpu
     assert REPORT in prompt and OLD_GATE in prompt
     assert "学生自述（未独立核验）" in prompt
     assert llm.last_call and llm.last_call.ok
-    assert reply == (decision.content if bad_reply else text)
+    if bad_reply:
+        assert decision.content in reply and "未获得可用的 AI 讲解" in reply
+    else:
+        assert reply == text
 
 
 async def test_existing_l3_session_uses_previous_outputs_without_rewriting_mastery_or_verdict(api_context):

@@ -1,4 +1,5 @@
 import { sameSource, verificationRecovery, verifyWithRefresh } from "./tutor-verification";
+import { indentedNewline, shouldSendMessage } from "./editor-input";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import Markdown from "./Markdown";
@@ -474,7 +475,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const hasChanged = sub !== null && !sameSource(code, language, savedCode, savedLanguage);
   const phase = sub ? submissionPhase(sub) : null;
   const unchangedTutorCode = phase === "complete" && tutorSubmission !== null && !hasChanged;
-  const canTutor = sub && phase === "complete" && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
+  const canTutor = sub && phase === "complete" && diag;
 
   return (
     <>
@@ -510,7 +511,15 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
               {LANGUAGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select></label><span className="sub">Ctrl / ⌘ + Enter 提交</span></div></div>
             <textarea id="solution-code" ref={editorRef} aria-describedby="code-submission-note" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid, language), e.target.value); }} onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || e.currentTarget.readOnly) return;
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void run(); }
+              else if (e.key === "Enter" && !e.altKey) {
+                e.preventDefault();
+                const editor = e.currentTarget;
+                const next = indentedNewline(code, editor.selectionStart, editor.selectionEnd, language);
+                setCode(next.value); writeLocal(draftKey(pid, language), next.value);
+                requestAnimationFrame(() => editor.setSelectionRange(next.cursor, next.cursor));
+              }
             }} />
             <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim() || unchangedTutorCode}>
               {busy === "judge" ? "正在发送任务…" : busy === "cancel" ? "正在核对取消…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
@@ -557,7 +566,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             {canTutor && !tutorSubmission && <button className="ghost" onClick={() => {
               writeLocal(activeHintKey(userId, pid), String(sub.id));
               setTutorSubmission(sub.id);
-            }}>围绕这次提交获取提示</button>}
+            }}>讲解已提交的代码</button>}
             </>}
             {phase !== "pending" && <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />}
           </section>}
@@ -616,7 +625,12 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }, [submissionId, retry]);
 
   useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    const chat = chatRef.current;
+    if (!chat) return;
+    const latest = chat.lastElementChild;
+    if (messages[messages.length - 1]?.role === "tutor" && latest) {
+      chat.scrollTop += latest.getBoundingClientRect().top - chat.getBoundingClientRect().top;
+    } else chat.scrollTop = chat.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -649,7 +663,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }, [latestSubmitted?.id, session?.session_id, verifyRetry, busy]);
 
   async function send() {
-    if (!session || !draft.trim() || sendLock.current || verifying || session.status !== "open") return;
+    if (!session || !draft.trim() || sendLock.current || verifying || !["open", "resolved"].includes(session.status)) return;
     const content = draft.trim();
     sendLock.current = true; setBusy(true); setError("");
     try {
@@ -666,10 +680,10 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
     setRetry((value) => value + 1);
   }
 
-  return <section className="card" aria-label="提示与修改验证">
-    <div className="card-head"><h2>提示与修改验证</h2><span className="sub">围绕提交 #{submissionId}</span></div>
-    <p className="muted">先说说你的判断。修改上方代码后重新提交，系统会用新的执行结果检查是否解决。</p>
-    {loading && <p role="status">正在打开提示记录…</p>}
+  return <section className="card" aria-label="代码讲解与修改验证">
+    <div className="card-head"><h2>代码讲解与修改验证</h2><span className="sub">当前代码 #{session?.verified_submission_id ?? submissionId}</span></div>
+    <p className="muted">直接结合已提交的代码和执行记录讲解。没懂可以继续问，老师会逐句解释；修改编辑器内容后请重新提交验证。</p>
+    {loading && <p role="status">正在读取代码并准备讲解…</p>}
     <ErrorNotice message={error} onRetry={!session ? () => setRetry((value) => value + 1) : undefined} />
     <ErrorNotice message={verifyError ? "本次判题结果已保存。" + verifyError : ""} onRetry={verifyAction === "retry" ? () => setVerifyRetry((value) => value + 1) : undefined} />
     {verifyError && verifyAction === "edit" && <button className="ghost" onClick={onEditCode}>去修改代码</button>}
@@ -677,15 +691,19 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
     {verifying && <p role="status">正在用新提交核对修改结果…</p>}
     {session && <>
       <div className="chat" ref={chatRef} role="log" aria-label="提示记录" aria-live="polite">
-        {messages.map((message, index) => <div key={index} className={"bubble " + message.role}><span className="lvl">{message.role === "tutor" ? "学习提示" : "我的思考"}</span>{message.text}</div>)}
+        {messages.map((message, index) => <div key={index} className={"bubble " + message.role}><span className="lvl">{message.role === "tutor" ? "代码讲解" : "我的问题"}</span>{message.role === "tutor" ? <Markdown text={message.text} /> : message.text}</div>)}
       </div>
-      {session.status === "open" ? <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+      {session.status === "resolved" && <p className="scope-note" role="status">提交 #{session.verified_submission_id} 已通过当前题包测试，仍可继续提问代码原理。</p>}
+      {["open", "resolved"].includes(session.status) ? <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
         <label className="sr-only" htmlFor={"hint-message-" + submissionId}>你的思路或问题</label>
-        <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="我检查了……，还不理解的是……" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={busy || verifying} />
-        <button type="submit" className="primary" disabled={!draft.trim() || busy || verifying}>{busy ? "发送中…" : "发送思考"}</button>
-      </form> : session.status === "resolved"
-        ? <p className="scope-note" role="status">{session.verified_submission_id ? "提交 #" + session.verified_submission_id : "新提交"}已通过当前题包测试，本次问题已验证解决。</p>
-        : <div className="row recovery-actions"><p className="scope-note" role="status">{session.status === "unverified" ? "历史核验结果待核对，请重新提交正式测试后新建答疑。" : session.status === "unavailable" ? "暂时无法确认核验状态，请重新查询；现有记录已保留。" : "本次提示已暂停，可以保留现有记录并重新开启一轮提示。"}</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
+        <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="Enter 发送，Shift＋Enter 换行。例如：请逐句讲。" aria-describedby={"chat-keys-" + submissionId} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => {
+          if (shouldSendMessage({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing, keyCode: e.nativeEvent.keyCode })) {
+            e.preventDefault(); void send();
+          }
+        }} disabled={busy || verifying} />
+        <button type="submit" className="primary" disabled={!draft.trim() || busy || verifying}>{busy ? "正在讲解…" : "提问"}</button>
+      </form> : <div className="row recovery-actions"><p className="scope-note" role="status">{session.status === "unverified" ? "历史核验结果待核对，请重新提交正式测试后新建答疑。" : session.status === "unavailable" ? "暂时无法确认核验状态，请重新查询；现有记录已保留。" : "本次提示已暂停，可以保留现有记录并重新开启一轮提示。"}</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
+      {["open", "resolved"].includes(session.status) && <p id={"chat-keys-" + submissionId} className="dim">Enter 发送 · Shift＋Enter 换行</p>}
     </>}
   </section>;
 }

@@ -77,8 +77,9 @@ class TutorService:
 
         view = await self._diagnosis_view(diag, submission_id)
         decision = decide(SessionView(level=0, has_student_input=False), "", view)
+        content = await compose(decision, view, "", LLMClient() if settings.llm_enabled else None)
         turn = HintTurn(session_id=hs.id, role="tutor", level=decision.level,
-                        content=decision.content)
+                        content=content)
         self.session.add(turn)
         await self.session.commit()
         await self.session.refresh(hs)
@@ -87,7 +88,8 @@ class TutorService:
 
     async def reply(self, session_id: int, message: str) -> dict:
         hs = await accessible_hint_session(self.session, self.user, session_id, lock=True)
-        if hs.status in ("resolved", "escalated", "blocked"):
+        if (hs.status in ("escalated", "blocked")
+                or (hs.status == "resolved" and await self._visible_status(hs) != "resolved")):
             status = await self._visible_status(hs)
             return {"session_id": hs.id, "status": status, "level": hs.level,
                     "reply": ("历史核验结果待核对，请重新提交正式测试后新建答疑。" if status == "unverified"
@@ -156,7 +158,7 @@ class TutorService:
             content = decision.content
 
         # 防代做最后一道闸门
-        if not safe_output(content):
+        if not safe_output(content, source_code=view.source_code):
             content = "这段我先不贴完整代码，按上面的提示改一处，我们再一起看结果。"
 
         self.session.add(HintTurn(session_id=hs.id, role="student", level=hs.level,
@@ -180,6 +182,8 @@ class TutorService:
             "reply": content,
             "dependency_signal": decision.dependency_signal,
             "mastery": None,
+            "verified_submission_id": hs.verified_submission_id,
+            "verdict": effective_verdict(source),
         }
 
     async def verify(self, session_id: int, submission_id: int) -> dict:
@@ -271,18 +275,23 @@ class TutorService:
         view = _diag_view(diag, submission.lang if submission else "cpp17")
         if submission is not None:
             view.source_code = submission.code
+            view.verdict = effective_verdict(submission)
             problem = await self.session.get(Problem, submission.problem_id)
             if problem is not None:
                 view.problem_context = f"{problem.pid} {problem.title}\n{problem.statement_md}"
         rows = (
             await self.session.execute(
                 select(Evidence).where(
-                    Evidence.submission_id == submission_id, Evidence.type == "run_trace"
+                    Evidence.submission_id == submission_id, Evidence.type.in_(("compile_log", "run_trace"))
                 ).order_by(Evidence.id)
             )
         ).scalars().all()
         for evidence in rows:
             payload = evidence.payload or {}
+            if evidence.type == "compile_log":
+                if payload.get("ok") is False:
+                    view.execution_context = "编译未通过，尚未运行测试。编译器信息：\n" + str(payload.get("stderr", ""))[:3000]
+                continue
             failed = (
                 payload.get("matched") is False
                 or payload.get("status") != "Accepted"
@@ -292,6 +301,15 @@ class TutorService:
                 ))
             )
             if failed:
+                view.execution_context = (
+                    f"运行状态={payload.get('status')}；退出码={payload.get('exit_code')}；"
+                    f"输入={str(payload.get('stdin', payload.get('input', '')))[:1000]!r}；"
+                    f"实际输出={str(payload.get('stdout', ''))[:1000]!r}；"
+                    f"预期输出={str(payload.get('expected', ''))[:1000]!r}"
+                )
+                if (payload.get("input_truncated") or payload.get("stdout_truncated")
+                        or payload.get("expected_truncated") or payload.get("escaped_fields")):
+                    view.execution_context += "（展示内容可能截断或转义，不能作为完整原始输入输出。）"
                 if not payload.get("input_truncated") and not has_escaped_input(payload):
                     view.counterexample = str(payload.get("stdin", payload.get("input", "")))
                 view.counterexample_minimized = False
@@ -309,6 +327,8 @@ class TutorService:
                         and not escaped_output and not outputs_equal(actual, expected)):
                     view.comparison = OutputComparison(expected=expected, actual=actual, origin="execution")
                 break
+        if not view.execution_context and submission is not None:
+            view.execution_context = f"当前判定={view.verdict}；保存的测试摘要={submission.tests_passed!r}"
         return view
 
     async def get(self, session_id: int) -> dict:

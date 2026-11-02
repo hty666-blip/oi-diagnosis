@@ -257,6 +257,12 @@ textarea.code:focus { outline: none; border-color: var(--accent); box-shadow: 0 
 .bubble.tutor { background: var(--panel-2); border: 1px solid var(--line-soft); align-self: flex-start; border-bottom-left-radius: 4px; }
 .bubble.student { background: linear-gradient(135deg, #2b4070, #24365e); align-self: flex-end; border-bottom-right-radius: 4px; }
 .bubble .lvl { display: block; font-size: 11px; color: var(--dim); margin-bottom: 5px; }
+.bubble.tutor { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.bubble.tutor .md { font-size: 16px; }
+.bubble.tutor .md .inline-code { font-size: .95em; }
+.bubble.tutor .md p:first-child { margin-top: 0; }
+.bubble.tutor .md p:last-child { margin-bottom: 0; }
+.bubble.tutor .md .code-block { max-width: 100%; overflow-x: auto; white-space: pre; font-size: 14px; }
 
 .composer { display: flex; gap: 10px; margin-top: 16px; }
 .composer input { flex: 1; }

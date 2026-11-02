@@ -1,4 +1,4 @@
-"""导师策略：**规则决定"给多少"，模型决定"怎么讲"**。
+"""代码辅导策略：直接解释已提交的代码，执行核验独立处理。
 
 `decide()` 根据已有输出和有限对话决定下一步，保留核验与防代做边界。
 `compose()` 使用本层允许的上下文组织讲解；聊天解释不等同于修改通过验证。
@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from dataclasses import dataclass, field
 
 from app.domain.judging import outputs_equal
@@ -37,8 +38,8 @@ RESOLVED = re.compile(
     r"|(?:^|[\s，。！!])(?:已经|终于|都)?过了(?=$|[\s，。！!])", re.I,
 )
 FULL_PROGRAM = re.compile(
-    r"\b(?:int|signed|auto|void)\s+main\s*\(|"
-    r"public\s+static\s+void\s+main\s*\(|"
+    r"\b(?:int|signed|auto|void)\s+main\s*\([^)]*\)\s*(?:noexcept\s*)?(?:->\s*int\s*)?\{|"
+    r"public\s+static\s+void\s+main\s*\([^)]*\)\s*(?:throws\s+[\w., ]+)?\{|"
     r"if\s+__name__\s*==\s*['\"]__main__['\"]",
     re.I,
 )
@@ -84,6 +85,8 @@ class DiagnosisView:
     comparison: OutputComparison | None = None
     source_code: str = ""
     problem_context: str = ""
+    verdict: str | None = None
+    execution_context: str = ""
 
 
 @dataclass
@@ -109,6 +112,7 @@ class TutorDecision:
     dependency_signal: bool = False
     notes: list[str] = field(default_factory=list)
     comparison: OutputComparison | None = None
+    detail: int = 0
 
 
 def wants_answer(text: str) -> bool:
@@ -163,6 +167,54 @@ def _comparison_reply(comparison: OutputComparison, rounds: int) -> str:
     return prefix + "接下来需要核对计算过程，继续重复这两个数不会增加线索。请选一个可疑表达式，记录它执行前后的值；如果已改过代码，就在上方编辑器提交，让新的执行结果核验修改。"
 
 
+def _code_fact(diag: DiagnosisView) -> str:
+    """模型不可用时引用真实语句及其语义，不伪装成已完成的代码诊断。"""
+    match = re.search(r"\b[A-Za-z_]\w*\s*(?:\+=|-=|=(?!=))\s*[^;{}\n]{1,80};?", diag.source_code)
+    if match is None:
+        match = re.search(r"\breturn\s+[^;{}\n]{1,80};?", diag.source_code)
+    if match is None:
+        return "源码已经读取，但现有规则没有确认具体错误位置。"
+    statement = match.group(0)
+    line = diag.source_code.count("\n", 0, match.start()) + 1
+    meaning = ("`+=` 会把右侧的值加到左侧变量的旧值上，再写回这个变量。" if "+=" in statement
+               else "`-=` 会从变量旧值中减去右侧的值，再写回。" if "-=" in statement
+               else "`return` 会结束所在函数并返回值；它本身不是打印语句。" if statement.startswith("return")
+               else "`=` 可用于初始化或赋值；`+=` 表示在已有值上累加，具体需结合声明和上下文理解。")
+    return f"先看当前源码第 {line} 行中的 `{statement}`：{meaning}这只是语句含义，不单凭它断定错因。"
+
+
+def _code_decision(session: SessionView, message: str, diag: DiagnosisView) -> TutorDecision:
+    pair, rounds = _comparison_context(session, message, diag)
+    previous_confusion = 0
+    for role, content in reversed(session.history):
+        if role != "student":
+            continue
+        if not is_confused(content):
+            break
+        previous_confusion += 1
+    # 代码教学按当前版本对话推进，不再受旧提示层级变化导致的计数清零影响。
+    detail = min(max(max(session.stuck_count, previous_confusion) + int(is_confused(message)), rounds), 2)
+    if re.search(r"逐行|一步步|每一行|直接讲|详细|彻底|从头", message):
+        detail = 2
+    content = _code_fact(diag)
+    if diag.code and not diag.hypothesis:
+        content += f"现有定位记录：{diag.message or diag.code}。"
+        if diag.line and diag.line > len(diag.source_code.splitlines()):
+            content += f"记录中的第 {diag.line} 行超出当前源码范围，不能据此认定具体位置。"
+    if pair:
+        origin = "你报告的" if pair.origin == "student" else "执行记录中的"
+        content += f"{origin}预期是 {pair.expected[:100]!r}，实际是 {pair.actual[:100]!r}，这两项无需重新提供。"
+    if detail == 1:
+        content += "若是对已有变量赋值，可以按“旧值 → 计算右侧 → 写回”理解；声明时的初值和循环里的累计更新要分开看。"
+    elif detail >= 2:
+        content += "逐句解释和完整推演需要可用的 AI 讲解；在没有获得讲解时，不会继续假装分析或要求你反复猜。"
+    if diag.verdict == "AC":
+        content += "当前版本已通过题包测试，可以继续理解代码，不需要为讲解故意修改或提交错误版本。"
+    return TutorDecision(action="explain", level=min(session.level + int(bool(message)), MAX_LEVEL),
+                         mode="code", reason="explain_submitted_code", content=content,
+                         p=diag.p, comparison=pair, detail=detail)
+
+
 def says_resolved(text: str) -> bool:
     return bool(RESOLVED.search(text or ""))
 
@@ -178,13 +230,17 @@ def is_meaningless(text: str) -> bool:
 def decide(session: SessionView, student_message: str, diag: DiagnosisView) -> TutorDecision:
     msg = (student_message or "").strip()
 
-    if says_resolved(msg):
+    if says_resolved(msg) and session.status != "resolved":
         return TutorDecision(
             action="verify", level=session.level, mode="gate",
             content="请把修改后的代码重新提交，再核验这次执行结果。"
                     "通过公开样例还不能认定整题已经解决。",
             p=diag.p, reason="verification_required",
         )
+
+    if diag.source_code:
+        # 已有代码时直接围绕它教学；反复不会不触发惩罚或暂停辅导。
+        return _code_decision(session, msg, diag)
 
     if wants_answer(msg):
         return TutorDecision(
@@ -351,12 +407,32 @@ def _topic(diag: DiagnosisView) -> str:
 
 
 def _refuse_text(level: int) -> str:
-    return (
-        "我知道你赶时间，但直接给代码对你没有帮助——下次遇到同类题还是会卡。\n"
-        f"我们只差一步：先按现在的提示（L{level}）试一次，卡住了再告诉我具体卡在哪一行。"
-    )
+    return "可以讲解你已有的代码，也可以给局部修正。请先提交当前版本，我才能结合具体语句分析，而不是代写整份答案。"
 
 
-def safe_output(text: str) -> bool:
-    """防代做最后一道检查：不得包含完整程序。"""
-    return isinstance(text, str) and not FULL_PROGRAM.search(text)
+def safe_output(text: str, *, source_code: str = "") -> bool:
+    """新完整程序不通过；可以在讲解中引用学生已提交的原代码。"""
+    if not isinstance(text, str):
+        return False
+    if not FULL_PROGRAM.search(text):
+        return True
+    if not source_code:
+        return False
+
+    def canonical(code: str) -> str:
+        # 允许重新缩进，但保留字符串字面量内部的空白，不能把新答案当原文。
+        if re.search(r"(?m)^\s*if\s+__name__", source_code):
+            return textwrap.dedent(code).strip()
+        parts = re.split(r'''("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')''', code)
+        return "".join(part if index % 2 else re.sub(r"\s+", "", part)
+                       for index, part in enumerate(parts))
+
+    source = canonical(source_code)
+
+    def remove_original(match):
+        block = match.group(1)
+        return "（引用学生原代码）" if canonical(block) and canonical(block) in source else match.group(0)
+
+    remainder = re.sub(r"```[^\n]*\n(.*?)```", remove_original, text, flags=re.S)
+    remainder = re.sub(r"`([^`\n]+)`", remove_original, remainder)
+    return not FULL_PROGRAM.search(remainder)
