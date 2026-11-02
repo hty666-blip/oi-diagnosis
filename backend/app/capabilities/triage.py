@@ -170,9 +170,9 @@ def _generic_compile_finding(stderr: str, language: str) -> TriageFinding | None
 def _summarize(findings: list[TriageFinding], route: str) -> str:
     if not findings:
         return {
-            "none": "样例全部通过，暂无问题。",
-            "full_pipeline": "代码能编译，但结果不对，正在进一步取证。",
-            "human": "没识别出具体错误类型，已记录给老师。",
+            "none": "本次执行已通过，请以页面标明的测试范围为准。",
+            "full_pipeline": "本次执行未通过；现有规则尚未确定具体错因，请结合测试结果和执行证据检查代码。",
+            "human": "现有规则尚未定位具体错因，可查看执行证据或请教练复核。",
         }.get(route, "")
 
     top = findings[0]

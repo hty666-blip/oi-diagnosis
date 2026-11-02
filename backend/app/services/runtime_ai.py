@@ -60,7 +60,8 @@ async def observe_call(session: AsyncSession, client, feature: str, *, used: boo
     call = getattr(client, "last_call", None)
     if call is None and used:
         return  # 测试/自定义客户端未提供遥测，不能伪造一次外部调用。
-    error = (reason or getattr(call, "error", "") or "")[:64]
+    # 保留供应商状态码等实际故障；“无可用输出”等降级标签不能覆盖根因。
+    error = (getattr(call, "error", "") or reason or "")[:64]
     event = AICallEvent(feature=feature, model=str(getattr(call, "model", ""))[:100], called=call is not None,
                         used_model=used, error=error,
                         latency_ms=getattr(call, "latency_ms", None), prompt_tokens=getattr(call, "prompt_tokens", None),

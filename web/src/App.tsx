@@ -1,5 +1,6 @@
 import { sameSource, verificationRecovery, verifyWithRefresh } from "./tutor-verification";
 import { indentedNewline, shouldSendMessage } from "./editor-input";
+import { emptyQuestionDraft, questionDraftStore } from "./question-draft";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
@@ -608,9 +609,10 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
 type ChatMessage = { role: "tutor" | "student"; level: number; text: string };
 
 function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { submissionId: number; userId: number; latestSubmitted: SubmissionResult | null; onEditCode: () => void }) {
+  const draftStore = questionDraftStore({ getItem: readLocal, setItem: writeLocal, removeItem: removeLocal }, userId, submissionId);
   const [session, setSession] = useState<SessionReply | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(() => draftStore.read());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -691,13 +693,14 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }, [latestSubmitted?.id, session?.session_id, verifyRetry, busy]);
 
   async function send() {
-    if (!session || !draft.trim() || sendLock.current || verifying || !["open", "resolved"].includes(session.status)) return;
-    const content = draft.trim();
+    if (!session || !draft.content.trim() || sendLock.current || verifying || !["open", "resolved"].includes(session.status)) return;
+    const content = draft.content.trim(), sentId = draft.id;
     sendLock.current = true; setBusy(true); setError("");
     try {
       const reply = await api.sendMessage(session.session_id, content);
       setMessages((rows) => [...rows, { role: "student", level: session.level, text: content }, { role: "tutor", level: reply.level, text: reply.reply }]);
-      setSession(reply); setDraft("");
+      setSession(reply); draftStore.acknowledge(sentId);
+      setDraft((current) => current.id === sentId ? emptyQuestionDraft : current);
     } catch (e) { setError(messageOf(e)); } finally { setBusy(false); sendLock.current = false; }
   }
 
@@ -724,14 +727,14 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
       {session.status === "resolved" && <p className="scope-note" role="status">提交 #{session.verified_submission_id} 已通过当前题包测试，仍可继续提问代码原理。</p>}
       {["open", "resolved"].includes(session.status) ? <form className="composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
         <label className="sr-only" htmlFor={"hint-message-" + submissionId}>你的思路或问题</label>
-        <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="Enter 发送，Shift＋Enter 换行。例如：请逐句讲。" aria-describedby={"chat-keys-" + submissionId} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => {
+        <textarea id={"hint-message-" + submissionId} className="text grow" rows={2} maxLength={4000} placeholder="Enter 发送，Shift＋Enter 换行。例如：请逐句讲。" aria-describedby={"chat-keys-" + submissionId} value={draft.content} onChange={(e) => setDraft(draftStore.write(e.target.value))} onKeyDown={(e) => {
           if (shouldSendMessage({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing, keyCode: e.nativeEvent.keyCode })) {
             e.preventDefault(); void send();
           }
         }} disabled={busy || verifying} />
-        <button type="submit" className="primary" disabled={!draft.trim() || busy || verifying}>{busy ? "正在讲解…" : "提问"}</button>
+        <button type="submit" className="primary" disabled={!draft.content.trim() || busy || verifying}>{busy ? "正在讲解…" : "提问"}</button>
       </form> : <div className="row recovery-actions"><p className="scope-note" role="status">{session.status === "unverified" ? "历史核验结果待核对，请重新提交正式测试后新建答疑。" : session.status === "unavailable" ? "暂时无法确认核验状态，请重新查询；现有记录已保留。" : "本次提示已暂停，可以保留现有记录并重新开启一轮提示。"}</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
-      {["open", "resolved"].includes(session.status) && <p id={"chat-keys-" + submissionId} className="dim">Enter 发送 · Shift＋Enter 换行</p>}
+      {["open", "resolved"].includes(session.status) && <p id={"chat-keys-" + submissionId} className="dim">Enter 发送 · Shift＋Enter 换行 · 未发送的问题保存在当前浏览器</p>}
     </>}
   </section>;
 }

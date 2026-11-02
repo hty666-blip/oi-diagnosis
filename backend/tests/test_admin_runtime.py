@@ -33,7 +33,7 @@ from app.gateway.llm import LLMClient
 from app.maintenance_worker import MaintenanceWorker
 from app.services.backup_service import MAGIC, BackupError, BackupIO
 from app.services.problem_versions import version_digest
-from app.services.runtime_ai import decrypt_key, runtime_client
+from app.services.runtime_ai import decrypt_key, observe_call, runtime_client
 from app.services.worker_monitor import WorkerMonitor, worker_status
 
 BASE = "/api/v1/admin/runtime"
@@ -148,6 +148,16 @@ async def test_ai_failed_check_preserves_config_and_never_echoes_provider(api_co
     body["api_key"] = "different-key"
     body["expected_version"] = 9
     assert (await ctx.client.post(BASE + "/ai/check", headers=headers, json=body)).status_code == 409
+
+
+async def test_model_outage_keeps_provider_error_instead_of_generic_fallback(api_context):
+    client = LLMClient(base_url="https://model.invalid/v1", api_key="test-only", model="offline",
+        transport=httpx.MockTransport(lambda request: httpx.Response(503, text="private-provider-body")))
+    assert await client.chat_text("system", "synthetic question", retries=0) is None
+    await observe_call(api_context.session, client, "tutor", used=False, reason="empty_output")
+    event = await api_context.session.scalar(select(AICallEvent).order_by(AICallEvent.id.desc()).limit(1))
+    assert event.error == "http_503" and event.called and not event.used_model
+    assert event.prompt_tokens is None and "private-provider-body" not in event.error
 
 
 @pytest.mark.parametrize("address", ["http://remote.invalid", "https://user:pass@host.invalid", "https://host.invalid?key=secret", "https://host.invalid:bad"])
