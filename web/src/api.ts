@@ -454,6 +454,25 @@ export interface StudentProfile {
 }
 
 export const api = {
+  runtimeJudging: (state = "all", q = "", offset = 0) => get<RuntimeJudging>(`/admin/runtime/judging?state=${state}&q=${encodeURIComponent(q)}&offset=${offset}`),
+  runtimeJobAction: (id: number, action: "retry" | "cancel", job: RuntimeJob) => post(`/admin/runtime/judging/${id}/${action}`, { status: job.status, attempts: job.attempts, manual_retries: job.manual_retries }),
+  runtimeJudgeCheck: (language: string) => post<{ ok: boolean; language: string; backend: string; checked_at: string }>(`/admin/runtime/judge-check?language=${language}`),
+  runtimeAI: () => get<RuntimeAI>("/admin/runtime/ai"),
+  runtimeAICheck: (body: { expected_version: number; base_url: string; model: string; api_key: string }) => post<{ check_id: string; ok: boolean; error: string; latency_ms: number | null; expires_at: string }>("/admin/runtime/ai/check", body),
+  runtimeAIActivate: (check_id: string) => post<RuntimeAI>("/admin/runtime/ai/activate", { check_id }),
+  runtimeAIDisable: (expected_version: number) => post<RuntimeAI>("/admin/runtime/ai/disable", { expected_version }),
+  runtimeBackups: () => get<RuntimeBackups>("/admin/runtime/backups"),
+  runtimeBackup: (action: "create" | "verify", request_id: string, artifactId?: string) => post<MaintenanceTask>(`/admin/runtime/backups/${action}${artifactId ? `?artifact_id=${artifactId}` : ""}`, { request_id }),
+  runtimeMaintenanceRetry: (id: string) => post<MaintenanceTask>(`/admin/runtime/maintenance/${id}/retry`),
+  runtimeDownload: async (id: string) => {
+    const { response, snapshot, signal } = await request(`/admin/runtime/backups/${id}/download`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = `oi-backup-${id}.oibak`; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
   catalogProblems: (q = "", offset = 0, state = "all") => get<{ items: CatalogProblem[]; has_more: boolean }>(`/admin/problems?q=${encodeURIComponent(q)}&offset=${offset}&state=${state}`),
   catalogLocalPackages: () => get<{ pid: string; title: string; valid: boolean; cases: number; package_level: string }[]>("/admin/problems/local-packages"),
   catalogPreview: (problems: unknown[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/import/preview", { problems, rights_confirmed }),
@@ -573,7 +592,36 @@ export interface TransferImpact { student: string; from: string; to: string; aff
 export interface AdminOverview {
   observed_at: string; database: string; accounts: Record<AuthUser["role"], number>; disabled: number;
   unassigned_students: number; classes_without_teacher: { id: number; name: string }[]; active_classes: number;
-  llm_enabled: boolean; worker_status: "unknown"; judging: JudgingQueue;
+  llm_enabled: boolean; worker_status: "online" | "unknown"; judging: JudgingQueue;
+}
+
+export interface RuntimeWorkers {
+  observed_at: string; stale_after_seconds: number; api_judge_enabled: boolean; maintenance_enabled: boolean;
+  items: { id: string; kind: string; state: string; current_job: string | null; seen_at: string; age_seconds: number; online: boolean }[];
+}
+export interface RuntimeJob {
+  id: number; status: string; attempts: number; max_attempts: number; manual_retries: number;
+  retryable: boolean; cancelable: boolean; last_error: string | null; lease_expires_at: string | null;
+}
+export interface RuntimeJudging {
+  items: { job: RuntimeJob; submission_id: number; stage: string; student: string; pid: string; title: string; protected: boolean; problem_version_id: number | null; created_at: string }[];
+  has_more: boolean; summary: JudgingQueue; workers: RuntimeWorkers; backend: string;
+  last_check: { ok: boolean; language: string; backend: string; checked_at: string } | null;
+}
+export interface RuntimeAI {
+  version: number; enabled: boolean; configured: boolean; environment_allowed: boolean; key_configured: boolean;
+  base_url: string; model: string; source: string; checked_at: string | null; observed_at: string;
+  last_check: { ok: boolean; error: string; created_at: string; base_url: string; model: string; latency_ms: number | null } | null;
+  usage: { observed_records: number; external_calls: number; prompt_tokens: number | null; completion_tokens: number | null; unknown_usage: number };
+  events: { id: number; feature: string; model: string; called: boolean; used_model: boolean; error: string; latency_ms: number | null; prompt_tokens: number | null; completion_tokens: number | null; created_at: string }[];
+}
+export interface MaintenanceTask {
+  id: string; kind: string; artifact_id: string; status: string; attempts: number; error: string;
+  result: Record<string, unknown>; created_at: string; finished_at: string | null;
+}
+export interface RuntimeBackups {
+  items: { id: string; sha256: string; size: number; counts: Record<string, number>; revision: string; created_at: string; verified_at: string | null }[];
+  tasks: MaintenanceTask[]; verify_configured: boolean; workers: RuntimeWorkers;
 }
 
 export interface CatalogProblem {

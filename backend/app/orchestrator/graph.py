@@ -115,7 +115,7 @@ GRAPH = build_graph()
 
 
 async def run_diagnosis(*, submission_id: int, code: str, verdict: str | None,
-                        evidence: list[dict], language: str = "cpp17") -> dict:
+                        evidence: list[dict], language: str = "cpp17", llm=...) -> dict:
     out = await GRAPH.ainvoke({
         "submission_id": submission_id,
         "code": code,
@@ -123,7 +123,7 @@ async def run_diagnosis(*, submission_id: int, code: str, verdict: str | None,
         "verdict": verdict,
         "evidence": evidence,
         "attempts": 0,
-        "llm": LLMClient() if settings.llm_enabled else None,
+        "llm": (LLMClient() if settings.llm_enabled else None) if llm is ... else llm,
     })
     return {
         "status": out.get("status", "needs_human"),

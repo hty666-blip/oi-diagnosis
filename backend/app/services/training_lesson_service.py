@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.text_validation import StorageText
 from app.domain.models import Training, TrainingLessonPublication, TrainingLessonRevision, User
 from app.gateway.llm import LLMClient
+from app.services.runtime_ai import observe_call, runtime_client
 from app.services.training_analysis import analyze_training
 from app.services.training_service import accessible_training
 
@@ -140,7 +140,7 @@ class TrainingLessonService:
         content, source = facts_draft(training, analysis), "facts"
         # 网络请求期间不持有训练写锁或长事务；写回前重新验证权限、版本与数据快照。
         await self.session.commit()
-        llm = LLMClient() if settings.llm_enabled and analysis["examples"] else None
+        llm = await runtime_client(self.session, factory=LLMClient) if analysis["examples"] else None
         if llm is not None and llm.available:
             prompt = {"training": {"title": training.title, "objective": training.objective},
                       "problems": analysis["problems"], "issues": analysis["issues"], "examples": analysis["examples"]}
@@ -151,6 +151,7 @@ class TrainingLessonService:
                 generated = None
             if generated:
                 content, source = generated, "ai"
+        await observe_call(self.session, llm, "lesson", used=source == "ai", reason="" if source == "ai" else "facts_fallback")
         training = await self.teacher_training(training_id, lock=True)
         await self.check_revision(training_id, expected)
         fresh = await analyze_training(self.session, self.user, training)

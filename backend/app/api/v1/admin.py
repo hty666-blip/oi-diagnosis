@@ -10,7 +10,6 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AdminUser, SessionDep
 from app.api.input_types import ObjectId, ObjectPathId
-from app.core.config import settings
 from app.core.security import hash_password
 from app.core.text_validation import StorageText
 from app.domain.models import AdminAudit, ClassTeacher, SchoolClass, Training, TrainingMember, User
@@ -23,6 +22,8 @@ from app.services.admin_service import (
     user_out,
 )
 from app.services.operations_service import OperationsService
+from app.services.runtime_ai import configuration
+from app.services.worker_monitor import worker_status
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 Role = Literal["student", "teacher", "admin"]
@@ -95,6 +96,8 @@ class AccountBatch(Input):
 
 @router.get("/overview")
 async def overview(session: SessionDep, user: AdminUser):
+    workers = await worker_status(session)
+    ai = await configuration(session)
     classes = (await session.scalars(select(SchoolClass).where(SchoolClass.archived.is_(False)))).all()
     assigned = set((await session.scalars(select(ClassTeacher.class_id).join(User, User.id == ClassTeacher.teacher_id)
                                         .where(User.enabled.is_(True), User.role == "teacher"))).all())
@@ -103,8 +106,9 @@ async def overview(session: SessionDep, user: AdminUser):
             "disabled": await session.scalar(select(func.count()).select_from(User).where(User.enabled.is_(False))),
             "unassigned_students": await session.scalar(select(func.count()).select_from(User).where(User.role == "student", User.enabled.is_(True), User.class_id.is_(None))),
             "classes_without_teacher": [{"id": c.id, "name": c.name} for c in classes if c.id not in assigned],
-            "active_classes": len(classes), "llm_enabled": settings.llm_enabled,
-            "worker_status": "unknown", "judging": await OperationsService(session, user).judging()}
+            "active_classes": len(classes), "llm_enabled": ai["enabled"],
+            "worker_status": "online" if any(w["online"] and w["kind"] == "judge" for w in workers["items"]) else "unknown",
+            "judging": await OperationsService(session, user).judging()}
 
 
 @router.get("/users")

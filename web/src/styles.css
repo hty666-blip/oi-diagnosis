@@ -574,3 +574,15 @@ button:disabled { cursor: not-allowed; opacity: .6; }
   .evidence-choice { font-size: 14px; }
   .student-review .card-head { align-items: flex-start; }
 }
+
+/* 管理运维沿用管理台的表单与状态语言。 */
+.runtime-operations { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; min-width: 0; }
+.runtime-operations > * { min-width: 0; }
+.runtime-operations .admin-tabs { margin-bottom: 0; }
+.runtime-operations td small { display: block; margin-top: 6px; color: var(--muted, #b1b9c9); overflow-wrap: anywhere; }
+.runtime-workers, .runtime-confirm { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--border, #364159); }
+.runtime-task { padding-block: 16px; border-bottom: 1px solid var(--border, #364159); }
+.runtime-url { overflow-wrap: anywhere; }
+.runtime-operations .admin-actions { flex-wrap: wrap; }
+.runtime-operations table { min-width: 620px; }
+.runtime-operations input { min-width: 0; }

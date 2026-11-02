@@ -176,7 +176,7 @@ class JobService:
         await self.session.commit()
         return True
 
-    async def retry(self, submission_id: int, user: User) -> JudgeJob:
+    async def retry(self, submission_id: int, user: User, *, commit: bool = True) -> JudgeJob:
         submission = await accessible_submission(self.session, user, submission_id)
         if user.role != "admin" and submission.student_id != user.id:
             raise HTTPException(status_code=403, detail="只能重试自己提交的判题任务")
@@ -203,11 +203,14 @@ class JobService:
         submission.stage = "QUEUED"
         submission.verdict = None
         submission.tests_passed = None
-        await self.session.commit()
-        await self.session.refresh(job)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(job)
+        else:
+            await self.session.flush()
         return job
 
-    async def cancel(self, submission_id: int, user: User) -> JudgeJob:
+    async def cancel(self, submission_id: int, user: User, *, commit: bool = True) -> JudgeJob:
         submission = await accessible_submission(self.session, user, submission_id)
         if user.role != "admin" and submission.student_id != user.id:
             raise HTTPException(status_code=403, detail="只能取消自己提交的判题任务")
@@ -223,7 +226,8 @@ class JobService:
             .execution_options(populate_existing=True)
         )).scalar_one()
         if job.status == "cancelled":
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
             return job
         if job.status not in ("queued", "running") or submission.stage == "READY":
             raise HTTPException(status_code=409, detail="任务已结束，请查看最新执行结果")
@@ -240,6 +244,9 @@ class JobService:
         submission.stage = "CANCELLED"
         submission.verdict = None
         submission.tests_passed = None
-        await self.session.commit()
-        await self.session.refresh(job)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(job)
+        else:
+            await self.session.flush()
         return job

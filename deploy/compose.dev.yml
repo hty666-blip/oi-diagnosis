@@ -19,6 +19,8 @@ services:
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      # 隔离恢复库账号仅有该库权限；允许迁移创建复核记录的防篡改触发器。
+      - --log-bin-trust-function-creators=1
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
       interval: 5s

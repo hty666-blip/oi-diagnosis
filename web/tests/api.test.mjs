@@ -331,3 +331,20 @@ test("公共演示接口失败不能退出当前账号，正文读取中止后�
   await assert.rejects(pending, (error) => error.name === "AbortError");
   assert.equal(cachedUser().id, 1);
 });
+
+test("运维重试只发送已观察的任务状态，模型激活只发送检查编号", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({url, body: options.body && JSON.parse(options.body)}); return json({}); };
+  await api.runtimeJobAction(8, "retry", {status: "failed", attempts: 3, manual_retries: 1, last_error: "private-old-error"});
+  await api.runtimeAIActivate("check-uuid");
+  await api.runtimeBackup("verify", "request-uuid", "artifact-uuid");
+  assert.deepEqual(calls[0].body, {status: "failed", attempts: 3, manual_retries: 1});
+  assert.deepEqual(calls[1].body, {check_id: "check-uuid"});
+  assert.deepEqual(calls[2].body, {request_id: "request-uuid"});
+  assert.match(calls[2].url, /artifact_id=artifact-uuid$/);
+});
+
+test("备份文件读取期间换号不能触发下载", async () => {
+  globalThis.fetch = async () => ({ok: true, status: 200, blob: async () => { setSession("another-token", secondUser); return new Blob(["encrypted"]); }});
+  await assert.rejects(api.runtimeDownload("artifact-uuid"), /身份|登录|账号|会话/);
+});

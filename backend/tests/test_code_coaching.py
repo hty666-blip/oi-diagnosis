@@ -94,7 +94,7 @@ async def test_opening_and_repeated_confusion_use_model_with_increasing_detail(a
             return "先看 `sum = x;`，这会覆盖 sum 的旧值，因此循环结束后只保留最后一个数，和累加所有输入的题意不符。"
 
     monkeypatch.setattr("app.services.tutor_service.LLMClient", Model)
-    monkeypatch.setattr("app.services.tutor_service.settings.llm_enabled", True)
+    monkeypatch.setattr("app.core.config.settings.llm_enabled", True)
     result = await ctx.client.post("/api/v1/sessions", headers=ctx.headers(),
                                     json={"submission_id": submission.id})
     assert result.status_code == 200, result.text

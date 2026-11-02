@@ -149,6 +149,87 @@ class JudgeJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeat"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    state: Mapped[str] = mapped_column(String(16))
+    current_job: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class AIConfiguration(Base):
+    __tablename__ = "ai_configuration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    base_url: Mapped[str] = mapped_column(String(500))
+    model: Mapped[str] = mapped_column(String(100))
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class AIConfigurationCheck(Base):
+    __tablename__ = "ai_configuration_check"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    base_version: Mapped[int] = mapped_column(Integer)
+    base_url: Mapped[str] = mapped_column(String(500))
+    model: Mapped[str] = mapped_column(String(100))
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str] = mapped_column(String(64), default="")
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class AICallEvent(Base):
+    __tablename__ = "ai_call_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    feature: Mapped[str] = mapped_column(String(24))
+    model: Mapped[str] = mapped_column(String(100))
+    called: Mapped[bool] = mapped_column(Boolean)
+    used_model: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str] = mapped_column(String(64))
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), index=True)
+
+
+class BackupArtifact(Base):
+    __tablename__ = "backup_artifact"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(100), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    revision: Mapped[str] = mapped_column(String(32), default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class MaintenanceTask(Base):
+    __tablename__ = "maintenance_task"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(36), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("backup_artifact.id"))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    actor_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    owner: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    error: Mapped[str] = mapped_column(String(64), default="")
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
 class Evidence(Base):
     __tablename__ = "evidence"
 

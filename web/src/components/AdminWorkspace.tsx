@@ -3,13 +3,14 @@ import { api, messageOf, type AccountInput, type AdminAccount, type AdminAudit, 
 import { parseAccountCsv } from "../admin-import";
 import { ErrorNotice } from "./RecordUI";
 
+const RuntimeOperations = lazy(() => import("./RuntimeOperations"));
 const ProblemCatalog = lazy(() => import("./ProblemCatalog"));
 class CatalogBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
-  render() { return this.state.failed ? <ErrorNotice message="题库页面未能加载，请刷新页面重试。" onRetry={() => window.location.reload()} /> : this.props.children; }
+  render() { return this.state.failed ? <ErrorNotice message="管理页面未能加载，请刷新页面重试。" onRetry={() => window.location.reload()} /> : this.props.children; }
 }
-type Tab = "home" | "accounts" | "classes" | "audit" | "problems";
+type Tab = "home" | "accounts" | "classes" | "audit" | "problems" | "runtime";
 const roles = { student: "学生", teacher: "教练", admin: "管理员" };
 const actions: Record<string, string> = { "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
 const emptyAccount: AccountInput = { username: "", display_name: "", role: "student", password: "", class_id: null };
@@ -67,19 +68,20 @@ export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: (
   function openUser(row: AdminAccount) { setSelected(row); setPassword(""); setTarget(row.class_id ?? null); setImpact(undefined); setCreating(false); setError(""); }
 
   return <div className="admin-workspace">
-    <div className="page-head"><div><h1>平台管理</h1><p>管理账号、班级与负责关系，查看待处理事项和操作记录。</p></div><button className="ghost" onClick={onTeaching}>进入教学工作台</button></div>
-    <nav className="admin-tabs" aria-label="管理功能">{([["home", "管理首页"], ["accounts", "账号管理"], ["classes", "班级管理"], ["problems", "题库管理"], ["audit", "操作审计"]] as [Tab, string][]).map(([key, label]) => <button key={key} className="ghost" aria-pressed={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }} disabled={busy}>{label}</button>)}{tab !== "problems" && <button className="ghost" onClick={() => void load()} disabled={blocked}>刷新</button>}</nav>
+    <div className="page-head"><div><h1>平台管理</h1><p>管理账号、班级与负责关系，维护题库、AI 和备份，查看待处理事项和操作记录。</p></div><button className="ghost" onClick={onTeaching}>进入教学工作台</button></div>
+    <nav className="admin-tabs" aria-label="管理功能">{([["home", "管理首页"], ["accounts", "账号管理"], ["classes", "班级管理"], ["problems", "题库管理"], ["runtime", "运行维护"], ["audit", "操作审计"]] as [Tab, string][]).map(([key, label]) => <button key={key} className="ghost" aria-pressed={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }} disabled={busy}>{label}</button>)}{tab !== "problems" && tab !== "runtime" && <button className="ghost" onClick={() => void load()} disabled={blocked}>刷新</button>}</nav>
     <ErrorNotice message={error} onRetry={() => void load()} />
     {notice && <p className="session-notice" role="status">{notice}</p>}
     {loading && <p role="status">正在读取管理记录…</p>}
     {tab === "problems" && <CatalogBoundary><Suspense fallback={<p role="status">正在加载题库管理…</p>}><ProblemCatalog /></Suspense></CatalogBoundary>}
+    {tab === "runtime" && <CatalogBoundary><Suspense fallback={<p role="status">正在加载运行维护…</p>}><RuntimeOperations /></Suspense></CatalogBoundary>}
     {tab === "home" && overview && <>
       <section className="card"><div className="card-head"><h2>待处理事项</h2></div>
         <p>未分班的启用学生：{overview.unassigned_students} 人。<button className="ghost" onClick={() => showMembers(0)}>前往分班</button></p>
         {overview.classes_without_teacher.length ? <p>缺少启用教练：{overview.classes_without_teacher.map((c) => c.name).join("、")}。<button className="ghost" onClick={() => setTab("classes")}>分配教练</button></p> : <p className="muted">所有未归档班级均已分配启用的教练。</p>}
-        <p>排队 {overview.judging.counts.queued} · 执行中 {overview.judging.counts.running} · 执行失败 {overview.judging.counts.failed}。<button className="ghost" onClick={onReview}>查看判题与复核</button></p>
+        <p>排队 {overview.judging.counts.queued} · 执行中 {overview.judging.counts.running} · 执行失败 {overview.judging.counts.failed}。<button className="ghost" onClick={onReview}>查看判题与复核</button><button className="ghost" onClick={() => setTab("runtime")}>处理运行故障</button></p>
       </section>
-      <section className="card"><h2>当前可观测状态</h2><dl className="admin-status"><div><dt>数据库</dt><dd>本次查询已连接</dd></div><div><dt>判题工作器在线状态</dt><dd>尚无持久心跳，无法确认</dd></div><div><dt>外部 AI</dt><dd>{overview.llm_enabled ? "配置为启用；可用性需实际检查" : "配置为关闭"}</dd></div><div><dt>账号与班级</dt><dd>学生 {overview.accounts.student} · 教练 {overview.accounts.teacher} · 管理员 {overview.accounts.admin} · 停用 {overview.disabled} · 未归档班级 {overview.active_classes}</dd></div></dl><p className="muted">读取于 {new Date(overview.observed_at).toLocaleString("zh-CN")}。空队列不能证明工作器健康。</p></section>
+      <section className="card"><h2>当前可观测状态</h2><dl className="admin-status"><div><dt>数据库</dt><dd>本次查询已连接</dd></div><div><dt>判题工作器在线状态</dt><dd>{overview.worker_status === "online" ? "收到有效心跳，工作器在线" : "尚无有效心跳，请查看运行维护"}</dd></div><div><dt>外部 AI</dt><dd>{overview.llm_enabled ? "配置为启用；可用性需实际检查" : "配置为关闭"}</dd></div><div><dt>账号与班级</dt><dd>学生 {overview.accounts.student} · 教练 {overview.accounts.teacher} · 管理员 {overview.accounts.admin} · 停用 {overview.disabled} · 未归档班级 {overview.active_classes}</dd></div></dl><p className="muted">读取于 {new Date(overview.observed_at).toLocaleString("zh-CN")}。空队列不能证明工作器健康。</p></section>
       <section className="card"><div className="card-head"><h2>近期管理操作</h2><button className="ghost" onClick={() => setTab("audit")}>查看审计记录</button></div>{audit.slice(0, 5).map((r) => <p key={r.id}>{new Date(r.created_at).toLocaleString("zh-CN")} · {r.actor} · {actions[r.action] ?? r.action} · {r.target}</p>)}{!audit.length && <p className="muted">尚无管理操作。创建账号或班级后会在此留下记录。</p>}</section>
     </>}
     {tab === "accounts" && <>

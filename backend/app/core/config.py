@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     judge_token: str = ""
     judge_timeout_s: float = 30.0
     judge_worker_enabled: bool = True
+    judge_worker_heartbeat_seconds: float = Field(default=5, ge=1, le=30)
+    maintenance_worker_enabled: bool = True
+    backup_verify_database_url: str = ""
+    backup_directory: str = ""
     judge_worker_poll_seconds: float = Field(default=0.5, ge=0.1, le=60)
     judge_job_lease_seconds: int = Field(default=30, ge=5, le=300)
     judge_job_timeout_seconds: float = Field(default=120.0, ge=1, le=3600)

@@ -15,7 +15,6 @@ from app.agents.tutor import (
     is_confused,
     safe_output,
 )
-from app.core.config import settings
 from app.domain.judging import outputs_equal
 from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
 from app.gateway.llm import LLMClient
@@ -23,6 +22,7 @@ from app.services.access import accessible_hint_session, accessible_submission
 from app.services.evidence_text import has_escaped_input
 from app.services.judgement import effective_verdict
 from app.services.problem_versions import resolve_problem
+from app.services.runtime_ai import observe_call, runtime_client
 
 
 class TutorService:
@@ -78,7 +78,10 @@ class TutorService:
 
         view = await self._diagnosis_view(diag, submission_id)
         decision = decide(SessionView(level=0, has_student_input=False), "", view)
-        content = await compose(decision, view, "", LLMClient() if settings.llm_enabled else None)
+        client = await runtime_client(self.session, factory=LLMClient)
+        content = await compose(decision, view, "", client)
+        reason = (getattr(getattr(client, "last_call", None), "meta", {}) or {}).get("tutor_fallback_reason", "")
+        await observe_call(self.session, client, "tutor", used=bool(getattr(client, "last_call", None) and client.last_call.ok and not reason), reason=reason)
         turn = HintTurn(session_id=hs.id, role="tutor", level=decision.level,
                         content=content)
         self.session.add(turn)
@@ -153,8 +156,10 @@ class TutorService:
 
         # 规则定边界，模型写措辞；模型不可用则用模板
         if decision.action in ("hint", "explain") and decision.mode != "gate":
-            llm = LLMClient() if settings.llm_enabled else None
+            llm = await runtime_client(self.session, factory=LLMClient)
             content = await compose(decision, view, message, llm, history=dialogue)
+            reason = (getattr(getattr(llm, "last_call", None), "meta", {}) or {}).get("tutor_fallback_reason", "")
+            await observe_call(self.session, llm, "tutor", used=bool(getattr(llm, "last_call", None) and llm.last_call.ok and not reason), reason=reason)
         else:
             content = decision.content
 

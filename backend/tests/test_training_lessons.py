@@ -169,7 +169,7 @@ async def test_invalid_model_citations_or_model_failure_fall_back_without_publis
                 section["submission_ids"] = [True]
             return {"sections": [section], "questions": []}
     monkeypatch.setattr("app.services.training_lesson_service.LLMClient", Model)
-    monkeypatch.setattr("app.services.training_lesson_service.settings.llm_enabled", True)
+    monkeypatch.setattr("app.core.config.settings.llm_enabled", True)
     r = await generate(ctx, tid)
     assert r.status_code == 200 and r.json()["draft"]["source"] == "facts"
     assert r.json()["published"] is None
@@ -192,7 +192,7 @@ async def test_model_receives_code_problem_and_evidence_without_identity_fields(
             captured.append(prompt)
             return {"sections": [{"pid": ctx.problem.pid, "title": "累计更新", "explanation": f"提交 {sub.id} 的 `sum=x` 会覆盖旧值；证据 {evidence.id} 对应实际与预期差异，逐步说明旧值与新值。", "submission_ids": [sub.id], "evidence_ids": [evidence.id]}], "questions": ["如果旧值为 -5，新值为 -1，累加后是多少？"]}
     monkeypatch.setattr("app.services.training_lesson_service.LLMClient", Model)
-    monkeypatch.setattr("app.services.training_lesson_service.settings.llm_enabled", True)
+    monkeypatch.setattr("app.core.config.settings.llm_enabled", True)
     r = await generate(ctx, tid)
     assert r.status_code == 200, r.text
     assert r.json()["draft"]["source"] == "ai" and "sum=x" in r.json()["draft"]["content"]
@@ -213,7 +213,7 @@ async def test_model_generation_cannot_overwrite_new_training_results(api_contex
             await ctx.submission(training_id=tid, code_hash="newer")
             return {"sections": [{"pid": ctx.problem.pid, "title": "讲解", "explanation": "这是针对原来提交记录的具体语句讲解。", "submission_ids": [sub.id], "evidence_ids": []}], "questions": []}
     monkeypatch.setattr("app.services.training_lesson_service.LLMClient", Model)
-    monkeypatch.setattr("app.services.training_lesson_service.settings.llm_enabled", True)
+    monkeypatch.setattr("app.core.config.settings.llm_enabled", True)
     assert (await generate(ctx, tid, revision=1)).status_code == 409
     assert (await lesson(ctx, tid))["draft"]["revision"] == 1
 

@@ -20,6 +20,7 @@ from app.services.access import accessible_submission
 from app.services.job_service import JobService, job_out
 from app.services.judgement import effective_verdict, result_narrative, valid_test_summary
 from app.services.problem_versions import resolve_problem
+from app.services.runtime_ai import observe_call, runtime_client
 from app.services.submission_service import SubmissionService
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -249,11 +250,13 @@ async def diagnose_submission(
     ).scalars().all()
     evidence = [{"id": e.id, "type": e.type, "payload": e.payload} for e in rows]
 
+    client = await runtime_client(session)
     out = await run_diagnosis(
         submission_id=sub.id, code=sub.code, verdict=effective_verdict(sub), evidence=evidence,
-        language=sub.lang,
+        language=sub.lang, llm=client,
     )
     draft = out["draft"]
+    await observe_call(session, client, "diagnosis", used="llm_hypothesis" in (draft.degraded or []))
 
     diag = (
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id)
