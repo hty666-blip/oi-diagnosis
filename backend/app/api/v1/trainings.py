@@ -11,6 +11,8 @@ from app.api.deps import CurrentUser, TeacherUser
 from app.api.input_types import ObjectPathId
 from app.domain.models import Problem, Training, TrainingMember, TrainingProblem, User
 from app.infra.db import get_session
+from app.services.training_analysis import analyze_training
+from app.services.training_lesson_service import LessonExpected, LessonSave, TrainingLessonService
 from app.services.training_service import accessible_training, training_detail, training_out
 
 router = APIRouter(prefix="/trainings", tags=["trainings"])
@@ -121,3 +123,29 @@ async def publish_training(training_id: ObjectPathId, session: SessionDep, user:
         row.published_at = datetime.now(UTC)
         await session.commit()
     return await training_detail(session, user, row)
+
+
+@router.get("/{training_id}/analysis")
+async def training_analysis(training_id: ObjectPathId, session: SessionDep, user: TeacherUser):
+    row = await accessible_training(session, user, training_id)
+    return await analyze_training(session, user, row)
+
+
+@router.get("/{training_id}/lesson")
+async def get_lesson(training_id: ObjectPathId, session: SessionDep, user: CurrentUser):
+    return await TrainingLessonService(session, user).get(training_id)
+
+
+@router.post("/{training_id}/lesson/generate")
+async def generate_lesson(training_id: ObjectPathId, payload: LessonExpected, session: SessionDep, user: TeacherUser):
+    return await TrainingLessonService(session, user).generate(training_id, payload.expected_revision)
+
+
+@router.post("/{training_id}/lesson/draft")
+async def save_lesson(training_id: ObjectPathId, payload: LessonSave, session: SessionDep, user: TeacherUser):
+    return await TrainingLessonService(session, user).save(training_id, payload)
+
+
+@router.post("/{training_id}/lesson/publish")
+async def publish_lesson(training_id: ObjectPathId, payload: LessonExpected, session: SessionDep, user: TeacherUser):
+    return await TrainingLessonService(session, user).publish(training_id, payload.expected_revision)

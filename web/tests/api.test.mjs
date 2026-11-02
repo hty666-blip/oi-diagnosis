@@ -30,6 +30,18 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("讲评草稿保留正文换行、依据摘要和预期版本；生成与发布独立请求", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ published: null }); };
+  await api.trainingLesson(7);
+  await api.generateTrainingLesson(7, 2);
+  await api.saveTrainingLesson(7, 3, "讲评\n```cpp\nsum += x;\n```", "a".repeat(64));
+  await api.publishTrainingLesson(7, 4);
+  assert.deepEqual(calls.map((c) => c.url), ["/api/v1/trainings/7/lesson", "/api/v1/trainings/7/lesson/generate", "/api/v1/trainings/7/lesson/draft", "/api/v1/trainings/7/lesson/publish"]);
+  assert.deepEqual(calls[2].body, { expected_revision: 3, content: "讲评\n```cpp\nsum += x;\n```", basis_digest: "a".repeat(64) });
+  assert.deepEqual(calls[3].body, { expected_revision: 4 });
+});
+
 test("训练提交显式携带任务编号，自由练习不带；发布与草稿是不同操作", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ id: 1 }); };

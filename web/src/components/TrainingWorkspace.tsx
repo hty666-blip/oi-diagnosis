@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, messageOf, type AuthUser, type Problem, type Training, type TrainingDetail, type TrainingInput } from "../api";
 import { ErrorNotice, VerdictBadge } from "./RecordUI";
 import ReviewPanel from "./ReviewPanel";
+import TrainingLessonPanel from "./TrainingLessonPanel";
 
 export type TrainingPractice = { id: number; pid: string; title: string; submissionId?: number };
 const dateLabel = (value: string) => new Date(value).toLocaleString("zh-CN");
@@ -115,6 +116,7 @@ export default function TrainingWorkspace({ user, onPractice }: { user: AuthUser
               </>}</td>)}</tr>)}</tbody></table></div>
             {!detail.rows.length && <p className="empty">当前班级没有仍具访问权限的发布名单成员。</p>}
             <p className="scope-note">每名学生每题只看本次训练的最新提交；自由练习和其他训练不计入。执行故障不算代码错误。数据更新于 {dateLabel(detail.observed_at)}。</p></>}
+          {detail.status === "published" && <TrainingLessonPanel key={detail.id} trainingId={detail.id} teacher={teacher} refreshToken={detail.observed_at} onEvidence={setSelectedCode} />}
         </>}
       </section>
     </div>

@@ -295,6 +295,19 @@ textarea.code:focus { outline: none; border-color: var(--accent); box-shadow: 0 
 .training-matrix th, .training-matrix td { min-width: 125px; vertical-align: top; }
 .training-matrix small { display: block; margin-block: 6px; color: var(--muted); font-weight: normal; }
 .training-matrix .ghost { margin-top: 6px; font-size: 12px; }
+.training-lessons { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.training-lessons small { display: block; color: var(--muted); margin-top: 6px; }
+.training-lessons h4 { margin: 24px 0 12px; }
+.lesson-count { display: inline-block; margin: 0 14px 6px 0; }
+.lesson-issue { display: grid; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--line-soft); }
+.lesson-examples, .lesson-preview, .lesson-history { margin-block: 20px; }
+.training-lessons summary { cursor: pointer; padding-block: 8px; }
+.lesson-editor { width: 100%; min-height: 240px; resize: vertical; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-soft); color: var(--text); font-size: 15px; line-height: 1.7; }
+.lesson-editor:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lesson-actions { flex-wrap: wrap; }
+.lesson-preview .md, .lesson-history .md, .lesson-published .md { max-width: 75ch; overflow-wrap: anywhere; }
+.training-lessons pre { max-width: 100%; overflow-x: auto; }
+.lesson-published { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
 @media (max-width: 800px) {
   .training-layout, .training-fields { grid-template-columns: 1fr; }
   .training-list { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 16px; }

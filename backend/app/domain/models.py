@@ -300,3 +300,27 @@ class TrainingMember(Base):
     __tablename__ = "training_member"
     training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class TrainingLessonRevision(Base):
+    """每次保存追加版本，生成草稿不会覆盖教师原文。"""
+    __tablename__ = "training_lesson_revision"
+    __table_args__ = (UniqueConstraint("training_id", "revision", name="uq_training_lesson_revision"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16))
+    basis_digest: Mapped[str] = mapped_column(String(64))
+    basis: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    created_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingLessonPublication(Base):
+    __tablename__ = "training_lesson_publication"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    lesson_revision_id: Mapped[int] = mapped_column(ForeignKey("training_lesson_revision.id"), unique=True)
+    published_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())

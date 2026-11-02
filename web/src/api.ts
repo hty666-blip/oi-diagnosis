@@ -405,12 +405,36 @@ export interface TrainingDetail extends Training {
   observed_at: string;
 }
 
+export interface TrainingAnalysis {
+  summary: TrainingDetail["summary"];
+  basis_digest: string; observed_at: string;
+  problems: { pid: string; title: string; required: boolean; students: number;
+    counts: Record<string, number>; repaired: number; unclassified: number }[];
+  issues: { pid: string; code: string; label: string; source: "teacher" | "automatic";
+    students: number; submission_ids: number[] }[];
+  examples: { submission_id: number; pid: string; language: string; verdict: string | null;
+    code: string; code_truncated: boolean; narrative: string;
+    evidence: { id: number; type: string; excerpt: string }[] }[];
+}
+export interface TrainingLesson {
+  published: { revision: number; content: string; published_at: string } | null;
+  draft?: { revision: number; content: string; source: "ai" | "facts" | "manual";
+    basis_digest: string; created_at: string; stale: boolean } | null;
+  history?: NonNullable<TrainingLesson["draft"]>[];
+  analysis?: TrainingAnalysis;
+}
+
 export const api = {
   trainings: () => get<Training[]>("/trainings"),
   training: (id: number) => get<TrainingDetail>("/trainings/" + id),
   trainingRoster: () => get<{ id: number; name: string; class_name: string }[]>("/trainings/roster"),
   saveTraining: (body: TrainingInput, id?: number) => post<TrainingDetail>(id ? `/trainings/${id}/draft` : "/trainings", body),
   publishTraining: (id: number) => post<TrainingDetail>(`/trainings/${id}/publish`),
+  trainingLesson: (id: number) => get<TrainingLesson>(`/trainings/${id}/lesson`),
+  generateTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/generate`, { expected_revision: revision }),
+  saveTrainingLesson: (id: number, revision: number, content: string, digest: string) =>
+    post<TrainingLesson>(`/trainings/${id}/lesson/draft`, { expected_revision: revision, content, basis_digest: digest }),
+  publishTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/publish`, { expected_revision: revision }),
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
