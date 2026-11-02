@@ -20,6 +20,7 @@ from app.domain.models import (
     User,
 )
 from app.services.class_access import same_class, student_class_scope
+from app.services.problem_versions import resolve_many
 from app.services.training_service import accessible_training, submission_cell, training_out
 
 
@@ -79,6 +80,8 @@ async def student_tasks(session: AsyncSession, user: User, student: User, *, onl
     problem_rows = (await session.execute(select(TrainingProblem, Problem).join(Problem, Problem.id == TrainingProblem.problem_id)
         .where(TrainingProblem.training_id.in_(ids)).order_by(TrainingProblem.position))).all() if ids else []
     pid_by_id = {p.id: p.pid for _, p in problem_rows}
+    frozen = await resolve_many(session, [(p, tp.problem_version_id) for tp, p in problem_rows])
+    problem_rows = [(tp, p) for (tp, _), p in zip(problem_rows, frozen, strict=True)]
     records = (await session.execute(select(Submission, JudgeJob).outerjoin(JudgeJob, JudgeJob.submission_id == Submission.id)
         .where(Submission.training_id.in_(ids), Submission.student_id == student.id).order_by(Submission.id))).all() if ids else []
     cells = {}

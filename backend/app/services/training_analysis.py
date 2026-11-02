@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission, Training, User
 from app.services.judgement import effective_verdict
+from app.services.problem_versions import resolve_many
 from app.services.training_service import training_detail
 
 MECHANISMS = {
@@ -40,6 +41,8 @@ async def analyze_training(session: AsyncSession, user: User, training: Training
     by_id = {sub.id: (sub, diag) for sub, diag in latest}
     problem_sources = {p.id: p for p in (await session.scalars(select(Problem).where(
         Problem.id.in_({sub.problem_id for sub, _ in latest})))).all()} if latest else {}
+    frozen = await resolve_many(session, [(problem_sources[sub.problem_id], sub.problem_version_id) for sub, _ in latest])
+    sources_by_submission = {sub.id: p for (sub, _), p in zip(latest, frozen, strict=True)}
     members = [row["student_id"] for row in detail["rows"]]
     # 用于描述本训练中的“先前未通过、最新正式通过”，不推断独立完成或掌握度。
     history = (await session.execute(
@@ -108,7 +111,7 @@ async def analyze_training(session: AsyncSession, user: User, training: Training
             continue
         records = evidence_by_sub.get(sub.id, [])[:6]
         examples.append({"submission_id": sub.id, "pid": problem["pid"], "language": sub.lang,
-            "problem_context": problem_sources[sub.problem_id].statement_md[:1400],
+            "problem_context": sources_by_submission[sub.id].statement_md[:1400],
             "verdict": effective_verdict(sub), "code": sub.code[:1600], "code_truncated": len(sub.code) > 1600,
             "narrative": (diag.narrative if diag else "")[:500],
             "evidence": [{"id": e.id, "type": e.type, "excerpt": json.dumps(e.payload, ensure_ascii=False)[:900]} for e in records]})

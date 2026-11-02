@@ -30,6 +30,27 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("题库预览确认只发送预览编号，提交携带当前题面版本并区分历史读取上下文", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ preview_id: "stored-preview" }); };
+  const preview = await api.catalogPreview([{ pid: "SYNTHETIC" }], true);
+  await api.catalogConfirm(preview.preview_id);
+  assert.deepEqual(calls[1].body, { preview_id: "stored-preview" });
+  await api.getProblem("SYNTHETIC", 7);
+  await api.getProblem("SYNTHETIC", undefined, 42);
+  assert.equal(calls[2].url, "/api/v1/problems/SYNTHETIC?training_id=7");
+  assert.equal(calls[3].url, "/api/v1/problems/SYNTHETIC?submission_id=42");
+  await api.submitAsync("SYNTHETIC", "changed code", "cpp17", 42, undefined, 7, 9);
+  assert.equal(calls[4].body.problem_version_id, 9);
+  assert.equal(calls[4].body.parent_submission_id, 42);
+  assert.equal(calls[4].body.training_id, 7);
+});
+
+test("题包错误指明题目和测试行，避免只显示无法定位的字段错误", async () => {
+  globalThis.fetch = async () => json({ detail: [{ loc: ["body", "problems", 1, "cases", 2, "output"], msg: "Field required" }] }, 422);
+  await assert.rejects(api.catalogPreview([], true), (e) => e.message.includes("题目 / 2 / 正式测试 / 3 / 预期输出"));
+});
+
 test("转班预览与确认分开，账号和班级变更携带服务器预期版本", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, method: options.method, body: JSON.parse(options.body), auth: options.headers.Authorization }); return json({}); };

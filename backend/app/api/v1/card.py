@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
 from app.api.input_types import ObjectPathId
-from app.domain.models import Diagnosis, Problem
+from app.domain.models import Diagnosis
 from app.infra.db import get_session
 from app.services.access import accessible_submission
 from app.services.judgement import effective_verdict, result_narrative
+from app.services.problem_versions import resolve_problem
 from app.services.wrong_card import CardInput, render_card
 
 router = APIRouter(prefix="/submissions", tags=["card"])
@@ -24,7 +25,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 @router.get("/{submission_id}/card", response_class=PlainTextResponse)
 async def get_card(submission_id: ObjectPathId, session: SessionDep, user: CurrentUser) -> str:
     sub = await accessible_submission(session, user, submission_id)
-    problem = await session.get(Problem, sub.problem_id)
+    problem = await resolve_problem(session, sub.problem_id, sub.problem_version_id)
     diag = (
         await session.execute(
             select(Diagnosis).where(Diagnosis.submission_id == submission_id)

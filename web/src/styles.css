@@ -540,6 +540,16 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .admin-status dd { margin: 0; }
 .admin-file { display: block; margin-block: 16px; }
 .admin-file input { display: block; max-width: 100%; margin-top: 8px; }
+.problem-catalog { min-width: 0; }
+.problem-catalog > .card-head { align-items: flex-start; }
+.problem-catalog > .card-head p { margin-bottom: 0; }
+.problem-catalog .card h3 { margin-top: 24px; }
+.problem-catalog summary { cursor: pointer; line-height: 1.8; }
+.problem-catalog fieldset { border: 1px solid var(--line); margin-block: 16px; padding: 14px; }
+.catalog-check, .catalog-rights { display: flex; align-items: flex-start; gap: 10px; margin-block: 16px; line-height: 1.7; }
+.catalog-check input, .catalog-rights input { flex-shrink: 0; margin-top: 5px; }
+.catalog-preview-row { border-bottom: 1px solid var(--line); padding-block: 8px 16px; overflow-wrap: anywhere; }
+.problem-catalog .admin-form { max-width: 100%; }
 .admin-audit { padding-block: 16px; border-bottom: 1px solid var(--line); }
 .admin-audit summary { cursor: pointer; line-height: 1.8; overflow-wrap: anywhere; }
 .admin-audit-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }

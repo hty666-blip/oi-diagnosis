@@ -115,19 +115,19 @@ async def test_async_acceptance_is_durable_and_duplicate_reuses_one_job(jobs_con
 async def test_concurrent_identical_requests_share_one_transactional_job(jobs_context, monkeypatch):
     import app.services.submission_service as submission_module
 
-    original = submission_module.acquire_submission_lock
+    original = submission_module.management_lock
     both_entered = asyncio.Event()
     entered = 0
 
-    async def start_together(session, key):
+    async def start_together(session):
         nonlocal entered
         entered += 1
         if entered == 2:
             both_entered.set()
         await asyncio.wait_for(both_entered.wait(), timeout=5)
-        await original(session, key)
+        await original(session)
 
-    monkeypatch.setattr(submission_module, "acquire_submission_lock", start_together)
+    monkeypatch.setattr(submission_module, "management_lock", start_together)
     first, second = await asyncio.gather(enqueue(jobs_context), enqueue(jobs_context))
     assert first["id"] == second["id"] and first["job"]["id"] == second["job"]["id"]
     async with jobs_context.sessions() as session:

@@ -18,31 +18,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from sqlalchemy import select  # noqa: E402
-
-from app.domain.models import Problem  # noqa: E402
 from app.infra.db import SessionLocal, dispose_engine  # noqa: E402
+from app.services.admin_service import management_lock  # noqa: E402
+from app.services.problem_catalog import install_version, legacy_record  # noqa: E402
+from app.services.problem_versions import FIELDS  # noqa: E402
 
 
 async def upsert(path: Path) -> tuple[str, bool]:
     rec = json.loads(path.read_text(encoding="utf-8"))
     pid = rec["pid"]
     async with SessionLocal() as s:
-        existing = (await s.execute(select(Problem).where(Problem.pid == pid))).scalar_one_or_none()
-        created = existing is None
-        obj = existing or Problem(pid=pid)
-        obj.title = rec.get("title", "")
-        obj.statement_md = rec.get("markdown", "")
-        obj.samples = rec.get("samples") or []
-        obj.difficulty = rec.get("difficulty", "")
-        obj.tags = rec.get("tags") or []
-        obj.package_level = rec.get("package_level", "C")
-        obj.has_testdata = bool(rec.get("has_testdata", False))
-        obj.source = rec.get("source", "")
-        obj.source_url = rec.get("source_url", "")
-        obj.license_note = rec.get("license_note", "")
-        if created:
-            s.add(obj)
+        await management_lock(s)
+        data = {key: rec.get(key, "") for key in FIELDS}
+        data.update(statement_md=rec.get("markdown", rec.get("statement_md", "")),
+                    samples=rec.get("samples") or [], tags=rec.get("tags") or [],
+                    knowledge_points=rec.get("knowledge_points") or [],
+                    package_level=rec.get("package_level", "C"), has_testdata=bool(rec.get("has_testdata", False)))
+        _, version, _ = await install_version(s, legacy_record(data))
+        created = version.revision == 1
         await s.commit()
     return pid, created
 
@@ -58,7 +51,7 @@ async def main_async(directory: Path) -> int:
             pid, is_new = await upsert(f)
             created += int(is_new)
             updated += int(not is_new)
-            print(f"[{'new' if is_new else 'upd'}] {pid}")
+            print(f"[{'new' if is_new else 'upd'}] {pid}（新版本需在管理员端核对上架）")
         except Exception as e:  # noqa: BLE001
             failed += 1
             print(f"[fail] {f.name}: {type(e).__name__}: {e}")

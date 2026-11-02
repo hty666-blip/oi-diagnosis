@@ -17,11 +17,12 @@ from app.agents.tutor import (
 )
 from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Problem, Submission, User
+from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
 from app.services.evidence_text import has_escaped_input
 from app.services.judgement import effective_verdict
+from app.services.problem_versions import resolve_problem
 
 
 class TutorService:
@@ -195,6 +196,8 @@ class TutorService:
             raise HTTPException(status_code=409, detail="核验提交必须属于同一学生和同一道题")
         if candidate.training_id != original.training_id:
             raise HTTPException(status_code=409, detail="核验提交必须属于同一次训练或自由练习")
+        if candidate.problem_version_id != original.problem_version_id:
+            raise HTTPException(409, "核验提交使用了不同题目版本，请从原提交继续修改后重新提交")
         same_source = (
             candidate.code_hash == original.code_hash and candidate.lang == original.lang
         )
@@ -278,7 +281,7 @@ class TutorService:
         if submission is not None:
             view.source_code = submission.code
             view.verdict = effective_verdict(submission)
-            problem = await self.session.get(Problem, submission.problem_id)
+            problem = await resolve_problem(self.session, submission.problem_id, submission.problem_version_id)
             if problem is not None:
                 view.problem_context = f"{problem.pid} {problem.title}\n{problem.statement_md}"
         rows = (

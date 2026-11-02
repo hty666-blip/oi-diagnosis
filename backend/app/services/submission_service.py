@@ -27,13 +27,23 @@ from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.domain.models import (
+    Diagnosis,
+    Evidence,
+    JudgeJob,
+    Problem,
+    ProblemVersion,
+    Submission,
+    TrainingProblem,
+)
 from app.infra.db_lock import acquire_submission_lock
+from app.services.admin_service import management_lock
 from app.services.evidence_text import has_escaped_input, prepare_evidence_payload
 from app.services.job_service import JobLease, require_lease
+from app.services.problem_versions import capture_current, resolve_problem, snapshot
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v7"
+PIPELINE_VER = "v8"
 logger = logging.getLogger(__name__)
 
 
@@ -115,17 +125,22 @@ class SubmissionService:
 
     async def create(self, problem_pid: str, code: str, student_id: int = 0,
                      parent_submission_id: int | None = None, *, language: str = "cpp17",
-                     background: bool = False, training_id: int | None = None) -> Submission:
+                     background: bool = False, training_id: int | None = None,
+                     expected_problem_version_id: int | None = None) -> Submission:
         language_spec(language)
         self.was_created = False
+        await management_lock(self.session)
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
         ).scalar_one_or_none()
         if problem is None:
             raise ValueError(f"题目不存在: {problem_pid}")
+        version = None
         if training_id is not None:
             from app.services.training_service import validate_training_submission
             await validate_training_submission(self.session, student_id, training_id, problem.id)
+            item = await self.session.get(TrainingProblem, (training_id, problem.id))
+            version = await self.session.get(ProblemVersion, item.problem_version_id) if item.problem_version_id else None
         if parent_submission_id is not None:
             parent = await self.session.get(Submission, parent_submission_id)
             if parent is None or parent.student_id != student_id:
@@ -134,6 +149,18 @@ class SubmissionService:
                 raise ValueError("上次提交必须属于同一道题")
             if parent.training_id != training_id:
                 raise ValueError("上次提交必须属于同一次训练或自由练习")
+            if training_id is None and parent.problem_version_id:
+                version = await self.session.get(ProblemVersion, parent.problem_version_id)
+
+        if version is None:
+            if not problem.is_active and training_id is None and parent_submission_id is None:
+                from fastapi import HTTPException
+                raise HTTPException(409, "题目已下架，请选择其他题目；原训练和历史修改仍可继续")
+            version = await capture_current(self.session, problem)
+        if expected_problem_version_id is not None and expected_problem_version_id != version.id:
+            from fastapi import HTTPException
+            raise HTTPException(409, "题目版本已变化，请重新加载题面后提交；当前代码已保留")
+        problem = snapshot(problem, version, with_suite=True)
 
         normalized = normalize_code(code)
         if not normalized.strip():
@@ -150,6 +177,7 @@ class SubmissionService:
 
         cached = select(Submission).where(
             Submission.problem_id == problem.id,
+            Submission.problem_version_id == version.id,
             Submission.code_hash == digest,
             Submission.lang == language,
             Submission.student_id == student_id,
@@ -172,6 +200,7 @@ class SubmissionService:
 
         sub = Submission(
             problem_id=problem.id,
+            problem_version_id=version.id,
             student_id=student_id,
             code=normalized,
             code_hash=digest,
@@ -255,9 +284,7 @@ class SubmissionService:
         configure_language = getattr(self.sandbox, "set_language", None)
         if configure_language:
             configure_language(submission.lang)
-        problem = (
-            await self.session.execute(select(Problem).where(Problem.id == submission.problem_id))
-        ).scalar_one()
+        problem = await resolve_problem(self.session, submission.problem_id, submission.problem_version_id, with_suite=True)
         suite = load_suite(problem)
         submission.pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
 

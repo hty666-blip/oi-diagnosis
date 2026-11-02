@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.api.errors import request_validation_error_handler
 from app.api.v1 import (
     admin,
+    admin_problems,
     auth,
     card,
     catalog,
@@ -22,6 +24,7 @@ from app.api.v1 import (
     trainings,
     tutor,
 )
+from app.capabilities.sandbox import SandboxError
 from app.core.config import settings
 from app.core.security import validate_security_settings
 from app.infra.db import dispose_engine, ping
@@ -57,10 +60,16 @@ app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(admin_problems.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")
 app.include_router(students.router, prefix="/api/v1")
+
+
+@app.exception_handler(SandboxError)
+async def unavailable_problem(request: Request, exc: SandboxError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": "题目版本暂不可用，请联系管理员核对题面与测试快照"})
 
 
 @app.get("/health", tags=["ops"])

@@ -49,6 +49,9 @@ class Problem(Base):
     # A/B/C/D：决定这道题能支撑到哪一级诊断（架构 §9.6）
     package_level: Mapped[str] = mapped_column(String(2), default="C")
     has_testdata: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    catalog_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     source: Mapped[str] = mapped_column(String(32), default="")
     source_url: Mapped[str] = mapped_column(String(500), default="")
@@ -59,11 +62,35 @@ class Problem(Base):
     submissions: Mapped[list[Submission]] = relationship(back_populates="problem")
 
 
+class ProblemVersion(Base):
+    __tablename__ = "problem_version"
+    __table_args__ = (UniqueConstraint("problem_id", "revision", name="uq_problem_revision"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    data: Mapped[dict] = mapped_column(JSON)
+    suite: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(100), default="")
+    digest: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class ProblemImportDraft(Base):
+    __tablename__ = "problem_import_draft"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    records: Mapped[list] = mapped_column(JSON)
+    result: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
 class Submission(Base):
     __tablename__ = "submission"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id", ondelete="CASCADE"), index=True)
+    problem_version_id: Mapped[int | None] = mapped_column(ForeignKey("problem_version.id"), nullable=True, index=True)
     student_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)  # user 表后续补
     training_id: Mapped[int | None] = mapped_column(ForeignKey("training.id"), nullable=True, index=True)
     parent_submission_id: Mapped[int | None] = mapped_column(
@@ -325,6 +352,7 @@ class TrainingProblem(Base):
     __tablename__ = "training_problem"
     training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
     problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id"), primary_key=True)
+    problem_version_id: Mapped[int | None] = mapped_column(ForeignKey("problem_version.id"), nullable=True)
     position: Mapped[int] = mapped_column(Integer)
     required: Mapped[bool] = mapped_column(Boolean, default=True)
 

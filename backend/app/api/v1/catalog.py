@@ -11,10 +11,12 @@ from sqlalchemy.orm import aliased
 
 from app.api.deps import CurrentUser, TeacherUser
 from app.core.text_validation import StorageText
-from app.domain.models import Diagnosis, Problem, Submission, User
+from app.domain.models import Diagnosis, Problem, ProblemVersion, Submission, TrainingProblem, User
 from app.infra.db import get_session
-from app.services.access import submission_scope
+from app.services.access import accessible_submission, submission_scope
 from app.services.judgement import effective_verdict, result_narrative, valid_test_summary
+from app.services.problem_versions import resolve_many, resolve_problem
+from app.services.training_service import accessible_training
 
 router = APIRouter(tags=["catalog"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -27,7 +29,7 @@ async def list_problems(
     q: Annotated[StorageText, Query(max_length=120, description="按题号/标题模糊搜索")] = "",
     limit: int = Query(50, ge=1, le=200),
 ) -> list[dict]:
-    stmt = select(Problem)
+    stmt = select(Problem).where(Problem.is_active.is_(True))
     if q:
         stmt = stmt.where(or_(
             Problem.pid.icontains(q, autoescape=True),
@@ -43,6 +45,7 @@ async def list_problems(
             "samples": len(r.samples or []),
             "package_level": r.package_level,
             "source": r.source,
+            "revision": r.revision,
         }
         for r in rows
     ]
@@ -69,7 +72,8 @@ async def coach_queue(
         )
     ).all()
     out = []
-    for diag, sub, problem, student in rows:
+    frozen = await resolve_many(session, [(p, sub.problem_version_id) for _, sub, p, _ in rows])
+    for (diag, sub, _, student), problem in zip(rows, frozen, strict=True):
         out.append({
             "diagnosis_id": diag.id,
             "submission_id": sub.id,
@@ -106,7 +110,8 @@ async def my_submissions(
         )
     ).all()
     out = []
-    for sub, diag, problem in rows:
+    frozen = await resolve_many(session, [(p, sub.problem_version_id) for sub, _, p in rows])
+    for (sub, diag, _), problem in zip(rows, frozen, strict=True):
         out.append({
             "id": sub.id,
             "problem_id": sub.problem_id,
@@ -162,6 +167,8 @@ async def get_problem(
     pid: Annotated[StorageText, Path(min_length=1, max_length=32)],
     session: SessionDep,
     user: CurrentUser,
+    training_id: int | None = Query(None, gt=0, le=2**63 - 1),
+    submission_id: int | None = Query(None, gt=0, le=2**63 - 1),
 ) -> dict:
     """题目详情：题面 Markdown + 样例 + 来源。"""
     row = (
@@ -169,6 +176,25 @@ async def get_problem(
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="题目不存在")
+    vid = None
+    if training_id is not None and submission_id is not None:
+        raise HTTPException(422, "请选择训练或历史提交中的一种题目上下文")
+    if training_id is not None:
+        await accessible_training(session, user, training_id)
+        item = await session.get(TrainingProblem, (training_id, row.id))
+        if item is None:
+            raise HTTPException(404, "题目不属于当前训练")
+        vid = item.problem_version_id
+    elif submission_id is not None:
+        sub = await accessible_submission(session, user, submission_id)
+        if sub.problem_id != row.id:
+            raise HTTPException(404, "题目不属于当前提交")
+        vid = sub.problem_version_id
+    elif not row.is_active:
+        raise HTTPException(404, "题目不存在或已下架")
+    row = await resolve_problem(session, row.id, vid)
+    version_id = getattr(row, "version_id", None)
+    version = await session.get(ProblemVersion, version_id) if version_id else None
     return {
         "pid": row.pid,
         "title": row.title,
@@ -179,5 +205,9 @@ async def get_problem(
         "source": row.source,
         "source_url": row.source_url,
         "package_level": row.package_level,
-        "time_limit_ms": 1000,
+        "license_note": row.license_note,
+        "revision": row.revision,
+        "version_id": version_id,
+        "time_limit_ms": version.suite["time_limit_ms"] if version and version.suite else None,
+        "memory_limit_mb": version.suite["memory_limit_mb"] if version and version.suite else None,
     }

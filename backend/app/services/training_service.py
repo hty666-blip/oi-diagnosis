@@ -17,6 +17,7 @@ from app.domain.models import (
 from app.services.class_access import same_class
 from app.services.job_service import job_out
 from app.services.judgement import effective_verdict, valid_test_summary
+from app.services.problem_versions import resolve_many
 
 
 def training_out(row: Training, *, include_audience=False) -> dict:
@@ -73,6 +74,8 @@ async def training_detail(session: AsyncSession, user: User, row: Training) -> d
         select(TrainingProblem, Problem).join(Problem, Problem.id == TrainingProblem.problem_id)
         .where(TrainingProblem.training_id == row.id).order_by(TrainingProblem.position)
     )).all()
+    frozen = await resolve_many(session, [(p, item.problem_version_id) for item, p in problems])
+    problems = [(item, p) for (item, _), p in zip(problems, frozen, strict=True)]
     members = (await session.scalars(
         select(User).join(TrainingMember, TrainingMember.student_id == User.id)
         .where(TrainingMember.training_id == row.id, User.role == "student",
@@ -100,7 +103,8 @@ async def training_detail(session: AsyncSession, user: User, row: Training) -> d
             for member in members]
     return {**training_out(row, include_audience=user.role != "student"), "problems": [
         {"pid": problem.pid, "title": problem.title, "required": item.required,
-         "package_level": problem.package_level} for item, problem in problems
+         "package_level": problem.package_level, "version_id": item.problem_version_id,
+         "revision": getattr(problem, "revision", 0)} for item, problem in problems
     ], "rows": rows, "summary": {
         "students": len(rows), "participated": sum(any(r["cells"]) for r in rows),
         "completed": sum(r["complete"] for r in rows),

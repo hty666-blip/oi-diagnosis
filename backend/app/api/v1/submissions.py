@@ -19,6 +19,7 @@ from app.orchestrator.graph import run_diagnosis
 from app.services.access import accessible_submission
 from app.services.job_service import JobService, job_out
 from app.services.judgement import effective_verdict, result_narrative, valid_test_summary
+from app.services.problem_versions import resolve_problem
 from app.services.submission_service import SubmissionService
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -33,6 +34,7 @@ class SubmissionCreate(BaseModel):
     student_id: ObjectId | None = None
     parent_submission_id: ObjectId | None = None
     training_id: ObjectId | None = None
+    problem_version_id: ObjectId | None = None
 
     @field_validator("code", "problem_pid", mode="before")
     @classmethod
@@ -56,6 +58,7 @@ class SubmissionCreate(BaseModel):
 class SubmissionOut(BaseModel):
     id: int
     training_id: int | None = None
+    problem_version_id: int | None = None
     code: str
     language: str
     problem_pid: str
@@ -78,6 +81,7 @@ def _to_out(
     return SubmissionOut(
         id=sub.id,
         training_id=sub.training_id,
+        problem_version_id=sub.problem_version_id,
         code=sub.code,
         language=sub.lang,
         problem_pid=problem.pid if problem else "",
@@ -126,6 +130,7 @@ async def create_submission(
             payload.problem_pid, payload.code, user.id, payload.parent_submission_id,
             language=payload.language, background=background,
             **({"training_id": payload.training_id} if payload.training_id is not None else {}),
+            **({"expected_problem_version_id": payload.problem_version_id} if payload.problem_version_id is not None else {}),
         )
     except SandboxError as e:
         logger.warning("提交尚未进入判题：%s", type(e).__name__)
@@ -138,7 +143,7 @@ async def create_submission(
             await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
         ).scalar_one_or_none()
         job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-        return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
+        return _to_out(sub, diag, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
     if background:
         job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
@@ -148,7 +153,7 @@ async def create_submission(
         response.status_code = 202
         response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
         response.headers["Retry-After"] = "1"
-        return _to_out(sub, None, await session.get(Problem, sub.problem_id), job, user)
+        return _to_out(sub, None, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
     if not svc.was_created:
         raise HTTPException(status_code=409, detail=f"提交 #{sub.id} 正在判题，请稍后查看结果",
@@ -164,7 +169,7 @@ async def create_submission(
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
     job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
+    return _to_out(sub, diag, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
 
 @router.post("/{submission_id}/retry", response_model=SubmissionOut, status_code=202)
@@ -175,7 +180,7 @@ async def retry_submission(
     sub = await accessible_submission(session, user, submission_id)
     response.headers["Location"] = f"/api/v1/submissions/{sub.id}"
     response.headers["Retry-After"] = "1"
-    return _to_out(sub, None, await session.get(Problem, sub.problem_id), job, user)
+    return _to_out(sub, None, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
 
 @router.post("/{submission_id}/cancel", response_model=SubmissionOut)
@@ -185,7 +190,7 @@ async def cancel_submission(
     job = await JobService(session).cancel(submission_id, user)
     sub = await accessible_submission(session, user, submission_id)
     diag = (await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
+    return _to_out(sub, diag, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
 
 @router.get("/{submission_id}", response_model=SubmissionOut)
@@ -199,7 +204,7 @@ async def get_submission(
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
     ).scalar_one_or_none()
     job = (await session.execute(select(JudgeJob).where(JudgeJob.submission_id == sub.id))).scalar_one_or_none()
-    return _to_out(sub, diag, await session.get(Problem, sub.problem_id), job, user)
+    return _to_out(sub, diag, await resolve_problem(session, sub.problem_id, sub.problem_version_id), job, user)
 
 
 @router.get("/{submission_id}/evidence")

@@ -18,6 +18,7 @@ from app.services.class_access import (
     student_class_scope,
     teacher_class_scope,
 )
+from app.services.problem_versions import capture_current
 from app.services.student_followup_service import (
     FeedbackCreate,
     create_feedback,
@@ -113,9 +114,20 @@ async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, 
     row.class_id = group.id if group else None
     for key in ("title", "class_name", "objective", "description", "due_at", "student_ids", "source_training_id"):
         setattr(row, key, getattr(payload, key))
+    previous = {p.problem_id: p.problem_version_id for p in (await session.scalars(select(TrainingProblem).where(
+        TrainingProblem.training_id == row.id))).all()} if row.id else {}
+    versions = {}
+    for p in problems.values():
+        if p.id in previous and previous[p.id] is not None:
+            versions[p.id] = previous[p.id]
+        else:
+            if not p.is_active:
+                raise HTTPException(409, "所选题目已下架，请重新选择")
+            versions[p.id] = (await capture_current(session, p)).id
     await session.flush()
     await session.execute(delete(TrainingProblem).where(TrainingProblem.training_id == row.id))
     session.add_all([TrainingProblem(training_id=row.id, problem_id=problems[p.pid].id,
+                                    problem_version_id=versions[problems[p.pid].id],
                                     position=i, required=p.required) for i, p in enumerate(payload.problems)])
     await session.commit()
     return await training_detail(session, user, row)
@@ -150,6 +162,13 @@ async def publish_training(training_id: ObjectPathId, session: SessionDep, user:
             raise HTTPException(409, "班级已归档，请恢复后发布训练")
         if row.due_at <= datetime.now(UTC):
             raise HTTPException(409, "草稿已过截止时间，请先修改截止时间")
+        questions = (await session.execute(select(TrainingProblem, Problem).join(Problem, Problem.id == TrainingProblem.problem_id)
+                     .where(TrainingProblem.training_id == row.id))).all()
+        for item, problem in questions:
+            current = await capture_current(session, problem)
+            if not problem.is_active or (item.problem_version_id and item.problem_version_id != current.id):
+                raise HTTPException(409, "草稿题目已下架或版本已更新，请核对后新建训练；原版本不会自动替换")
+            item.problem_version_id = current.id
         students = (await session.scalars(select(User).where(
             User.role == "student", User.enabled.is_(True),
             User.class_id == row.class_id if row.class_id is not None else

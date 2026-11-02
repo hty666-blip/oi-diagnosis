@@ -122,7 +122,11 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
         if (typeof body.detail.code === "string") code = body.detail.code;
       }
       else if (Array.isArray(body.detail)) {
-        detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
+        detail = body.detail.map((item: { msg?: string; loc?: (string | number)[] }) => {
+          const labels: Record<string, string> = { problems: "题目", rows: "数据行", samples: "样例", cases: "正式测试", input: "输入", output: "预期输出", license_note: "许可说明", reviewer: "审核人", statement_md: "题面", source: "来源", pid: "题号", title: "标题" };
+          const path = (item.loc ?? []).filter((v) => v !== "body").map((v) => typeof v === "number" ? String(v + 1) : labels[v] ?? v).join(" / ");
+          return (path ? path + "：" : "") + (item.msg ?? "请求字段无效");
+        }).filter(Boolean).join("；");
       }
     } catch { /* 不把服务器 HTML 或内部错误堆栈显示给学生。 */ }
     if (snapshot) assertSession(snapshot);
@@ -196,7 +200,11 @@ export interface ProblemDetail {
   source: string;
   source_url: string;
   package_level: string;
-  time_limit_ms: number;
+  time_limit_ms: number | null;
+  memory_limit_mb?: number | null;
+  license_note?: string;
+  revision?: number;
+  version_id?: number | null;
 }
 
 export interface NatureTag {
@@ -219,6 +227,7 @@ export interface TestSummary {
 export interface SubmissionResult {
   id: number;
   training_id?: number | null;
+  problem_version_id?: number | null;
   parent_submission_id?: number | null;
   stage: string;
   verdict: string | null;
@@ -445,6 +454,14 @@ export interface StudentProfile {
 }
 
 export const api = {
+  catalogProblems: (q = "", offset = 0, state = "all") => get<{ items: CatalogProblem[]; has_more: boolean }>(`/admin/problems?q=${encodeURIComponent(q)}&offset=${offset}&state=${state}`),
+  catalogLocalPackages: () => get<{ pid: string; title: string; valid: boolean; cases: number; package_level: string }[]>("/admin/problems/local-packages"),
+  catalogPreview: (problems: unknown[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/import/preview", { problems, rights_confirmed }),
+  catalogLocalPreview: (pids: string[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/local-packages/preview", { pids, rights_confirmed }),
+  catalogConfirm: (preview_id: string) => post<{ items: { id: number; pid: string; revision: number; changed: boolean; is_active: boolean }[]; replayed: boolean }>("/admin/problems/import/confirm", { preview_id }),
+  catalogState: (id: number, expected_version: number, is_active: boolean) => post<CatalogProblem>(`/admin/problems/${id}/state`, { expected_version, is_active }),
+  catalogHistory: (id: number) => get<{ items: CatalogVersion[]; truncated: boolean }>(`/admin/problems/${id}/versions`),
+  catalogVersion: (id: number, versionId: number) => get<{ problem: Record<string, unknown>; revision: number; snapshot_available: boolean }>(`/admin/problems/${id}/versions/${versionId}`),
   adminOverview: () => get<AdminOverview>("/admin/overview"),
   adminUsers: (q = "", offset = 0, groupId?: number) => get<{ items: AdminAccount[]; has_more: boolean }>(`/admin/users?q=${encodeURIComponent(q)}&offset=${offset}${groupId == null ? "" : `&group_id=${groupId}`}`),
   adminTeachers: () => get<{ id: number; name: string; enabled: boolean }[]>("/admin/teachers"),
@@ -489,15 +506,16 @@ export const api = {
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
-  getProblem: (pid: string) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid)),
+  getProblem: (pid: string, trainingId?: number, submissionId?: number) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid) + (trainingId ? `?training_id=${trainingId}` : submissionId ? `?submission_id=${submissionId}` : "")),
   submit: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null) =>
     post<SubmissionResult>("/submissions", {
       problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
     }),
-  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal, trainingId?: number) =>
+  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal, trainingId?: number, problemVersionId?: number | null) =>
     post<SubmissionResult>("/submissions", {
       problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
       ...(trainingId === undefined ? {} : { training_id: trainingId }),
+      ...(problemVersionId == null ? {} : { problem_version_id: problemVersionId }),
     }, { signal, headers: { Prefer: "respond-async" } }),
   retrySubmission: (id: number, signal?: AbortSignal) =>
     post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),
@@ -556,4 +574,20 @@ export interface AdminOverview {
   observed_at: string; database: string; accounts: Record<AuthUser["role"], number>; disabled: number;
   unassigned_students: number; classes_without_teacher: { id: number; name: string }[]; active_classes: number;
   llm_enabled: boolean; worker_status: "unknown"; judging: JudgingQueue;
+}
+
+export interface CatalogProblem {
+  id: number; pid: string; title: string; revision: number; catalog_version: number; is_active: boolean;
+  package_level: string; source: string; source_url: string; license_note: string;
+  samples: number; cases: number | null; scope: string | null; notes: string[];
+}
+export interface CatalogVersion {
+  id: number; revision: number; title: string; source: string; digest: string; reviewer: string;
+  created_by: number | null; created_at: string; cases: number | null;
+}
+export interface CatalogPreview {
+  preview_id: string; expires_at: string; notice: string;
+  rows: { pid: string; title: string; existing_revision: number | null; action: "create" | "new_version" | "unchanged";
+    package_level: string; scope: string; cases: number; samples: number; source: string; source_url: string;
+    license_note: string; reviewer: string; digest: string; notice: string }[];
 }

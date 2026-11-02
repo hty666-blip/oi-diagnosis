@@ -281,14 +281,25 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
     setCode(savedDraft(pid, nextLanguage));
   }
 
+  function startCurrentPractice() {
+    if (training || busy || !pid || !sub || submissionPhase(sub) === "pending" || !problems.some((p) => p.pid === pid)) return;
+    stopWatching(); workRequest.current++; evidenceRequest.current++;
+    removeLocal(lastSubmissionKey(storageId, pid)); removeLocal(activeHintKey(storageId, pid));
+    removeLocal(pendingKey(storageId, pid)); removeLocal(pendingHintKey(pid));
+    setSub(null); setDiag(null); setEvidence([]); setTutorSubmission(null); setLatestSubmitted(null);
+    setError(""); setDiagError(""); setEvidenceError(""); setEvidenceLoading(false);
+    setSavedCode(""); setDetail(null); setDetailRetry((value) => value + 1);
+  }
+
   async function loadProblems() {
     setLoadingProblems(true); setProblemError("");
     try {
       const rows = await api.problems();
       setProblems(rows);
-      if (!hasSelection.current && rows.length) {
+      if (!hasSelection.current && (rows.length || training)) {
+        if (training) { selectProblem(training.pid); return; }
         const stored = readLocal("oi-selected-problem:" + userId);
-        const first = rows.find((row) => row.pid === (training?.pid ?? stored)) ?? rows.find((row) => row.pid.startsWith("PTV-")) ?? rows[0];
+        const first = rows.find((row) => row.pid === stored) ?? rows.find((row) => row.pid.startsWith("PTV-")) ?? rows[0];
         selectProblem(first.pid);
       }
     } catch (e) { setProblemError(messageOf(e)); } finally { setLoadingProblems(false); }
@@ -300,11 +311,11 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
     if (!pid) return;
     let active = true;
     setLoadingDetail(true); setDetailError(""); setDetail(null);
-    api.getProblem(pid).then((value) => { if (active) setDetail(value); })
+    api.getProblem(pid, training?.id, sub?.problem_pid === pid && !training ? sub.id : undefined).then((value) => { if (active) setDetail(value); })
       .catch((e) => { if (active) setDetailError(messageOf(e)); })
       .finally(() => { if (active) setLoadingDetail(false); });
     return () => { active = false; };
-  }, [pid, detailRetry]);
+  }, [pid, detailRetry, training?.id, sub?.id, sub?.problem_pid]);
 
   async function loadEvidence(id: number) {
     const currentRequest = ++evidenceRequest.current;
@@ -414,7 +425,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
     const controller = new AbortController();
     submitController.current?.abort(); submitController.current = controller;
     try {
-      const value = await api.submitAsync(pid, submittedCode, submittedLanguage, parentId, controller.signal, training?.id ?? sub?.training_id ?? undefined);
+      const value = await api.submitAsync(pid, submittedCode, submittedLanguage, parentId, controller.signal, training?.id ?? sub?.training_id ?? undefined, detail.version_id);
       if (generation !== workRequest.current) return;
       setSub(value); setSavedCode(submittedCode); setSavedLanguage(submittedLanguage); setDiag(null);
       writeLocal(lastSubmissionKey(storageId, pid), String(value.id));
@@ -496,11 +507,13 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
       <div className="page-head"><div><h1>{training ? training.title : "练习与诊断"}</h1><p>先看执行证据，再检查代码；修改后重新提交验证。</p></div>
         <label className="problem-picker"><span className="dim">选择题目</span><select aria-label="选择题目" value={pid} disabled={!!busy || loadingProblems || !!training} onChange={(e) => selectProblem(e.target.value)}>
           {!pid && <option value="">{loadingProblems ? "正在加载题目…" : "暂无可用题目"}</option>}
-          {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + problem.title}</option>)}
+          {pid && !problems.some((p) => p.pid === pid) && <option value={pid}>{pid} · {training ? "训练固定版本" : "历史提交版本"}</option>}
+          {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + (problem.pid === pid && detail ? detail.title : problem.title)}</option>)}
         </select></label>
       </div>
+      {!training && sub && <p className="muted">当前继续提交 #{sub.id} 所用的题目版本。另开新练习会保留编辑器代码，与原答疑和提交关系分开。<button className="ghost" disabled={!!busy || phase === "pending" || !problems.some((p) => p.pid === pid)} onClick={startCurrentPractice}>使用当前上架版本开始新练习</button></p>}
       <ErrorNotice message={problemError} onRetry={() => void loadProblems()} />
-      {!loadingProblems && !problemError && !problems.length && <div className="card empty">题库还没有题目。请联系教师导入题面和测试数据后再练习。</div>}
+      {!loadingProblems && !problemError && !problems.length && !pid && <div className="card empty">题库暂无上架题目。原训练和历史记录仍可继续；请联系教师或管理员核对题目。</div>}
       <ErrorNotice message={error} />
       {busy === "restore" && <p role="status">正在恢复提交记录…</p>}
       {pid && <div className="oj">
@@ -509,6 +522,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
           <ErrorNotice message={detailError} onRetry={() => setDetailRetry((value) => value + 1)} />
           {detail && <>
             <div className="oj-title"><h2>{detail.pid + " " + detail.title}</h2><div className="row">
+              {!!detail.revision && <span className="badge">题目 v{detail.revision}{training ? " · 训练固定" : sub ? " · 历史提交" : ""}</span>}
               {detail.difficulty && <span className="badge">{detail.difficulty}</span>}
               {detail.tags.slice(0, 4).map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div></div>
@@ -561,7 +575,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
             <p className="scope-note">{sub.verdict === "CE" ? "编译未通过，尚未运行测试。请先检查下方编译器信息。"
               : sub.verdict === "SAMPLE_PASS" ? "当前仅通过题面样例，尚未验证其他输入。请继续检查边界情况；这里不会把样例通过记为完整解决。"
               : sub.verdict === "NO_TESTS" ? "编译已完成，但没有可运行的测试数据，无法判断程序结果是否正确。"
-              : sub.tests_passed?.scope === "package" ? "结果基于当前题包中的测试数据，不代表对所有可能输入的数学证明。"
+              : sub.tests_passed?.scope === "package" ? "结果基于本次固定版本的题包测试数据，不代表对所有可能输入的数学证明。"
               : sub.tests_passed?.scope === "samples" ? "本次仅使用题面样例测试，以下结论也仅限于这些执行记录。"
               : "这条记录尚未标注完整测试范围，重新提交后可查看实际验证范围。"}</p>
             {busy === "diagnose" && <p role="status" className="muted">执行结果已保留，正在分析已有证据…</p>}
