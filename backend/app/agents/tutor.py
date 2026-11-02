@@ -1,10 +1,7 @@
 """导师策略：**规则决定"给多少"，模型决定"怎么讲"**。
 
-分层职责（v3）：
-- `decide()` 是纯规则：判断该升/该停/该讲/该转人工，不生成长文本
-- `compose()`（见 agents/compose.py）负责把决定说成人话
-
-这样既不会"机械升到 L4 然后复读"，也不会让模型随意越过教学红线。
+`decide()` 根据已有输出和有限对话决定下一步，保留核验与防代做边界。
+`compose()` 使用本层允许的上下文组织讲解；聊天解释不等同于修改通过验证。
 """
 
 from __future__ import annotations
@@ -12,17 +9,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.domain.judging import outputs_equal
+
 MAX_LEVEL = 4
 LEVEL_NAMES = {0: "澄清", 1: "方向", 2: "定位", 3: "反例", 4: "修正"}
 
 ASK_FOR_ANSWER = re.compile(
-    r"(给我|帮我|替我|把).{0,10}(代码|程序|答案|写法|做法)"
+    r"(给我|发我).{0,10}(代码|程序|答案|写法|做法)"
     r"|(帮我|替我|给我).{0,6}(写|做|打|贴|发)"
-    r"|(代码|程序).{0,6}(贴|发|写|给)"
-    r"|(写|打|贴|发).{0,4}(给我|出来|一份)"
-    r"|完整.{0,4}(代码|程序)"
+    r"|把.{0,10}(代码|程序|main\s*函数).{0,12}(贴出来(?!了)|写给我|给我|发我)"
+    r"|(代码|程序).{0,6}(发我|给我|贴出来(?!了)|写出来(?!了))"
+    r"|(写|打|贴|发)(给我|一份)"
     r"|直接.{0,8}(答案|代码|结论|做法)"
     r"|答案给我|抄一下|怎么写啊"
+)
+OUTPUT_LABEL = re.compile(
+    r"(预期输出|期望输出|正确输出|实际输出|程序输出|我的输出)"
+    r"(?:[ \t]*[:：][ \t]*|[ \t]*\r?\n[ \t]*|[ \t]+(?=\S))"
 )
 # "不会/没懂"是最重要的信号：不能用它当升级按钮
 CONFUSED = re.compile(
@@ -59,6 +62,13 @@ ACK = {
 
 
 @dataclass
+class OutputComparison:
+    expected: str
+    actual: str
+    origin: str = "student"
+
+
+@dataclass
 class DiagnosisView:
     language: str = "cpp17"
     p: str = "P2"
@@ -71,6 +81,9 @@ class DiagnosisView:
     evidence_summary: str = ""
     counterexample_minimized: bool = False
     hypothesis: bool = False
+    comparison: OutputComparison | None = None
+    source_code: str = ""
+    problem_context: str = ""
 
 
 @dataclass
@@ -82,6 +95,7 @@ class SessionView:
     has_student_input: bool = False
     turn: int = 0
     stuck_count: int = 0     # 当前层级里学生连续说"不会/不懂"的次数
+    history: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -94,10 +108,59 @@ class TutorDecision:
     reason: str = ""
     dependency_signal: bool = False
     notes: list[str] = field(default_factory=list)
+    comparison: OutputComparison | None = None
 
 
 def wants_answer(text: str) -> bool:
     return bool(ASK_FOR_ANSWER.search(text or ""))
+
+
+def reported_comparison(message: str) -> OutputComparison | None:
+    """识别有标签的输出，不把学生自述当成机器核验结果。"""
+    text = re.sub(r"(?m)^```[^\n]*\n?|^```$", "", message)
+    labels = list(OUTPUT_LABEL.finditer(text))
+    values = {}
+    for index, label in enumerate(labels):
+        end = labels[index + 1].start() if index + 1 < len(labels) else len(text)
+        key = "actual" if label[1] in {"实际输出", "程序输出", "我的输出"} else "expected"
+        values[key] = text[label.end():end].strip()
+    if "expected" not in values or "actual" not in values:
+        return None
+    return OutputComparison(expected=values["expected"], actual=values["actual"])
+
+
+def _comparison_context(
+    session: SessionView, message: str, diag: DiagnosisView,
+) -> tuple[OutputComparison | None, int]:
+    current = reported_comparison(message)
+    previous = [(index, reported_comparison(content)) for index, (role, content)
+                in enumerate(session.history) if role == "student"]
+    latest = next((pair for _, pair in reversed(previous) if pair is not None), None)
+    comparison = current or latest or diag.comparison
+    if comparison is None:
+        return None, 0
+    # 新的一组输出重新讨论；重复粘贴和“我贴过了”沿用已有上下文继续走。
+    matching = [index for index, pair in previous if pair is not None
+                and pair.expected == comparison.expected and pair.actual == comparison.actual]
+    last_different = max((index for index, pair in previous if pair is not None
+                          and (pair.expected != comparison.expected or pair.actual != comparison.actual)),
+                         default=-1)
+    start = next((index for index in matching if index > last_different), None)
+    rounds = sum(role == "student" for role, _ in session.history[start:]) if start is not None else 0
+    return comparison, rounds
+
+
+def _comparison_reply(comparison: OutputComparison, rounds: int) -> str:
+    origin = "你给出的" if comparison.origin == "student" else "执行记录中的"
+    expected, actual = repr(comparison.expected[:120]), repr(comparison.actual[:120])
+    prefix = f"{origin}预期输出是 {expected}，实际输出是 {actual}，这两项已经记录，不用重复粘贴。"
+    if outputs_equal(comparison.expected, comparison.actual):
+        return prefix + "按当前的输出比较规则，两者一致。请确认是否是同一组输入；若另一组仍失败，请指出那组输入或对应的提交记录。"
+    if rounds == 0:
+        return prefix + "先沿这组输入手算一遍，并记录程序每一步的中间值：哪一步最先与手算不同？目前只确认输出不一致，还不能断定具体错因。"
+    if rounds == 1:
+        return prefix + "我们换一个动作：在产生最终结果的计算前后记录变量值，逐次与手算对照。先看最早出现差异的那一步，再检查对应的表达式或条件。"
+    return prefix + "接下来需要核对计算过程，继续重复这两个数不会增加线索。请选一个可疑表达式，记录它执行前后的值；如果已改过代码，就在上方编辑器提交，让新的执行结果核验修改。"
 
 
 def says_resolved(text: str) -> bool:
@@ -141,7 +204,15 @@ def decide(session: SessionView, student_message: str, diag: DiagnosisView) -> T
                              content="我没太看懂，可以选一个：读入、计算、还是输出？",
                              p=diag.p, reason="clarify")
 
-    # L3 的"两次尝试"闸门优先：不能让"我不会"直接绕过它
+    comparison, rounds = _comparison_context(session, msg, diag)
+    if comparison is not None and (reported_comparison(msg) is not None or session.level >= 3):
+        level = min(session.level + 1, MAX_LEVEL) if session.level < 3 or rounds else session.level
+        return TutorDecision(
+            action="explain", level=level, mode="compare", reason="discuss_output_difference",
+            content=_comparison_reply(comparison, rounds), p=diag.p, comparison=comparison,
+        )
+
+    # 没有可对照证据时先补缺口；已有输出差异即可继续，不要求凑失败次数。
     if session.level >= 3 and session.failed_attempts < 2:
         if session.stuck_count >= 2:
             return TutorDecision(
@@ -150,7 +221,7 @@ def decide(session: SessionView, student_message: str, diag: DiagnosisView) -> T
                 p=diag.p, reason="stuck_at_gate",
             )
         return TutorDecision(
-            action="hint", level=session.level, mode="gate",
+            action="hint", level=session.level, mode="clarify",
             content="这一步请先动手核对本次失败用例，把程序实际输出和预期输出贴出来。"
                     "如果还没有失败输入，先确认本题有哪些可用测试。",
             p=diag.p, reason="stay",

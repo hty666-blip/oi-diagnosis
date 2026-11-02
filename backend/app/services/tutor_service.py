@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.compose import compose
 from app.agents.tutor import (
     DiagnosisView,
+    OutputComparison,
     SessionView,
     decide,
     is_confused,
@@ -16,7 +17,7 @@ from app.agents.tutor import (
 )
 from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
+from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Problem, Submission, User
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
 from app.services.evidence_text import has_escaped_input
@@ -93,6 +94,10 @@ class TutorService:
                               else "这次会话已经结束，可以开一个新的。"), "action": "closed"}
 
         source_submission_id = hs.verified_submission_id or hs.submission_id
+        source = await accessible_submission(self.session, self.user, source_submission_id)
+        original = await accessible_submission(self.session, self.user, hs.submission_id)
+        if source.student_id != hs.student_id or source.problem_id != original.problem_id:
+            raise HTTPException(status_code=409, detail="答疑绑定的提交归属不一致，请重新开启提示")
         diag = (
             await self.session.execute(
                 select(Diagnosis).where(Diagnosis.submission_id == source_submission_id)
@@ -114,6 +119,15 @@ class TutorService:
             )
         ).scalars().all()
 
+        history = []
+        for turn in reversed(recent):
+            # 修改核验之后只讨论当前绑定版本，不把上一版自述混进新执行记录。
+            if turn.role == "tutor" and turn.content.startswith("核验提交 #"):
+                history.clear()
+            else:
+                history.append((turn.role, turn.content))
+        dialogue = tuple(history)
+
         # 当前层级里，学生已经连续说了几次"不会"
         stuck = 0
         for turn in recent:
@@ -130,14 +144,14 @@ class TutorService:
             SessionView(level=hs.level, failed_attempts=hs.failed_attempts,
                         cheat_flags=hs.cheat_flags, status=hs.status,
                         has_student_input=bool(message.strip()), turn=student_turns,
-                        stuck_count=stuck),
+                        stuck_count=stuck, history=dialogue),
             message, view,
         )
 
         # 规则定边界，模型写措辞；模型不可用则用模板
         if decision.action in ("hint", "explain") and decision.mode != "gate":
             llm = LLMClient() if settings.llm_enabled else None
-            content = await compose(decision, view, message, llm)
+            content = await compose(decision, view, message, llm, history=dialogue)
         else:
             content = decision.content
 
@@ -255,6 +269,11 @@ class TutorService:
     async def _diagnosis_view(self, diag: Diagnosis | None, submission_id: int) -> DiagnosisView:
         submission = await self.session.get(Submission, submission_id)
         view = _diag_view(diag, submission.lang if submission else "cpp17")
+        if submission is not None:
+            view.source_code = submission.code
+            problem = await self.session.get(Problem, submission.problem_id)
+            if problem is not None:
+                view.problem_context = f"{problem.pid} {problem.title}\n{problem.statement_md}"
         rows = (
             await self.session.execute(
                 select(Evidence).where(
@@ -276,6 +295,19 @@ class TutorService:
                 if not payload.get("input_truncated") and not has_escaped_input(payload):
                     view.counterexample = str(payload.get("stdin", payload.get("input", "")))
                 view.counterexample_minimized = False
+                actual, expected = payload.get("stdout"), payload.get("expected")
+                escaped = payload.get("escaped_fields") or []
+                escaped_output = isinstance(escaped, list) and any(
+                    isinstance(path, str) and (path in {"/stdout", "/expected"}
+                                              or path.startswith(("/stdout/", "/expected/")))
+                    for path in escaped
+                )
+                if (payload.get("status") == "Accepted" and payload.get("exit_code", 0) == 0
+                        and isinstance(actual, str) and isinstance(expected, str)
+                        and len(actual) <= 2000 and len(expected) <= 2000
+                        and not payload.get("stdout_truncated") and not payload.get("expected_truncated")
+                        and not escaped_output and not outputs_equal(actual, expected)):
+                    view.comparison = OutputComparison(expected=expected, actual=actual, origin="execution")
                 break
         return view
 
