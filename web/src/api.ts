@@ -91,7 +91,7 @@ export function messageOf(error: unknown): string {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
     super(message);
     this.name = "ApiError";
   }
@@ -111,9 +111,14 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
   }
   if (!res.ok) {
     let detail = "";
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail.message === "string") {
+        detail = body.detail.message;
+        if (typeof body.detail.code === "string") code = body.detail.code;
+      }
       else if (Array.isArray(body.detail)) {
         detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
       }
@@ -124,7 +129,7 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
       404: "记录不存在，或当前账号无权访问。",
       429: "操作过于频繁，请稍后重试。",
       503: "判题服务暂时不可用，代码已保留，请稍后再次提交。",
-    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status);
+    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status, code);
   }
   return res;
 }

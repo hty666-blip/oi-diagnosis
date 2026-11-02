@@ -58,6 +58,17 @@ test("教师复核发送当前服务器版本和所选证据，409 保持可识�
   assert.equal(storage.get("oi_token"), "local-test-token");
 });
 
+test("核验的结构化原因保留状态码与恢复标识，不丢失用户能理解的说明", async () => {
+  globalThis.fetch = async () => json({ detail: {
+    code: "verification_unchanged", message: "提交 #3 与答疑起点 #2 的代码和语言相同。请修改上方代码后重新提交。",
+  } }, 409);
+  await assert.rejects(api.verifySession(1, 3), (error) => error instanceof ApiError
+    && error.status === 409 && error.code === "verification_unchanged"
+    && error.message.includes("提交 #3") && error.message.includes("答疑起点 #2"));
+  assert.equal(storage.get("oi-draft:1:PTV-0001"), "unsaved code");
+  assert.equal(storage.get("oi_token"), "local-test-token");
+});
+
 test("多语言重新提交同时携带父记录与语言，首次提交不伪造父记录", async () => {
   const requests = [];
   globalThis.fetch = async (_url, options) => {

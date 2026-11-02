@@ -178,10 +178,20 @@ class TutorService:
         same_source = (
             candidate.code_hash == original.code_hash and candidate.lang == original.lang
         )
-        if candidate.id <= original.id or same_source:
-            raise HTTPException(status_code=409, detail="请先修改代码并重新提交，再核验新提交")
+        if candidate.id <= original.id:
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_not_new",
+                "message": f"提交 #{candidate.id} 不是答疑起点 #{original.id} 之后的新提交。请修改上方代码后重新提交。",
+            })
+        if same_source:
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_unchanged",
+                "message": f"提交 #{candidate.id} 与答疑起点 #{original.id} 的代码和语言相同。请修改上方代码后重新提交；重试当前记录不会产生新的修改。",
+            })
         if candidate.stage != "READY" or candidate.verdict is None:
-            raise HTTPException(status_code=409, detail="新提交尚未完成判题")
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_pending", "message": "新提交尚未完成判题，请等待完成后再核验。",
+            })
         if hs.status == "resolved":
             if hs.verified_submission_id != candidate.id:
                 raise HTTPException(status_code=409, detail="答疑已经绑定其他通过题包核验的提交")

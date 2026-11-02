@@ -1,4 +1,4 @@
-import { verifyWithRefresh } from "./tutor-verification";
+import { sameSource, verificationRecovery, verifyWithRefresh } from "./tutor-verification";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import Markdown from "./Markdown";
@@ -153,6 +153,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
   const hasSelection = useRef(false);
   const taskController = useRef<AbortController | null>(null);
   const submitController = useRef<AbortController | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const draftKey = (nextPid: string, nextLanguage: SubmissionLanguage) =>
     `oi-draft:${userId}:${nextPid}:${nextLanguage}`;
   const languageKey = (nextPid: string) => `oi-language:${userId}:${nextPid}`;
@@ -382,6 +383,11 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
 
   async function run() {
     if (requestLock.current || !detail || !code.trim() || (sub && submissionPhase(sub) === "pending")) return;
+    if (sub && unchangedTutorCode) {
+      setError(`代码和语言与提交 #${sub.id} 一致，请先修改上方代码再提交。`);
+      editCode();
+      return;
+    }
     stopWatching();
     const generation = ++workRequest.current;
     evidenceRequest.current += 1;
@@ -460,8 +466,14 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
     } finally { if (generation === workRequest.current) { requestLock.current = false; setBusy(null); } }
   }
 
-  const hasChanged = sub !== null && (code !== savedCode || language !== savedLanguage);
+  function editCode() {
+    editorRef.current?.focus();
+    editorRef.current?.scrollIntoView({ block: "center" });
+  }
+
+  const hasChanged = sub !== null && !sameSource(code, language, savedCode, savedLanguage);
   const phase = sub ? submissionPhase(sub) : null;
+  const unchangedTutorCode = phase === "complete" && tutorSubmission !== null && !hasChanged;
   const canTutor = sub && phase === "complete" && diag && !["AC", "SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "");
 
   return (
@@ -497,13 +509,13 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             <div className="card-head editor-head"><label htmlFor="solution-code"><strong>你的代码</strong></label><div className="row"><label className="language-picker"><span className="sr-only">编程语言</span><select aria-label="编程语言" value={language} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null)} onChange={(e) => selectLanguage(e.target.value as SubmissionLanguage)}>
               {LANGUAGES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select></label><span className="sub">Ctrl / ⌘ + Enter 提交</span></div></div>
-            <textarea id="solution-code" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid, language), e.target.value); }} onKeyDown={(e) => {
+            <textarea id="solution-code" ref={editorRef} aria-describedby="code-submission-note" className="code" value={code} spellCheck={false} readOnly={busy === "restore"} onChange={(e) => { setCode(e.target.value); writeLocal(draftKey(pid, language), e.target.value); }} onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void run(); }
             }} />
-            <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim()}>
+            <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim() || unchangedTutorCode}>
               {busy === "judge" ? "正在发送任务…" : busy === "cancel" ? "正在核对取消…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
             </button><span className="dim">草稿保留在当前浏览器</span></div>
-            {hasChanged && <p className="scope-note">代码已有修改。下方结果对应上次提交，请重新提交验证改动。</p>}
+            <p id="code-submission-note" className="scope-note">{hasChanged ? "代码或语言已有修改。下方结果对应上次提交，请重新提交验证改动。" : unchangedTutorCode ? `代码和语言与提交 #${sub!.id} 一致。修改上方代码后，才能核验这轮答疑中的修改。` : "请在上方编辑器填写代码，聊天中粘贴的代码不会自动替换这里的内容。"}</p>
           </div>
           {pendingId && !sub && <section className="card" aria-label="恢复判题任务"><h2>提交 #{pendingId}</h2><p role="status">{polling ? "正在读取服务器保存的任务状态…" : "状态查询已暂停，代码草稿和服务器任务均已保留。"}</p><ErrorNotice message={taskError} onRetry={() => void watchTask(pendingId, pid, workRequest.current)} /></section>}
           {sub && <section className="card" aria-label="本次执行结果" aria-live="polite">
@@ -549,7 +561,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
             </>}
             {phase !== "pending" && <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />}
           </section>}
-          {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} />}
+          {tutorSubmission && <TutorPanel key={tutorSubmission} submissionId={tutorSubmission} userId={userId} latestSubmitted={latestSubmitted} onEditCode={editCode} />}
         </section>
       </div>}
     </>
@@ -558,7 +570,7 @@ function SubmitView({ userId, restore }: { userId: number; restore: { id: number
 
 type ChatMessage = { role: "tutor" | "student"; level: number; text: string };
 
-function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: number; userId: number; latestSubmitted: SubmissionResult | null }) {
+function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { submissionId: number; userId: number; latestSubmitted: SubmissionResult | null; onEditCode: () => void }) {
   const [session, setSession] = useState<SessionReply | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -568,6 +580,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
   const [retry, setRetry] = useState(0);
   const [verifyRetry, setVerifyRetry] = useState(0);
   const [verifyError, setVerifyError] = useState("");
+  const [verifyAction, setVerifyAction] = useState<"retry" | "edit" | "restart">("retry");
   const [verifying, setVerifying] = useState(false);
   const sendLock = useRef(false);
   const verified = useRef(new Set<number>());
@@ -609,7 +622,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
   useEffect(() => {
     if (!session || !latestSubmitted || busy || latestSubmitted.id === submissionId || verified.current.has(latestSubmitted.id)) return;
     let active = true;
-    setVerifying(true); setVerifyError("");
+    setVerifying(true); setVerifyError(""); setVerifyAction("retry");
     verifyWithRefresh({
       verify: () => api.verifySession(session.session_id, latestSubmitted.id),
       refresh: () => api.getSession(session.session_id),
@@ -617,6 +630,9 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
       if (!active) return;
       if (!result.reply) {
         setVerifyError(messageOf(result.error));
+        const action = verificationRecovery(result.error);
+        setVerifyAction(action);
+        if (action !== "retry") verified.current.add(latestSubmitted.id);
         setSession((previous) => previous ? { ...previous,
           status: result.history?.status ?? "unavailable",
           verified_submission_id: result.history ? result.history.verified_submission_id : previous.verified_submission_id,
@@ -655,7 +671,9 @@ function TutorPanel({ submissionId, userId, latestSubmitted }: { submissionId: n
     <p className="muted">先说说你的判断。修改上方代码后重新提交，系统会用新的执行结果检查是否解决。</p>
     {loading && <p role="status">正在打开提示记录…</p>}
     <ErrorNotice message={error} onRetry={!session ? () => setRetry((value) => value + 1) : undefined} />
-    <ErrorNotice message={verifyError ? "新提交已完成，但会话验证失败：" + verifyError : ""} onRetry={() => setVerifyRetry((value) => value + 1)} />
+    <ErrorNotice message={verifyError ? "本次判题结果已保存。" + verifyError : ""} onRetry={verifyAction === "retry" ? () => setVerifyRetry((value) => value + 1) : undefined} />
+    {verifyError && verifyAction === "edit" && <button className="ghost" onClick={onEditCode}>去修改代码</button>}
+    {verifyError && verifyAction === "restart" && <button className="ghost" onClick={restart}>重新开启提示</button>}
     {verifying && <p role="status">正在用新提交核对修改结果…</p>}
     {session && <>
       <div className="chat" ref={chatRef} role="log" aria-label="提示记录" aria-live="polite">

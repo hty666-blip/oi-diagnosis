@@ -133,6 +133,39 @@ async def test_verification_can_continue_after_switching_language(api_context):
     assert result.json()["verified_submission_id"] == candidate.id
 
 
+@pytest.mark.parametrize("repeat_original", [True, False], ids=["original-record", "unchanged-copy"])
+async def test_unchanged_verification_explains_recovery_then_accepts_real_change(api_context, repeat_original):
+    ctx = api_context
+    original = await ctx.submission(code_hash="original-source")
+    session_id = await _open(ctx, original)
+    hs = await ctx.session.get(HintSession, session_id)
+    hs.level = 3
+    candidate = original if repeat_original else await ctx.submission(
+        code=original.code, code_hash=original.code_hash, parent_submission_id=original.id,
+    )
+    await ctx.session.flush()
+    turns_before = await ctx.session.scalar(select(func.count()).select_from(HintTurn))
+    endpoint = f"/api/v1/sessions/{session_id}/verify"
+    for _ in range(2):
+        response = await ctx.client.post(endpoint, headers=ctx.headers(),
+                                         json={"submission_id": candidate.id})
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == ("verification_not_new" if repeat_original else "verification_unchanged")
+        assert f"#{candidate.id}" in detail["message"]
+        assert "修改上方代码" in detail["message"]
+    assert hs.status == "open" and hs.level == 3 and hs.failed_attempts == 0
+    assert hs.verified_submission_id is None
+    assert await ctx.session.scalar(select(func.count()).select_from(HintTurn)) == turns_before
+    changed = await ctx.submission(code_hash="changed-source", verdict="AC", tests_passed={
+        "scope": "package", "passed": 3, "total": 3,
+    })
+    response = await ctx.client.post(endpoint, headers=ctx.headers(), json={"submission_id": changed.id})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "resolved"
+    assert response.json()["verified_submission_id"] == changed.id
+
+
 async def test_sample_pass_stays_open_package_ac_resolves_idempotently(api_context):
     ctx = api_context
     original = await ctx.submission(code_hash="original")

@@ -2,7 +2,31 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sourceModule } from "./load-source.mjs";
 
-const { verifyWithRefresh } = await sourceModule("../src/tutor-verification.ts");
+const { sameSource, verificationRecovery, verifyWithRefresh } = await sourceModule("../src/tutor-verification.ts");
+
+test("未修改的提交应返回编辑器；等待判题和网络故障仍可重试", () => {
+  assert.equal(verificationRecovery({ status: 409, code: "verification_unchanged" }), "edit");
+  assert.equal(verificationRecovery({ status: 409, code: "verification_not_new" }), "edit");
+  assert.equal(verificationRecovery({ status: 409, code: "verification_pending" }), "retry");
+  assert.equal(verificationRecovery(new Error("无法连接服务")), "retry");
+  assert.equal(verificationRecovery({ status: 503 }), "retry");
+  assert.equal(verificationRecovery({ status: 429 }), "retry");
+});
+
+test("无权限、会话消失或核验冲突不重复请求同一记录", () => {
+  for (const status of [400, 403, 404, 409, 422]) {
+    assert.equal(verificationRecovery({ status }), "restart");
+  }
+  assert.equal(verificationRecovery(new Error("请先修改代码并重新提交，再核验新提交")), "edit");
+  assert.equal(verificationRecovery({ status: 409, message: "新提交尚未完成判题" }), "retry");
+});
+
+test("提交变化按后端相同规则比较换行、原始字符和语言", () => {
+  assert.equal(sameSource("int x;\r\n", "cpp17", "int x;\n", "cpp17"), true);
+  assert.equal(sameSource("int x;\n", "cpp17", "int x;\n", "c11"), false);
+  assert.equal(sameSource('print("a b")', "python3", 'print("ab")', "python3"), false);
+  assert.equal(sameSource("int x;", "cpp17", "long long x;", "cpp17"), false);
+});
 
 test("核验拒绝后读取服务器当前状态，保留原错误，不复用旧的已解决结论", async () => {
   const error = new Error("新提交尚未完成判题");
