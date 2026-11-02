@@ -30,6 +30,37 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("转班预览与确认分开，账号和班级变更携带服务器预期版本", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, method: options.method, body: JSON.parse(options.body), auth: options.headers.Authorization }); return json({}); };
+  await api.transferPreview(2, { expected_version: 4, class_id: 8 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/v1/admin/users/2/transfer/preview");
+  await api.transferStudent(2, { expected_version: 4, class_id: 8 });
+  assert.equal(calls[1].url, "/api/v1/admin/users/2/transfer");
+  await api.editClass(8, { name: "改名", expected_version: 7, archived: false, teacher_ids: [3], transfer_to: 3 });
+  assert.equal(calls[2].method, "PATCH");
+  assert.equal(calls[2].body.expected_version, 7);
+  assert.equal(calls[2].body.transfer_to, 3);
+  assert.ok(calls.every((c) => c.auth === "Bearer local-test-token"));
+});
+
+test("改密响应读取期间换号时，不向旧页面交付新的登录凭证", async () => {
+  let finish, started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  globalThis.fetch = async () => {
+    const response = json({});
+    response.json = () => { started(); return new Promise((resolve) => { finish = resolve; }); };
+    return response;
+  };
+  const pending = api.changePassword("old-password", "new-password");
+  await entered;
+  setSession("second-token", secondUser);
+  finish({ access_token: "late-old-user-token", user: firstUser });
+  await assert.rejects(pending, (e) => e.name === "AbortError");
+  assert.equal(cachedUser().id, secondUser.id);
+});
+
 test("个别反馈重试保留请求编号，标记查看是独立操作，补练明确指定接收人", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ items: [] }); };

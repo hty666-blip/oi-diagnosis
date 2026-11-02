@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
 import StudentProfiles from "./components/StudentProfiles";
+import AdminWorkspace from "./components/AdminWorkspace";
+import PasswordSettings from "./components/PasswordSettings";
 import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
@@ -17,7 +19,7 @@ import {
   type SessionReply, type SubmissionLanguage, type SubmissionResult,
 } from "./api";
 
-type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles";
+type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles" | "password";
 const LANGUAGES: { value: SubmissionLanguage; label: string }[] = [
   { value: "cpp17", label: "C++17" },
   { value: "c11", label: "C11" },
@@ -75,7 +77,7 @@ export default function App() {
       if (!active) return;
       // 请求已核对会话快照；验证身份不重新写共享存储，避免旧标签页覆盖新登录。
       setUser(current);
-      setView("trainings");
+      setView(current.role === "admin" ? "admin" : "trainings");
     }).catch((error: unknown) => {
       if (!active || (error instanceof Error && error.name === "AbortError")) return;
       clearSession(); setUser(null); setSessionNotice(messageOf(error));
@@ -89,12 +91,14 @@ export default function App() {
     setUser(next);
     setSessionNotice("");
     setRestore(null);
-    setPractice(null); setTrainingTarget(undefined); setView("trainings");
+    setPractice(null); setTrainingTarget(undefined); setView(next.role === "admin" ? "admin" : "trainings");
   }} />{sessionNotice && <div className="session-notice" role="status">{sessionNotice}</div>}</>;
+
+  if (user.must_change_password || view === "password") return <PasswordSettings required={!!user.must_change_password} onChanged={(next) => { setUser(next); setView(next.role === "admin" ? "admin" : "trainings"); }} onCancel={() => { if (user.must_change_password) { clearSession(); setUser(null); } else setView(user.role === "admin" ? "admin" : "trainings"); }} />;
 
   const nav: { key: View; label: string }[] = user.role === "student"
     ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
-    : [{ key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }, ...(user.role === "admin" ? [{ key: "admin" as View, label: "系统概览" }] : [])];
+    : [...(user.role === "admin" ? [{ key: "admin" as View, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
   const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
 
   return (
@@ -104,6 +108,7 @@ export default function App() {
         <nav className="nav-group" aria-label="主要导航">
           {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}>{item.label}</button>)}
         </nav>
+        <button className="ghost" onClick={() => setView("password")}>修改密码</button>
         <div className="sidebar-foot"><div className="user-card">
           <div className="avatar" aria-hidden="true">{(user.display_name || user.username).slice(0, 1)}</div>
           <div className="who"><b>{user.display_name || user.username}</b><span>{ROLE_LABEL[user.role]}{user.class_name ? " · " + user.class_name : ""}</span></div>
@@ -116,7 +121,7 @@ export default function App() {
         {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
-        {view === "admin" && user.role === "admin" && <AdminView />}
+        {view === "admin" && user.role === "admin" && <AdminWorkspace onTeaching={() => setView("trainings")} onReview={() => setView("coach")} />}
       </main>
     </div>
   );
@@ -768,17 +773,5 @@ function CoachView({ userId }: { userId: number }) {
       {queue.map((row) => <tr key={row.diagnosis_id}><td><strong>{row.student_name || "学生提交"}</strong><div className="dim">{row.problem_pid} {row.problem_title} · #{row.submission_id}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "暂无诊断摘要"}</td><td><button className="ghost" onClick={() => { setSelectedId(row.submission_id); writeLocal("oi-selected-review:" + userId, String(row.submission_id)); }}>{selectedId === row.submission_id ? "正在查看" : "查看并复核"}</button></td></tr>)}
     </tbody></table></div>}</div>
     {selectedId && <ReviewPanel key={selectedId} submissionId={selectedId} onReviewed={() => void load()} />}
-  </>;
-}
-
-function AdminView() {
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => { api.coachOverview().then(setOverview).catch((e) => setError(messageOf(e))); }, []);
-  return <>
-    <div className="page-head"><div><h1>系统概览</h1><p>当前账号可见的提交与诊断记录。</p></div></div>
-    <ErrorNotice message={error} />
-    {!overview && !error && <p role="status">正在加载系统记录…</p>}
-    {overview && <div className="card"><dl className="overview-list"><div><dt>提交记录</dt><dd>{overview.submissions}</dd></div><div><dt>诊断记录</dt><dd>{overview.diagnoses}</dd></div><div><dt>待人工复核</dt><dd>{overview.pending_review}</dd></div></dl><p className="muted">提交计数描述系统活动，不用于推断学生掌握度或真实教学效果。</p></div>}
   </>;
 }

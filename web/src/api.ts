@@ -8,6 +8,8 @@ export interface AuthUser {
   display_name: string;
   role: "student" | "teacher" | "admin";
   class_name: string;
+  class_id?: number | null;
+  must_change_password?: boolean;
 }
 
 interface SessionSnapshot { token: string; user: AuthUser; storedUser: string }
@@ -443,6 +445,21 @@ export interface StudentProfile {
 }
 
 export const api = {
+  adminOverview: () => get<AdminOverview>("/admin/overview"),
+  adminUsers: (q = "", offset = 0, groupId?: number) => get<{ items: AdminAccount[]; has_more: boolean }>(`/admin/users?q=${encodeURIComponent(q)}&offset=${offset}${groupId == null ? "" : `&group_id=${groupId}`}`),
+  adminTeachers: () => get<{ id: number; name: string; enabled: boolean }[]>("/admin/teachers"),
+  adminClasses: () => get<AdminClass[]>("/admin/classes"),
+  adminAudit: (before?: number) => get<{ items: AdminAudit[]; has_more: boolean }>("/admin/audit" + (before ? `?before_id=${before}` : "")),
+  createAccount: (body: AccountInput) => post<AdminAccount>("/admin/users", body),
+  editAccount: async (id: number, body: { expected_version: number; display_name: string; role: AuthUser["role"]; enabled: boolean }) => readJson<AdminAccount>(await request(`/admin/users/${id}`, body, "PATCH")),
+  resetPassword: (id: number, body: { expected_version: number; password: string }) => post<AdminAccount>(`/admin/users/${id}/password`, body),
+  transferPreview: (id: number, body: { expected_version: number; class_id: number | null }) => post<TransferImpact>(`/admin/users/${id}/transfer/preview`, body),
+  transferStudent: (id: number, body: { expected_version: number; class_id: number | null }) => post<AdminAccount>(`/admin/users/${id}/transfer`, body),
+  createClass: (name: string) => post<{ id: number }>("/admin/classes", { name }),
+  editClass: async (id: number, body: { name: string; expected_version: number; archived: boolean; teacher_ids: number[]; transfer_to: number | null }) => readJson<{ transferred: number }>(await request(`/admin/classes/${id}`, body, "PATCH")),
+  importPreview: (rows: AccountInput[]) => post<{ rows: { row: number; username: string; display_name: string; role: string; class_id: number | null }[]; errors: { row: number; message: string }[] }>("/admin/users/import/preview", { rows }),
+  importAccounts: (rows: AccountInput[]) => post<AdminAccount[]>("/admin/users/import", { rows }),
+  changePassword: (current_password: string, new_password: string) => post<{ access_token: string; user: AuthUser }>("/auth/password", { current_password, new_password }),
   trainings: () => get<Training[]>("/trainings"),
   training: (id: number) => get<TrainingDetail>("/trainings/" + id),
   trainingRoster: () => get<{ id: number; name: string; class_name: string }[]>("/trainings/roster"),
@@ -520,3 +537,23 @@ export const api = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 };
+
+export interface AdminAccount extends AuthUser {
+  enabled: boolean; token_version: number; must_change_password: boolean;
+}
+export interface AccountInput {
+  username: string; display_name: string; role: AuthUser["role"]; password: string; class_id: number | null;
+}
+export interface AdminClass {
+  id: number; name: string; archived: boolean; version: number; teacher_ids: number[]; students: number;
+  training_owners: { teacher_id: number; count: number }[];
+}
+export interface AdminAudit {
+  id: number; actor: string; action: string; target: string; before: Record<string, unknown>; after: Record<string, unknown>; created_at: string;
+}
+export interface TransferImpact { student: string; from: string; to: string; affected_trainings: number; notice: string }
+export interface AdminOverview {
+  observed_at: string; database: string; accounts: Record<AuthUser["role"], number>; disabled: number;
+  unassigned_students: number; classes_without_teacher: { id: number; name: string }[]; active_classes: number;
+  llm_enabled: boolean; worker_status: "unknown"; judging: JudgingQueue;
+}

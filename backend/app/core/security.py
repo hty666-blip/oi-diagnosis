@@ -93,7 +93,7 @@ def validate_security_settings() -> None:
         raise ValueError("非开发环境必须关闭 APP_DEBUG")
 
 
-def create_access_token(user_id: int, role: str, username: str) -> str:
+def create_access_token(user_id: int, role: str, username: str, token_version: int = 0) -> str:
     if type(user_id) is not int or not 0 < user_id <= MAX_USER_ID:
         raise ValueError("无效的账号编号")
     if role not in USER_ROLES:
@@ -105,6 +105,7 @@ def create_access_token(user_id: int, role: str, username: str) -> str:
         "sub": str(user_id),
         "role": role,
         "username": username,
+        "ver": token_version,
         "iss": TOKEN_ISSUER,
         "aud": TOKEN_AUDIENCE,
         "jti": secrets.token_urlsafe(16),

@@ -9,8 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, TeacherUser
 from app.api.input_types import ObjectId, ObjectPathId
-from app.domain.models import Problem, Training, TrainingMember, TrainingProblem, User
+from app.domain.models import Problem, SchoolClass, Training, TrainingMember, TrainingProblem, User
 from app.infra.db import get_session
+from app.services.admin_service import training_write
+from app.services.class_access import (
+    active_class,
+    same_class,
+    student_class_scope,
+    teacher_class_scope,
+)
 from app.services.student_followup_service import (
     FeedbackCreate,
     create_feedback,
@@ -51,9 +58,9 @@ class TrainingInput(BaseModel):
 
 @router.get("/roster")
 async def roster(session: SessionDep, user: TeacherUser):
-    stmt = select(User).where(User.role == "student", User.class_name != "")
+    stmt = select(User).where(User.role == "student", User.class_name != "", User.enabled.is_(True))
     if user.role != "admin":
-        stmt = stmt.where(User.class_name == user.class_name) if user.class_name.strip() else stmt.where(False)
+        stmt = stmt.where(teacher_class_scope(user))
     students = (await session.scalars(stmt.order_by(User.class_name, User.id))).all()
     return [{"id": s.id, "name": s.display_name or s.username, "class_name": s.class_name} for s in students]
 
@@ -63,16 +70,20 @@ async def list_trainings(session: SessionDep, user: CurrentUser):
     stmt = select(Training).order_by(Training.id.desc())
     if user.role == "student":
         stmt = stmt.join(TrainingMember, TrainingMember.training_id == Training.id).where(
-            TrainingMember.student_id == user.id, Training.status == "published", Training.class_name == user.class_name)
+            TrainingMember.student_id == user.id, Training.status == "published", student_class_scope(user))
     elif user.role == "teacher":
-        stmt = stmt.where(Training.teacher_id == user.id, Training.class_name == user.class_name)
+        stmt = stmt.where(Training.teacher_id == user.id, teacher_class_scope(user, Training))
     return [training_out(row, include_audience=user.role != "student") for row in (await session.scalars(stmt.limit(100))).all()]
 
 
 async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, row: Training | None):
     if not payload.title or not payload.class_name:
         raise HTTPException(422, "请填写训练名称和班级")
-    if user.role != "admin" and payload.class_name != user.class_name:
+    group = await session.scalar(select(SchoolClass).where(SchoolClass.name == payload.class_name))
+    if group and group.archived:
+        raise HTTPException(409, "班级已归档，请恢复后布置训练")
+    target = User(class_id=group.id if group else None, class_name=payload.class_name)
+    if not await same_class(session, user, target):
         raise HTTPException(403, "只能给本班布置训练")
     if payload.due_at <= datetime.now(UTC):
         raise HTTPException(422, "截止时间必须晚于当前时间")
@@ -97,8 +108,9 @@ async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, 
         if payload.student_ids is None or not set(payload.student_ids).issubset(source_ids):
             raise HTTPException(422, "补练必须明确选择原训练名单中的学生")
     if row is None:
-        row = Training(teacher_id=user.id)
+        row = Training(teacher_id=user.id, original_teacher_id=user.id)
         session.add(row)
+    row.class_id = group.id if group else None
     for key in ("title", "class_name", "objective", "description", "due_at", "student_ids", "source_training_id"):
         setattr(row, key, getattr(payload, key))
     await session.flush()
@@ -111,6 +123,7 @@ async def save_draft(session: AsyncSession, user: User, payload: TrainingInput, 
 
 @router.post("")
 async def create_training(payload: TrainingInput, session: SessionDep, user: TeacherUser):
+    await training_write(session, user)
     return await save_draft(session, user, payload, None)
 
 
@@ -121,6 +134,7 @@ async def get_training(training_id: ObjectPathId, session: SessionDep, user: Cur
 
 @router.post("/{training_id}/draft")
 async def edit_training(training_id: ObjectPathId, payload: TrainingInput, session: SessionDep, user: TeacherUser):
+    await training_write(session, user)
     row = await accessible_training(session, user, training_id, lock=True)
     if row.status != "draft":
         raise HTTPException(409, "已发布的训练不能修改，请新建训练保留原记录")
@@ -129,12 +143,17 @@ async def edit_training(training_id: ObjectPathId, payload: TrainingInput, sessi
 
 @router.post("/{training_id}/publish")
 async def publish_training(training_id: ObjectPathId, session: SessionDep, user: TeacherUser):
+    await training_write(session, user)
     row = await accessible_training(session, user, training_id, lock=True)
     if row.status == "draft":
+        if not await active_class(session, row.class_id):
+            raise HTTPException(409, "班级已归档，请恢复后发布训练")
         if row.due_at <= datetime.now(UTC):
             raise HTTPException(409, "草稿已过截止时间，请先修改截止时间")
         students = (await session.scalars(select(User).where(
-            User.role == "student", User.class_name == row.class_name))).all()
+            User.role == "student", User.enabled.is_(True),
+            User.class_id == row.class_id if row.class_id is not None else
+            (User.class_id.is_(None) & (User.class_name == row.class_name))))).all()
         if row.student_ids is not None:
             students = [s for s in students if s.id in row.student_ids]
             if len(students) != len(row.student_ids):

@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.errors import request_validation_error_handler
 from app.api.v1 import (
+    admin,
     auth,
     card,
     catalog,
@@ -55,6 +56,7 @@ app.include_router(tutor.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")

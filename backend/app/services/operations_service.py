@@ -7,7 +7,7 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.domain.models import JudgeJob, Problem, Submission, User
+from app.domain.models import ClassTeacher, JudgeJob, Problem, Submission, User
 from app.infra.sql_types import elapsed_seconds
 from app.services.access import submission_scope
 from app.services.job_service import ERROR_MESSAGES
@@ -66,8 +66,9 @@ class OperationsService:
             .order_by(JudgeJob.finished_at.is_(None), JudgeJob.finished_at.desc(), JudgeJob.id.desc())
             .limit(5)
         )).all()
+        managed = await self.session.scalar(select(ClassTeacher.class_id).where(ClassTeacher.teacher_id == self.user.id).limit(1)) if self.user.role == "teacher" else None
         kind = "all" if self.user.role == "admin" else (
-            "class_and_own" if (self.user.class_name or "").strip() else "own"
+            "class_and_own" if managed or (self.user.class_name or "").strip() else "own"
         )
         return {
             "observed_at": observed_at.isoformat(),

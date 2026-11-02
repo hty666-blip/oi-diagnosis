@@ -19,6 +19,7 @@ from app.domain.models import (
     TrainingProblem,
     User,
 )
+from app.services.class_access import same_class, student_class_scope
 from app.services.training_service import accessible_training, submission_cell, training_out
 
 
@@ -34,7 +35,7 @@ async def accessible_student(session: AsyncSession, user: User, student_id: int)
     if user.role == "student":
         allowed = allowed and student_id == user.id
     elif user.role == "teacher":
-        allowed = allowed and bool(user.class_name.strip()) and student.class_name == user.class_name
+        allowed = allowed and await same_class(session, user, student)
     elif user.role != "admin":
         allowed = False
     if not allowed:
@@ -45,7 +46,7 @@ async def accessible_student(session: AsyncSession, user: User, student_id: int)
 async def require_member(session: AsyncSession, user: User, training_id: int, student_id: int, *, lock=False):
     training = await accessible_training(session, user, training_id, lock=lock)
     student = await accessible_student(session, user, student_id)
-    if (training.status != "published" or training.class_name != student.class_name
+    if (training.status != "published" or not await same_class(session, student, training)
             or await session.get(TrainingMember, (training_id, student_id)) is None):
         raise HTTPException(404, "学生不在当前训练名单中")
     return training, student
@@ -65,7 +66,7 @@ def feedback_out(row: TrainingFeedback, problems: list[dict], complete: bool, so
 
 async def student_tasks(session: AsyncSession, user: User, student: User, *, only_training: Training | None = None):
     stmt = select(Training).join(TrainingMember, TrainingMember.training_id == Training.id).where(
-        TrainingMember.student_id == student.id, Training.status == "published", Training.class_name == student.class_name)
+        TrainingMember.student_id == student.id, Training.status == "published", student_class_scope(student))
     if user.role == "teacher":
         stmt = stmt.where(Training.teacher_id == user.id)
     if only_training:

@@ -2,7 +2,7 @@ import time
 
 import jwt
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.api.deps import get_current_user
@@ -145,7 +145,7 @@ async def test_invalid_subject_never_reaches_database(signing_settings):
             raise AssertionError("非法 subject 不应送入数据库")
 
     with pytest.raises(HTTPException) as error:
-        await get_current_user(NeverDatabase(), "Bearer " + signed_claims(sub=str(MAX_USER_ID + 1)))
+        await get_current_user(NeverDatabase(), Request({"type": "http"}), "Bearer " + signed_claims(sub=str(MAX_USER_ID + 1)))
     assert error.value.status_code == 401
 
 

@@ -14,13 +14,14 @@ from app.domain.models import (
     TrainingProblem,
     User,
 )
+from app.services.class_access import same_class
 from app.services.job_service import job_out
 from app.services.judgement import effective_verdict, valid_test_summary
 
 
 def training_out(row: Training, *, include_audience=False) -> dict:
     out = {key: getattr(row, key) for key in (
-        "id", "teacher_id", "class_name", "title", "objective", "description", "status",
+        "id", "teacher_id", "original_teacher_id", "class_id", "class_name", "title", "objective", "description", "status",
         "due_at", "published_at", "created_at", "source_training_id",
     )}
     if include_audience:
@@ -35,9 +36,9 @@ async def accessible_training(session: AsyncSession, user: User, training_id: in
     row = (await session.scalars(stmt)).one_or_none()
     allowed = row is not None
     if row and user.role == "teacher":
-        allowed = row.teacher_id == user.id and bool(user.class_name.strip()) and row.class_name == user.class_name
+        allowed = row.teacher_id == user.id and await same_class(session, user, row)
     elif row and user.role == "student":
-        allowed = (row.status == "published" and row.class_name == user.class_name
+        allowed = (row.status == "published" and await same_class(session, user, row)
                    and await session.get(TrainingMember, (row.id, user.id)) is not None)
     elif user.role != "admin":
         allowed = False
@@ -74,7 +75,9 @@ async def training_detail(session: AsyncSession, user: User, row: Training) -> d
     )).all()
     members = (await session.scalars(
         select(User).join(TrainingMember, TrainingMember.student_id == User.id)
-        .where(TrainingMember.training_id == row.id, User.role == "student", User.class_name == row.class_name)
+        .where(TrainingMember.training_id == row.id, User.role == "student",
+               User.class_id == row.class_id if row.class_id is not None else
+               (User.class_id.is_(None) & (User.class_name == row.class_name)))
         .order_by(User.id)
     )).all()
     if user.role == "student":

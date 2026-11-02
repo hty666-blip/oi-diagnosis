@@ -250,6 +250,31 @@ class Mastery(Base):
         UTCDateTime(), server_default=func.now(), onupdate=func.now())
 
 
+class SchoolClass(Base):
+    __tablename__ = "school_class"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class ClassTeacher(Base):
+    __tablename__ = "class_teacher"
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"), primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class AdminAudit(Base):
+    __tablename__ = "admin_audit"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    action: Mapped[str] = mapped_column(String(64))
+    target: Mapped[str] = mapped_column(String(100))
+    before: Mapped[dict] = mapped_column(JSON)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
 class User(Base):
     """账号：学生 / 教练 / 管理员。密码用 pbkdf2 存哈希，不落明文。"""
 
@@ -261,6 +286,10 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="student")  # student|teacher|admin
     password_hash: Mapped[str] = mapped_column(String(256), default="")
     class_name: Mapped[str] = mapped_column(String(64), default="")
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("school_class.id"), nullable=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
@@ -278,6 +307,8 @@ class Training(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    original_teacher_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("school_class.id"), nullable=True, index=True)
     class_name: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(120))
     objective: Mapped[str] = mapped_column(String(500), default="")

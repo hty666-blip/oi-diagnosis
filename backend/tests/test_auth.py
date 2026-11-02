@@ -100,6 +100,7 @@ async def test_successful_login_upgrades_legacy_password():
         role="student",
         password_hash=_legacy_hash("123456"),
         class_name="一班",
+        enabled=True, token_version=0, must_change_password=False,
     )
     session = _Session(user)
     result = await login(LoginIn(username="STUDENT01", password="123456"), session)
