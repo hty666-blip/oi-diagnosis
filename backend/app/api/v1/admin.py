@@ -94,6 +94,11 @@ class AccountBatch(Input):
     rows: list[AccountCreate] = Field(min_length=1, max_length=100)
 
 
+class ClassCreate(ClassInput):
+    teacher_ids: list[ObjectId] = Field(default_factory=list, max_length=30)
+    student_accounts: list[AccountCreate] = Field(default_factory=list, max_length=100)
+
+
 @router.get("/overview")
 async def overview(session: SessionDep, user: AdminUser):
     workers = await worker_status(session)
@@ -139,9 +144,11 @@ async def validate_accounts(session, payload: AccountBatch):
     return errors
 
 
-async def insert_accounts(session, actor, payload: AccountBatch):
+async def insert_accounts(session, actor, payload: AccountBatch, *, single=False):
     errors = await validate_accounts(session, payload)
     if errors:
+        if single:
+            raise HTTPException(409, errors[0]["message"])
         raise HTTPException(409, {"message": "导入未执行，请修正后重新预览", "errors": errors})
     result = []
     for item in payload.rows:
@@ -153,7 +160,6 @@ async def insert_accounts(session, actor, payload: AccountBatch):
         await session.flush()
         audit(session, actor, "account.create", f"user:{row.id}", {}, user_out(row))
         result.append(user_out(row))
-    await session.commit()
     return result
 
 
@@ -167,13 +173,17 @@ async def import_preview(payload: AccountBatch, session: SessionDep, user: Admin
 @router.post("/users/import")
 async def import_accounts(payload: AccountBatch, request: Request, session: SessionDep, user: AdminUser):
     await admin_write(session, user, request)
-    return await insert_accounts(session, user, payload)
+    result = await insert_accounts(session, user, payload)
+    await session.commit()
+    return result
 
 
 @router.post("/users")
 async def create_account(payload: AccountCreate, request: Request, session: SessionDep, user: AdminUser):
     await admin_write(session, user, request)
-    return (await insert_accounts(session, user, AccountBatch(rows=[payload])))[0]
+    result = await insert_accounts(session, user, AccountBatch(rows=[payload]), single=True)
+    await session.commit()
+    return result[0]
 
 
 @router.patch("/users/{user_id}")
@@ -251,8 +261,20 @@ async def teachers(session: SessionDep, user: AdminUser):
 
 
 @router.post("/classes")
-async def create_class(payload: ClassInput, request: Request, session: SessionDep, user: AdminUser):
+async def create_class(payload: ClassCreate, request: Request, session: SessionDep, user: AdminUser):
     await admin_write(session, user, request)
+    teacher_ids = set(payload.teacher_ids)
+    valid = set((await session.scalars(select(User.id).where(
+        User.id.in_(teacher_ids), User.role == "teacher", User.enabled.is_(True)
+    ))).all())
+    if len(teacher_ids) != len(payload.teacher_ids) or teacher_ids != valid:
+        raise HTTPException(422, "教练重复、不存在或已停用")
+    if any(r.role != "student" or r.class_id is not None for r in payload.student_accounts):
+        raise HTTPException(422, "新班名单只允许未指定班级的新学生账号")
+    if payload.student_accounts:
+        errors = await validate_accounts(session, AccountBatch(rows=payload.student_accounts))
+        if errors:
+            raise HTTPException(409, {"message": "班级未创建，请修正学生名单后重试", "errors": errors})
     row = SchoolClass(name=payload.name)
     session.add(row)
     try:
@@ -260,7 +282,13 @@ async def create_class(payload: ClassInput, request: Request, session: SessionDe
     except IntegrityError as exc:
         await session.rollback()
         raise HTTPException(409, "班级名称已存在") from exc
-    audit(session, user, "class.create", f"class:{row.id}", {}, {"name": row.name})
+    session.add_all([ClassTeacher(class_id=row.id, teacher_id=tid) for tid in teacher_ids])
+    if payload.student_accounts:
+        await insert_accounts(session, user, AccountBatch(rows=[
+            item.model_copy(update={"class_id": row.id}) for item in payload.student_accounts
+        ]))
+    audit(session, user, "class.create", f"class:{row.id}", {},
+          {"name": row.name, "teacher_ids": sorted(teacher_ids), "students_created": len(payload.student_accounts)})
     await session.commit()
     return {"id": row.id}
 

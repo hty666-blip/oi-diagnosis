@@ -507,7 +507,7 @@ export const api = {
   resetPassword: (id: number, body: { expected_version: number; password: string }) => post<AdminAccount>(`/admin/users/${id}/password`, body),
   transferPreview: (id: number, body: { expected_version: number; class_id: number | null }) => post<TransferImpact>(`/admin/users/${id}/transfer/preview`, body),
   transferStudent: (id: number, body: { expected_version: number; class_id: number | null }) => post<AdminAccount>(`/admin/users/${id}/transfer`, body),
-  createClass: (name: string) => post<{ id: number }>("/admin/classes", { name }),
+  createClass: (name: string, teacher_ids: number[] = [], student_accounts: AccountInput[] = []) => post<{ id: number }>("/admin/classes", { name, teacher_ids, student_accounts }),
   editClass: async (id: number, body: { name: string; expected_version: number; archived: boolean; teacher_ids: number[]; transfer_to: number | null }) => readJson<{ transferred: number }>(await request(`/admin/classes/${id}`, body, "PATCH")),
   importPreview: (rows: AccountInput[]) => post<{ rows: { row: number; username: string; display_name: string; role: string; class_id: number | null }[]; errors: { row: number; message: string }[] }>("/admin/users/import/preview", { rows }),
   importAccounts: (rows: AccountInput[]) => post<AdminAccount[]>("/admin/users/import", { rows }),

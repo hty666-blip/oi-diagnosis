@@ -534,6 +534,29 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .admin-form fieldset { border: 1px solid var(--line); padding: 16px; }
 .admin-form .admin-check { display: flex; align-items: center; gap: 10px; margin-block: 10px; }
 .admin-check input { width: auto; }
+
+/* 管理操作使用独立焦点区域，列表保留在原位置。 */
+.admin-modal { color: var(--text); background: var(--panel); border: 0; border-radius: var(--radius); padding: 0; width: min(640px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 48px); box-shadow: var(--shadow); }
+.admin-modal-wide { width: min(880px, calc(100vw - 32px)); }
+.admin-modal::backdrop { background: rgba(0, 0, 0, .68); }
+.admin-modal-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.admin-modal-head h2 { margin: 0; font-size: 20px; overflow-wrap: anywhere; }
+.admin-modal-body { padding: 20px 24px 24px; overflow-wrap: anywhere; }
+.admin-modal-body > :first-child { margin-top: 0; }
+.admin-modal .admin-form { max-width: none; }
+.admin-modal .admin-actions { margin-bottom: 0; }
+.admin-modal .admin-actions button { min-height: 40px; }
+.admin-modal .table-scroll { max-width: 100%; }
+.admin-modal :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.admin-modal input[type=file] { white-space: normal; }
+@media (max-width: 600px) {
+  .admin-modal, .admin-modal-wide { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .admin-modal-head { padding: 16px; }
+  .admin-modal-body { padding: 16px; }
+  .admin-modal input, .admin-modal select, .admin-modal textarea { font-size: 16px; }
+  .admin-modal .admin-actions { align-items: stretch; }
+  .admin-modal .admin-actions button { flex: 1 1 auto; }
+}
 .admin-section { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 20px; }
 .admin-status { display: grid; gap: 16px; }
 .admin-status dt { color: var(--muted); margin-bottom: 6px; }

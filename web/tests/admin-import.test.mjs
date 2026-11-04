@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sourceModule } from "./load-source.mjs";
 
-const { parseAccountCsv } = await sourceModule("../src/admin-import.ts");
+const { parseAccountCsv, parseClassStudentCsv } = await sourceModule("../src/admin-import.ts");
 const header = "username,display_name,role,password,class_id\r\n";
+
+test("新班名单自动归班前仅接受新学生，拒绝混入教练或其他班级", () => {
+  assert.equal(parseClassStudentCsv(header + "s1,学生,student,initial-pass,\n")[0].class_id, null);
+  for (const row of ["t1,教练,teacher,initial-pass,", "s1,学生,student,initial-pass,12"]) {
+    assert.throws(() => parseClassStudentCsv(header + row), /class_id/);
+  }
+});
 
 test("CSV 正确处理 BOM、引号、逗号、换行与密码前后空白", () => {
   const rows = parseAccountCsv('\uFEFF' + header + 'S001,"小明,同学",student,"  my secret  ",12\r\nS002,"有""引号\n姓名",teacher,12345678,\r\n');

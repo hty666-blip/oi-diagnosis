@@ -1,5 +1,13 @@
 import type { AccountInput } from "./api";
 
+export function parseClassStudentCsv(text: string): AccountInput[] {
+  const rows = parseAccountCsv(text);
+  if (rows.some((row) => row.role !== "student" || row.class_id !== null)) {
+    throw new Error("新班学生名单只允许 student，class_id 请留空；保存时自动加入新班。");
+  }
+  return rows;
+}
+
 // 支持带引号、逗号及双引号转义的 CSV；不将临时密码写入浏览器存储。
 export function parseAccountCsv(text: string): AccountInput[] {
   const records: string[][] = [];
