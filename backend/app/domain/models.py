@@ -345,6 +345,24 @@ class HintTurn(Base):
     session: Mapped[HintSession] = relationship(back_populates="turns")
 
 
+class HintMessageReceipt(Base):
+    """已提交消息的事务回执；摘要避免请求编号受到数据库排序规则影响。"""
+
+    __tablename__ = "hint_message_receipt"
+    __table_args__ = (
+        UniqueConstraint("session_id", "request_hash", name="uq_hint_message_request"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("hint_session.id", ondelete="CASCADE"), index=True)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
 class Mastery(Base):
     """知识点掌握度（BKT），带不确定度，便于"宁可不说"。"""
 

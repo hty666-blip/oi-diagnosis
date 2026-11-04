@@ -2,6 +2,7 @@
 param(
     [switch]$SkipCompose,
     [switch]$SkipJudge,
+    [switch]$GoJudge,
     [switch]$SkipInstall,
     [switch]$DisableLlm,
     [switch]$NoReload,
@@ -52,7 +53,20 @@ if (-not $SkipCompose) {
     if (Test-Path -LiteralPath $EnvironmentPath) { $ComposeArgs += @('--env-file', $EnvironmentPath) }
     $ComposeArgs += @('-f', (Join-Path $ProjectRoot 'deploy\compose.dev.yml'))
     $Services = @('mysql', 'redis')
-    if (-not $SkipJudge) { $Services += 'judge' }
+    $useGoJudge = $GoJudge -or $env:JUDGE_BACKEND -eq 'gojudge'
+    if (-not $env:JUDGE_BACKEND -and (Test-Path -LiteralPath $EnvironmentPath)) {
+        $useGoJudge = $useGoJudge -or [bool](Select-String -LiteralPath $EnvironmentPath -Pattern '^\s*JUDGE_BACKEND\s*=\s*["'']?gojudge["'']?\s*$' -Quiet)
+    }
+    if (-not $SkipJudge -and $useGoJudge) {
+        $ComposeArgs += @('--profile', 'gojudge')
+        $Services += 'judge'
+    } elseif (-not $SkipJudge) {
+        & docker image inspect oi-judge:dev --format '{{.Id}}' *> $null
+        if ($LASTEXITCODE -ne 0) {
+            & docker @ComposeArgs build judge
+            Assert-NativeSuccess 'Docker 判题镜像构建'
+        }
+    }
     & docker @ComposeArgs up -d @Services
     Assert-NativeSuccess '开发基础设施启动'
     foreach ($serviceName in @('mysql', 'redis')) {
@@ -63,7 +77,7 @@ if (-not $SkipCompose) {
             return $LASTEXITCODE -eq 0 -and $health -eq 'healthy'
         }
     }
-    if (-not $SkipJudge) {
+    if (-not $SkipJudge -and $useGoJudge) {
       Wait-For 'judge' {
         $containerId = & docker @ComposeArgs ps -q judge
         if ($LASTEXITCODE -ne 0 -or -not $containerId) { return $false }

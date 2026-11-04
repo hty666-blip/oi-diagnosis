@@ -7,6 +7,7 @@ services:
   mysql:
     image: mysql:8.4
     container_name: oi-mysql
+    restart: unless-stopped
     environment:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-oi_diagnosis}
       MYSQL_USER: ${MYSQL_USER:-gesp_user}
@@ -30,6 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: oi-redis
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
@@ -72,6 +74,7 @@ services:
         DEBIAN_MIRROR: ${DEBIAN_MIRROR:-}
     image: oi-judge:dev
     container_name: oi-judge
+    profiles: ["gojudge"]
     privileged: true
     shm_size: "256m"
     ports:

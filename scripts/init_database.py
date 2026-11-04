@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 from sqlalchemy import text
@@ -15,7 +16,7 @@ from sqlalchemy.pool import NullPool
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.core.config import settings  # noqa: E402
+from app.core.config import settings
 
 
 async def ensure_database() -> None:
@@ -29,7 +30,8 @@ async def ensure_database() -> None:
     if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", database):
         raise RuntimeError("MySQL 数据库名必须由字母、数字或下划线组成")
 
-    server_url = url.set(database=None)
+    # URL.set(None) 表示保留旧值；空字符串才真正移除默认库。
+    server_url = url.set(database="")
     engine = create_async_engine(server_url, poolclass=NullPool)
     try:
         async with engine.begin() as connection:
@@ -43,11 +45,9 @@ async def ensure_database() -> None:
 
 
 def main() -> int:
-    try:
+    with suppress(AttributeError, OSError, ValueError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        pass
     try:
         asyncio.run(ensure_database())
         return 0

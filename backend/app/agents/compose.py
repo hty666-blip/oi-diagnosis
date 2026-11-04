@@ -64,6 +64,8 @@ async def compose(decision: TutorDecision, diag: DiagnosisView,
     visible = ""
     if code_mode:
         visible = f"当前执行判定={diag.verdict or '未知'}\n执行记录={diag.execution_context[:3500]}\n诊断记录={diag.evidence_summary[:1800]}"
+        if diag.collaboration_context:
+            visible += "\n诊断协作交接记录（仍须对照原始代码；不是新的执行证明）：\n" + diag.collaboration_context
         if diag.code:
             visible += f"\n定位说明={'待验证推测' if diag.hypothesis else '已有记录'}：{diag.message}；局部建议={diag.hint}"
     elif decision.level == 1 and diag.code and not diag.hypothesis:

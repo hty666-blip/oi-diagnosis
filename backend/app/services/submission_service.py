@@ -43,7 +43,7 @@ from app.services.job_service import JobLease, require_lease
 from app.services.problem_versions import capture_current, resolve_problem, snapshot
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v8"
+PIPELINE_VER = "v9"
 logger = logging.getLogger(__name__)
 
 
@@ -345,6 +345,7 @@ class SubmissionService:
                            and outputs_equal(res.stdout, sample["output"]),
                 "exit_code": res.exit_code,
                 "time_ms": res.time_ms,
+                "time_kind": res.time_kind,
                 "memory_kb": res.memory_kb,
                 "stdout": res.stdout[:4000],
                 "stdout_truncated": len(res.stdout) > 4000,
@@ -381,6 +382,12 @@ class SubmissionService:
         submission.tests_passed = {"passed": result.passed, "total": result.total,
                                    "scope": suite.scope, "suite_digest": suite.digest}
         submission.stage = "READY"
+        traces = (await self.session.execute(select(Evidence).where(
+            Evidence.submission_id == submission.id, Evidence.type == "run_trace"))).scalars().all()
+        times = [(e.payload or {}).get("time_ms") for e in traces]
+        memories = [(e.payload or {}).get("memory_kb") for e in traces]
+        submission.time_ms = max((v for v in times if type(v) is int and v > 0), default=None)
+        submission.memory_kb = max((v for v in memories if type(v) is int and v > 0), default=None)
 
         mechanism = [
             {"code": f.code, "conf": f.confidence, "line": f.line}

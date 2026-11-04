@@ -1,6 +1,7 @@
-import { sameSource, verificationRecovery, verifyWithRefresh } from "./tutor-verification";
+import { sameSource, shouldVerifySubmission, verificationRecovery, verifyWithRefresh } from "./tutor-verification";
 import { indentedNewline, shouldSendMessage } from "./editor-input";
 import { emptyQuestionDraft, questionDraftStore } from "./question-draft";
+import { sendMessageWithHistory, type ChatMessage } from "./tutor-message";
 import { useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
@@ -10,6 +11,7 @@ import PasswordSettings from "./components/PasswordSettings";
 import Markdown from "./Markdown";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
+import AgentCollaboration from "./components/AgentCollaboration";
 import SubmissionLineage from "./components/SubmissionLineage";
 import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import JudgingQueuePanel from "./components/JudgingQueuePanel";
@@ -509,7 +511,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
         <label className="problem-picker"><span className="dim">选择题目</span><select aria-label="选择题目" value={pid} disabled={!!busy || loadingProblems || !!training} onChange={(e) => selectProblem(e.target.value)}>
           {!pid && <option value="">{loadingProblems ? "正在加载题目…" : "暂无可用题目"}</option>}
           {pid && !problems.some((p) => p.pid === pid) && <option value={pid}>{pid} · {training ? "训练固定版本" : "历史提交版本"}</option>}
-          {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + (problem.pid === pid && detail ? detail.title : problem.title)}</option>)}
+          {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + (problem.pid === pid && detail ? detail.title : problem.title) + (problem.verification_scope === "package" ? " · 已配置正式测试" : problem.verification_scope === "samples" ? " · 仅公开样例" : "")}</option>)}
         </select></label>
       </div>
       {!training && sub && <p className="muted">当前继续提交 #{sub.id} 所用的题目版本。另开新练习会保留编辑器代码，与原答疑和提交关系分开。<button className="ghost" disabled={!!busy || phase === "pending" || !problems.some((p) => p.pid === pid)} onClick={startCurrentPractice}>使用当前上架版本开始新练习</button></p>}
@@ -524,6 +526,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
           {detail && <>
             <div className="oj-title"><h2>{detail.pid + " " + detail.title}</h2><div className="row">
               {!!detail.revision && <span className="badge">题目 v{detail.revision}{training ? " · 训练固定" : sub ? " · 历史提交" : ""}</span>}
+              {detail.verification_scope === "samples" && <span className="badge warn">仅样例，可讲解代码，暂不能正式结案</span>}
               {detail.difficulty && <span className="badge">{detail.difficulty}</span>}
               {detail.tags.slice(0, 4).map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div></div>
@@ -579,7 +582,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
               : sub.tests_passed?.scope === "package" ? "结果基于本次固定版本的题包测试数据，不代表对所有可能输入的数学证明。"
               : sub.tests_passed?.scope === "samples" ? "本次仅使用题面样例测试，以下结论也仅限于这些执行记录。"
               : "这条记录尚未标注完整测试范围，重新提交后可查看实际验证范围。"}</p>
-            {busy === "diagnose" && <p role="status" className="muted">执行结果已保留，正在分析已有证据…</p>}
+            {busy === "diagnose" && <p role="status" className="muted">执行结果已保留，正在核对证据并协作分析；完成后可查看各角色的结论与审查记录。</p>}
             <ErrorNotice message={diagError ? "执行已完成，诊断未完成：" + diagError : ""} onRetry={() => void retryDiagnosis()} />
             {diag && !["SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "") && <div className="diagnosis-block">
               <h3>{diag.reviewed_at ? "当前审定说明" : diag.route === "llm_hypothesis" ? "待核实的模型建议" : diag.status === "needs_human" ? "现有证据与下一步检查" : "自动诊断说明"}</h3>
@@ -591,11 +594,12 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
                 {finding.hint && <span className="hint">建议：{finding.hint}</span>}
               </li>)}</ul>}
             </div>}
+            <AgentCollaboration value={diag?.collaboration} reviewed={!!diag?.reviewed_at} />
             <EvidencePanel items={evidence} loading={evidenceLoading} error={evidenceError} onRetry={() => void loadEvidence(sub.id)} />
-            {canTutor && !tutorSubmission && <button className="ghost" onClick={() => {
+            {canTutor && tutorSubmission !== sub.id && <button className="ghost" onClick={() => {
               writeLocal(activeHintKey(storageId, pid), String(sub.id));
               setTutorSubmission(sub.id);
-            }}>讲解已提交的代码</button>}
+            }}>{tutorSubmission ? "讲解本次提交的代码" : "讲解已提交的代码"}</button>}
             </>}
             {phase !== "pending" && <SubmissionLineage key={sub.id} submissionId={sub.id} onOpen={(id) => setLineageRestore({ id, tick: Date.now() })} />}
           </section>}
@@ -605,8 +609,6 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
     </>
   );
 }
-
-type ChatMessage = { role: "tutor" | "student"; level: number; text: string };
 
 function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { submissionId: number; userId: number; latestSubmitted: SubmissionResult | null; onEditCode: () => void }) {
   const draftStore = questionDraftStore({ getItem: readLocal, setItem: writeLocal, removeItem: removeLocal }, userId, submissionId);
@@ -622,11 +624,13 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   const [verifyAction, setVerifyAction] = useState<"retry" | "edit" | "restart">("retry");
   const [verifying, setVerifying] = useState(false);
   const sendLock = useRef(false);
+  const messageGeneration = useRef(0);
   const verified = useRef(new Set<number>());
   const chatRef = useRef<HTMLDivElement>(null);
   const sessionKey = hintSessionKey(userId, submissionId);
 
   useEffect(() => {
+    messageGeneration.current++;
     let active = true;
     setLoading(true); setError("");
     async function open() {
@@ -651,7 +655,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
       setMessages([{ role: "tutor", level: reply.level, text: reply.reply }]);
     }
     void open().catch((e) => { if (active) setError(messageOf(e)); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    return () => { active = false; messageGeneration.current++; };
   }, [submissionId, retry]);
 
   useEffect(() => {
@@ -664,7 +668,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }, [messages]);
 
   useEffect(() => {
-    if (!session || !latestSubmitted || busy || latestSubmitted.id === submissionId || verified.current.has(latestSubmitted.id)) return;
+    if (!session || !latestSubmitted || busy || !shouldVerifySubmission(session.status, submissionId, latestSubmitted.id, verified.current.has(latestSubmitted.id))) return;
     let active = true;
     setVerifying(true); setVerifyError(""); setVerifyAction("retry");
     verifyWithRefresh({
@@ -693,18 +697,30 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }, [latestSubmitted?.id, session?.session_id, verifyRetry, busy]);
 
   async function send() {
-    if (!session || !draft.content.trim() || sendLock.current || verifying || !["open", "resolved"].includes(session.status)) return;
+    if (!session || !draft.content.trim() || loading || sendLock.current || verifying || !["open", "resolved"].includes(session.status)) return;
     const content = draft.content.trim(), sentId = draft.id;
+    const generation = messageGeneration.current;
+    const isCurrent = () => generation === messageGeneration.current;
     sendLock.current = true; setBusy(true); setError("");
     try {
-      const reply = await api.sendMessage(session.session_id, content);
-      setMessages((rows) => [...rows, { role: "student", level: session.level, text: content }, { role: "tutor", level: reply.level, text: reply.reply }]);
-      setSession(reply); draftStore.acknowledge(sentId);
-      setDraft((current) => current.id === sentId ? emptyQuestionDraft : current);
-    } catch (e) { setError(messageOf(e)); } finally { setBusy(false); sendLock.current = false; }
+      const result = await sendMessageWithHistory({
+        send: () => api.sendMessage(session.session_id, content, sentId),
+        refresh: () => api.getSession(session.session_id), isCurrent,
+      });
+      if (!result || !isCurrent()) return;
+      setMessages(result.messages); setSession(result.session);
+      if (result.session.verified_submission_id) verified.current.add(result.session.verified_submission_id);
+      if (result.accepted) {
+        draftStore.acknowledge(sentId);
+        setDraft((current) => current.id === sentId ? emptyQuestionDraft : current);
+      } else setError(result.notice);
+    } catch (e) { if (isCurrent()) setError(messageOf(e)); }
+    finally { if (isCurrent()) { setBusy(false); sendLock.current = false; } }
   }
 
   function restart() {
+    messageGeneration.current++;
+    sendLock.current = false; setBusy(false);
     removeLocal(sessionKey);
     verified.current.clear();
     setSession(null); setMessages([]); setError(""); setVerifyError("");
@@ -712,7 +728,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
   }
 
   return <section className="card" aria-label="代码讲解与修改验证">
-    <div className="card-head"><h2>代码讲解与修改验证</h2><span className="sub">当前代码 #{session?.verified_submission_id ?? submissionId}</span></div>
+    <div className="card-head"><h2>代码讲解与修改验证</h2><span className="sub">答疑 Agent · 当前代码 #{session?.verified_submission_id ?? submissionId}</span></div>
     <p className="muted">直接结合已提交的代码和执行记录讲解。没懂可以继续问，老师会逐句解释；修改编辑器内容后请重新提交验证。</p>
     {loading && <p role="status">正在读取代码并准备讲解…</p>}
     <ErrorNotice message={error} onRetry={!session ? () => setRetry((value) => value + 1) : undefined} />
@@ -743,13 +759,22 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
   const [rows, setRows] = useState<MySubmission[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  async function load() {
-    setLoading(true); setError("");
-    try { setRows(await api.mySubmissions()); } catch (e) { setError(messageOf(e)); } finally { setLoading(false); }
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const readLock = useRef(false);
+  async function load(beforeId?: number) {
+    if (readLock.current) return;
+    readLock.current = true;
+    setLoading(!beforeId); setLoadingMore(!!beforeId); setError("");
+    try {
+      const items = await api.mySubmissions(beforeId);
+      setRows((previous) => beforeId ? [...previous, ...items.filter((item) => !previous.some((old) => old.id === item.id))] : items);
+      setHasMore(items.length === 50);
+    } catch (e) { setError(messageOf(e)); } finally { readLock.current = false; setLoading(false); setLoadingMore(false); }
   }
   useEffect(() => { void load(); }, []);
   return <>
-    <div className="page-head"><div><h1>提交记录</h1><p>重新打开代码和执行证据，继续修改。测试通过记录不等同于知识点掌握度。</p></div><button className="ghost" onClick={() => void load()} disabled={loading}>刷新记录</button></div>
+    <div className="page-head"><div><h1>提交记录</h1><p>重新打开代码和执行证据，继续修改。测试通过记录不等同于知识点掌握度。</p></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新记录</button></div>
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">
       {loading ? <div className="empty" role="status">正在加载提交记录…</div> : !rows.length && !error ? <div className="empty">还没有提交记录。从「练习与诊断」选择一道题，提交你的第一份代码。</div> : <div className="table-scroll"><table><thead><tr><th>题目 / 提交</th><th>执行结果</th><th>诊断摘要</th><th>操作</th></tr></thead><tbody>
@@ -763,6 +788,7 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
           </tr>;
         })}
       </tbody></table></div>}
+      {hasMore && <button className="ghost" disabled={loading || loadingMore} onClick={() => void load(rows[rows.length - 1]?.id)}>{loadingMore ? "正在加载…" : "加载更早提交"}</button>}
     </div>
   </>;
 }
@@ -772,23 +798,30 @@ function CoachView({ userId }: { userId: number }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const readLock = useRef(false);
   const [selectedId, setSelectedId] = useState<number | null>(() => Number(readLocal("oi-selected-review:" + userId)) || null);
-  async function load() {
-    setLoading(true); setError("");
+  async function load(beforeId?: number) {
+    if (readLock.current) return;
+    readLock.current = true;
+    setLoading(!beforeId); setLoadingMore(!!beforeId); setError("");
     try {
-      const [items, summary] = await Promise.all([api.coachQueue(), api.coachOverview()]);
-      setQueue(items); setOverview(summary);
-    } catch (e) { setError(messageOf(e)); } finally { setLoading(false); }
+      const [items, summary] = await Promise.all([api.coachQueue(beforeId), beforeId ? Promise.resolve(null) : api.coachOverview()]);
+      setQueue((previous) => beforeId ? [...previous, ...items.filter((item) => !previous.some((old) => old.diagnosis_id === item.diagnosis_id))] : items);
+      setHasMore(items.length === 20); if (summary) setOverview(summary);
+    } catch (e) { setError(messageOf(e)); } finally { readLock.current = false; setLoading(false); setLoadingMore(false); }
   }
   useEffect(() => { void load(); }, []);
   return <>
-    <div className="page-head"><div><h1>待复核记录</h1><p>核对学生源码和执行证据，再确认、修订或退回诊断。每次处理都会留下审计记录。</p></div><button className="ghost" onClick={() => void load()} disabled={loading}>刷新队列</button></div>
+    <div className="page-head"><div><h1>待复核记录</h1><p>核对学生源码和执行证据，再确认、修订或退回诊断。每次处理都会留下审计记录。</p></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新队列</button></div>
     {overview && <p className="muted">当前可见提交 {overview.submissions} 条 · 诊断 {overview.diagnoses} 条 · 待复核 {overview.pending_review} 条</p>}
     <JudgingQueuePanel />
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">{loading ? <div className="empty" role="status">正在加载待复核记录…</div> : !queue.length && !error ? <div className="empty">暂无待复核记录。已打开记录的审定历史仍保留在下方。</div> : <div className="table-scroll"><table><thead><tr><th>学生 / 题目</th><th>执行结果</th><th>待检查的解释</th><th>操作</th></tr></thead><tbody>
       {queue.map((row) => <tr key={row.diagnosis_id}><td><strong>{row.student_name || "学生提交"}</strong><div className="dim">{row.problem_pid} {row.problem_title} · #{row.submission_id}</div></td><td><VerdictBadge verdict={row.verdict} tests={row.tests_passed} /></td><td className="muted">{row.narrative || "暂无诊断摘要"}</td><td><button className="ghost" onClick={() => { setSelectedId(row.submission_id); writeLocal("oi-selected-review:" + userId, String(row.submission_id)); }}>{selectedId === row.submission_id ? "正在查看" : "查看并复核"}</button></td></tr>)}
     </tbody></table></div>}</div>
+    {hasMore && <button className="ghost" disabled={loading || loadingMore} onClick={() => void load(queue[queue.length - 1]?.diagnosis_id)}>{loadingMore ? "正在加载…" : "加载更早待复核记录"}</button>}
     {selectedId && <ReviewPanel key={selectedId} submissionId={selectedId} onReviewed={() => void load()} />}
   </>;
 }

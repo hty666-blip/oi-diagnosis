@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,11 +18,19 @@ from app.agents.tutor import (
     safe_output,
 )
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
+from app.domain.models import (
+    Diagnosis,
+    Evidence,
+    HintMessageReceipt,
+    HintSession,
+    HintTurn,
+    Submission,
+    User,
+)
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
 from app.services.evidence_text import has_escaped_input
-from app.services.judgement import effective_verdict
+from app.services.judgement import effective_verdict, valid_test_summary
 from app.services.problem_versions import resolve_problem
 from app.services.runtime_ai import observe_call, runtime_client
 
@@ -90,14 +100,48 @@ class TutorService:
         await self.session.refresh(turn)
         return hs, turn
 
-    async def reply(self, session_id: int, message: str) -> dict:
+    async def _current_message_state(self, hs: HintSession) -> dict:
+        """重放只复用消息正文，会话与核验信息始终来自当前绑定。"""
+        source_id = hs.verified_submission_id or hs.submission_id
+        source = await self.session.get(Submission, source_id)
+        if source is not None:
+            source = await accessible_submission(self.session, self.user, source_id)
+            original = await accessible_submission(self.session, self.user, hs.submission_id)
+            if source.student_id != hs.student_id or source.problem_id != original.problem_id:
+                raise HTTPException(status_code=409, detail="答疑绑定的提交归属不一致，请重新开启提示")
+        return {
+            "status": await self._visible_status(hs),
+            "level": hs.level,
+            "verified_submission_id": hs.verified_submission_id,
+            "verdict": effective_verdict(source) if source is not None else None,
+        }
+
+    async def reply(self, session_id: int, message: str, request_id: str | None = None) -> dict:
         hs = await accessible_hint_session(self.session, self.user, session_id, lock=True)
+        # 会话锁串行化并发重放；回执不能绕过当前账号的归属校验。
+        request_hash = sha256(request_id.encode("utf-8")).hexdigest() if request_id is not None else None
+        content_hash = sha256(message.encode("utf-8")).hexdigest()
+        if request_hash is not None:
+            receipt = await self.session.scalar(select(HintMessageReceipt).where(
+                HintMessageReceipt.session_id == hs.id,
+                HintMessageReceipt.request_hash == request_hash,
+            ))
+            if receipt is not None:
+                if receipt.actor_id != self.user.id or receipt.content_sha256 != content_hash:
+                    raise HTTPException(status_code=409, detail="该消息编号已用于其他内容或账号，请核对后重新发送")
+                return {
+                    **receipt.response,
+                    **await self._current_message_state(hs),
+                    "accepted": True,
+                    "replayed": True,
+                }
         if (hs.status in ("escalated", "blocked")
                 or (hs.status == "resolved" and await self._visible_status(hs) != "resolved")):
             status = await self._visible_status(hs)
             return {"session_id": hs.id, "status": status, "level": hs.level,
                     "reply": ("历史核验结果待核对，请重新提交正式测试后新建答疑。" if status == "unverified"
-                              else "这次会话已经结束，可以开一个新的。"), "action": "closed"}
+                              else "这次会话已经结束，可以开一个新的。"), "action": "closed",
+                    "accepted": False, "replayed": False}
 
         source_submission_id = hs.verified_submission_id or hs.submission_id
         source = await accessible_submission(self.session, self.user, source_submission_id)
@@ -178,9 +222,7 @@ class TutorService:
             hs.cheat_flags += 1
             if hs.cheat_flags >= 3:
                 hs.status = "blocked"
-        await self.session.commit()
-
-        return {
+        result = {
             "session_id": hs.id,
             "status": hs.status,
             "level": hs.level,
@@ -190,7 +232,17 @@ class TutorService:
             "mastery": None,
             "verified_submission_id": hs.verified_submission_id,
             "verdict": effective_verdict(source),
+            "accepted": True,
+            "replayed": False,
         }
+        if request_hash is not None:
+            self.session.add(HintMessageReceipt(
+                session_id=hs.id, request_hash=request_hash, actor_id=self.user.id,
+                content_sha256=content_hash, response=result,
+            ))
+        # 消息、会话状态、调用观察与回执一起提交。事务失败后不得留下成功回执。
+        await self.session.commit()
+        return result
 
     async def verify(self, session_id: int, submission_id: int) -> dict:
         """绑定修改后真实提交；样例通过和学生口述均不能关闭答疑。"""
@@ -220,7 +272,11 @@ class TutorService:
             raise HTTPException(status_code=409, detail={
                 "code": "verification_pending", "message": "新提交尚未完成判题，请等待完成后再核验。",
             })
-        if hs.status == "resolved":
+        stale_binding = hs.status == "resolved" and await self._visible_status(hs) == "unverified"
+        if stale_binding and hs.verified_submission_id is None:
+            raise HTTPException(409, {"code": "verification_restart",
+                "message": "历史核验绑定已缺失，请保留原记录并为新提交重新开启代码讲解。"})
+        if hs.status == "resolved" and not stale_binding:
             if hs.verified_submission_id != candidate.id:
                 raise HTTPException(status_code=409, detail="答疑已经绑定其他通过题包核验的提交")
             return self._verification_reply(hs, candidate, "这次答疑已完成核验。")
@@ -233,12 +289,13 @@ class TutorService:
             raise HTTPException(status_code=409, detail="请核验更新的提交，不能回退到之前的版本")
 
         hs.verified_submission_id = candidate.id
-        counts = candidate.tests_passed or {}
+        if stale_binding:
+            hs.status = "open"
+        counts = valid_test_summary(candidate) or {}
         complete = (
             effective_verdict(candidate) == "AC"
             and counts.get("scope") == "package"
-            and isinstance(counts.get("total"), int)
-            and counts["total"] > 0
+            and counts.get("total", 0) > 0
             and counts.get("passed") == counts["total"]
         )
         if complete:
@@ -283,6 +340,15 @@ class TutorService:
     async def _diagnosis_view(self, diag: Diagnosis | None, submission_id: int) -> DiagnosisView:
         submission = await self.session.get(Submission, submission_id)
         view = _diag_view(diag, submission.lang if submission else "cpp17")
+        collaboration = (diag.model_meta or {}).get("collaboration") if diag is not None else None
+        if isinstance(collaboration, dict):
+            records = collaboration.get("steps", [])
+            view.collaboration_context = "\n".join(
+                f"{record.get('agent')}（{record.get('status')}）：{str(record.get('summary', ''))[:500]}"
+                for record in records[-6:] if isinstance(record, dict)
+            )[:2200]
+            if "critic_blocked" in (diag.degraded or []):
+                view.collaboration_context = "先前候选错因未通过独立审查，不得沿用。只依据原始源码和执行事实讲解。"
         if submission is not None:
             view.source_code = submission.code
             view.verdict = effective_verdict(submission)
@@ -350,11 +416,9 @@ class TutorService:
         ).scalars().all()
         return {
             "session_id": hs.id,
-            "status": await self._visible_status(hs),
-            "level": hs.level,
+            **await self._current_message_state(hs),
             "cheat_flags": hs.cheat_flags,
             "submission_id": hs.submission_id,
-            "verified_submission_id": hs.verified_submission_id,
             "turns": [{"role": t.role, "level": t.level, "content": t.content} for t in turns],
         }
 

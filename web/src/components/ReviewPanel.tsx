@@ -5,6 +5,7 @@ import {
 } from "../api";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./RecordUI";
 import { executionLabel } from "../evidence-state";
+import AgentCollaboration from "./AgentCollaboration";
 
 const DECISION_LABEL: Record<ReviewDecision, string> = {
   confirm: "确认诊断", revise: "修订诊断", return: "退回补充",
@@ -115,6 +116,7 @@ export default function ReviewPanel({ submissionId, onReviewed }: { submissionId
         </section>
         <section aria-label="诊断审定">
           <h3>当前诊断说明</h3><p className="narrative">{submission.diagnosis?.narrative || "暂无自动诊断说明。"}</p>
+          <AgentCollaboration value={submission.diagnosis?.collaboration} reviewed={!!submission.diagnosis?.reviewed_at} />
           {history && <p className="dim">当前审定版本 {history.current_revision}</p>}
           <form className="review-form" onSubmit={(e) => { e.preventDefault(); void save(); }}>
             <label htmlFor="review-decision">处理方式</label>

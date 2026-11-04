@@ -30,6 +30,10 @@ EXCLUDED = {"worker_heartbeat", "ai_configuration", "ai_configuration_check", "a
 MAGIC = b"OI-BACKUP-1\x00"
 MAX_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE = 32 * 1024 * 1024
+# 唯一兼容例外：新表只记录新增请求，不为旧答疑伪造历史回执。
+RECEIPT_SOURCE_REVISION = "m7e93da8152b"
+RECEIPT_TARGET_REVISION = "n8fa0416c2de"
+RECEIPT_TABLE = "hint_message_receipt"
 
 
 class BackupError(Exception):
@@ -166,10 +170,24 @@ class BackupIO:
             if len(raw) > MAX_BYTES:
                 raise BackupError("backup_too_large")
             payload = json.loads(raw)
-            if payload.get("format") != "oi-backup-v1" or payload.get("revision") != current_revision():
+            if not isinstance(payload, dict) or payload.get("format") != "oi-backup-v1":
                 raise BackupError("schema_mismatch")
-            if set(payload.get("tables", {})) != {t.name for t in tables()}:
+            source_revision, target_revision = payload.get("revision"), current_revision()
+            compatible = (source_revision == RECEIPT_SOURCE_REVISION
+                          and target_revision == RECEIPT_TARGET_REVISION)
+            if source_revision != target_revision and not compatible:
+                raise BackupError("schema_mismatch")
+            current_tables = {t.name for t in tables()}
+            expected_tables = current_tables - {RECEIPT_TABLE} if compatible else current_tables
+            data = payload.get("tables")
+            if (not isinstance(data, dict) or set(data) != expected_tables
+                    or compatible and RECEIPT_TABLE not in current_tables):
                 raise BackupError("invalid_archive")
+            if compatible:
+                data[RECEIPT_TABLE] = []
+                payload["revision"] = target_revision
+            # 来源只能由已校验的原始结构版本推导，不能信备份自报的来源字段。
+            payload["source_revision"] = source_revision
             return payload
         except InvalidTag as exc:
             raise BackupError("decrypt_failed") from exc
@@ -257,7 +275,9 @@ class BackupIO:
                             raise BackupError("version_integrity_failed")
                     successful = True
                     return {"counts": {name: len(rows) for name, rows in actual.items()}, "content_verified": True,
-                            "credentials_excluded": True, "old_logins_revoked": True, "ai_disabled": True}
+                            "credentials_excluded": True, "old_logins_revoked": True, "ai_disabled": True,
+                            "source_revision": payload.get("source_revision", payload["revision"]),
+                            "restored_revision": current_revision()}
                 finally:
                     await conn.rollback()
                     if created and (not keep or not successful):

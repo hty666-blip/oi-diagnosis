@@ -67,6 +67,22 @@ async def test_teacher_confirms_with_replayable_audit_without_changing_verdict(a
     assert queue.json() == []
 
 
+@pytest.mark.parametrize("score", [None, 0.8])
+async def test_revised_explanation_does_not_inherit_machine_confidence(api_context, score):
+    ctx = api_context
+    submission, diagnosis, evidence = await _reviewable(ctx)
+    diagnosis.confidence = 0.55
+    await ctx.session.flush()
+    response = await ctx.client.post("/api/v1/coach/reviews", headers=ctx.headers(ctx.users.teacher),
+        json=_payload(submission, evidence, decision="revise", confidence=score,
+                      narrative="已重新核对证据，当前应检查计算过程中的赋值操作。"))
+    assert response.status_code == 200, response.text
+    review = response.json()["review"]
+    assert review["before"]["confidence"] == 0.55
+    assert review["after"]["confidence"] == score
+    assert review["after"]["model_meta"]["confidence_source"] == ("unscored" if score is None else "teacher")
+
+
 async def test_teacher_can_return_then_revise_without_overwriting_history(api_context):
     ctx = api_context
     submission, _, evidence = await _reviewable(ctx)
@@ -250,6 +266,39 @@ async def test_simultaneous_review_writes_accept_exactly_one_version(concurrent_
     async with ctx.sessions() as session:
         assert await session.scalar(select(func.count()).select_from(DiagnosisReview)) == 1
         assert (await session.scalar(select(Diagnosis))).review_revision == 1
+
+
+async def test_concurrent_diagnoses_reserve_before_any_model_cost(concurrent_context, monkeypatch):
+    from test_agent_collaboration import fake_team
+
+    ctx = concurrent_context
+    client, calls, _ = fake_team(evidence_id=ctx.evidence.id)
+    transport = client.transport
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked(request):
+        if not entered.is_set():
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=10)
+        return await transport.handle_async_request(request)
+
+    client.transport = httpx.MockTransport(blocked)
+
+    async def configured(session):
+        return client
+
+    monkeypatch.setattr("app.api.v1.submissions.runtime_client", configured)
+    url = f"/api/v1/submissions/{ctx.submission.id}/diagnose"
+    first = asyncio.create_task(ctx.client.post(url, headers=ctx.student_headers))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        second = await ctx.client.post(url, headers=ctx.student_headers)
+        assert second.status_code == 409 and not calls
+    finally:
+        release.set()
+        completed = await first
+    assert completed.status_code == 200, completed.text
+    assert len(calls) == 3
 
 
 async def test_simultaneous_identical_submission_reuses_one_inflight_job(concurrent_context, monkeypatch):

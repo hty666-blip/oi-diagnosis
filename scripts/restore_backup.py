@@ -22,6 +22,10 @@ async def main():
         target = os.environ.get("RESTORE_DATABASE_URL", "")
         io.verify_url(target)
         payload = await asyncio.to_thread(io.read, args.archive, args.sha256)
+        source_revision = payload["source_revision"]
+        print(f"备份结构版本：{source_revision}；恢复结构版本：{payload['revision']}。")
+        if source_revision != payload["revision"]:
+            print("采用已支持的旧版兼容路径；旧答疑没有请求回执，恢复时补空回执表。")
         if args.execute:
             result = await io.restore(payload, target, keep=True)
             print(f"恢复及内容比对通过，共 {sum(result['counts'].values())} 条。旧登录已撤销，AI 已关闭。")

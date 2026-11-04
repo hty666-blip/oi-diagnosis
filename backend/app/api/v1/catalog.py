@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -44,6 +44,7 @@ async def list_problems(
             "tags": r.tags,
             "samples": len(r.samples or []),
             "package_level": r.package_level,
+            "verification_scope": "package" if r.has_testdata and r.package_level in ("A", "B") else "samples",
             "source": r.source,
             "revision": r.revision,
         }
@@ -56,6 +57,7 @@ async def coach_queue(
     session: SessionDep,
     user: TeacherUser,
     limit: int = Query(20, ge=1, le=100),
+    before_id: int | None = Query(None, gt=0, le=2**63 - 1),
 ) -> list[dict]:
     """待人工复核队列：needs_human 的诊断，按时间倒序。"""
     student_user = aliased(User)
@@ -66,7 +68,8 @@ async def coach_queue(
             .join(Submission, Submission.id == Diagnosis.submission_id)
             .join(Problem, Problem.id == Submission.problem_id)
             .outerjoin(student_user, student_user.id == Submission.student_id)
-            .where(Diagnosis.status == "needs_human", submission_scope(user))
+            .where(Diagnosis.status == "needs_human", submission_scope(user),
+                   True if before_id is None else Diagnosis.id < before_id)
             .order_by(Diagnosis.id.desc())
             .limit(limit)
         )
@@ -79,7 +82,7 @@ async def coach_queue(
             "submission_id": sub.id,
             "verdict": effective_verdict(sub),
             "route": (diag.model_meta or {}).get("route"),
-            "confidence": diag.confidence,
+            "confidence": None if (diag.model_meta or {}).get("confidence_source") == "unscored" else diag.confidence,
             "narrative": result_narrative(sub, diag.narrative),
             "mechanism": diag.mechanism,
             "student_id": sub.student_id,
@@ -97,6 +100,7 @@ async def my_submissions(
     session: SessionDep,
     user: CurrentUser,
     limit: int = Query(50, ge=1, le=200),
+    before_id: int | None = Query(None, gt=0, le=2**63 - 1),
 ) -> list[dict]:
     """当前学生自己的提交历史（含诊断摘要）。"""
     rows = (
@@ -104,7 +108,8 @@ async def my_submissions(
             select(Submission, Diagnosis, Problem)
             .outerjoin(Diagnosis, Diagnosis.submission_id == Submission.id)
             .join(Problem, Problem.id == Submission.problem_id)
-            .where(Submission.student_id == user.id)
+            .where(Submission.student_id == user.id,
+                   True if before_id is None else Submission.id < before_id)
             .order_by(Submission.id.desc())
             .limit(limit)
         )
@@ -137,27 +142,26 @@ async def my_submissions(
 @router.get("/coach/overview")
 async def coach_overview(session: SessionDep, user: TeacherUser) -> dict:
     """教练台概览：判定分布、路由分布、待复核数。"""
-    subs = (
-        await session.execute(select(Submission).where(submission_scope(user)))
-    ).scalars().all()
-    diags = (
-        await session.execute(
-            select(Diagnosis).join(Submission, Submission.id == Diagnosis.submission_id)
-            .where(submission_scope(user))
-        )
-    ).scalars().all()
     verdict: dict[str, int] = {}
-    for s in subs:
-        key = effective_verdict(s) or "?"
+    # 分批读取轻量计数，不把全班源码和诊断协作正文加载进概览内存。
+    stream = await session.stream(select(Submission.verdict, Submission.tests_passed).where(submission_scope(user)))
+    async for row in stream:
+        key = effective_verdict(Submission(verdict=row.verdict, tests_passed=row.tests_passed)) or "?"
         verdict[key] = verdict.get(key, 0) + 1
+    await stream.close()
     route: dict[str, int] = {}
-    for d in diags:
-        r = (d.model_meta or {}).get("route", "unknown")
-        route[r] = route.get(r, 0) + 1
+    route_field = Diagnosis.model_meta["route"].as_string()
+    groups = (await session.execute(select(route_field, func.count()).join(
+        Submission, Submission.id == Diagnosis.submission_id).where(submission_scope(user)).group_by(route_field))).all()
+    for key, count in groups:
+        name = key or "unknown"
+        route[name] = route.get(name, 0) + count
+    pending = await session.scalar(select(func.count()).select_from(Diagnosis).join(
+        Submission, Submission.id == Diagnosis.submission_id).where(submission_scope(user), Diagnosis.status == "needs_human"))
     return {
-        "submissions": len(subs),
-        "diagnoses": len(diags),
-        "pending_review": sum(1 for d in diags if d.status == "needs_human"),
+        "submissions": sum(verdict.values()),
+        "diagnoses": sum(route.values()),
+        "pending_review": pending,
         "verdict": verdict,
         "route": route,
     }
@@ -205,6 +209,8 @@ async def get_problem(
         "source": row.source,
         "source_url": row.source_url,
         "package_level": row.package_level,
+        "verification_scope": (version.suite or {}).get("scope", "samples") if version else
+                              "unknown" if row.has_testdata else "samples",
         "license_note": row.license_note,
         "revision": row.revision,
         "version_id": version_id,

@@ -188,6 +188,7 @@ export interface Problem {
   samples: number;
   package_level: string;
   source: string;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface ProblemDetail {
@@ -205,6 +206,7 @@ export interface ProblemDetail {
   license_note?: string;
   revision?: number;
   version_id?: number | null;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface NatureTag {
@@ -244,6 +246,7 @@ export interface SubmissionResult {
     nature: NatureTag[];
     mechanism: DiagResult["mechanism"];
     degraded?: string[];
+    collaboration?: AgentCollaboration | null;
     review_revision?: number;
     reviewer_id?: number | null;
     reviewed_at?: string | null;
@@ -262,6 +265,15 @@ export interface JudgeJob {
   lease_expires_at: string | null;
 }
 
+export interface AgentCollaboration {
+  version: "collaboration-v1";
+  mode: "multi_agent" | "rules" | "degraded";
+  rounds: number;
+  human_review_required: boolean;
+  steps: { agent: string; method: string; status: string; round: number; summary: string;
+    evidence_ids: number[]; feedback: string[] }[];
+}
+
 export interface DiagResult {
   submission_id: number;
   verdict: string | null;
@@ -273,6 +285,7 @@ export interface DiagResult {
   nature: NatureTag[];
   mechanism: { code: string; confidence: number; evidence_ids?: number[]; explain?: string }[];
   degraded?: string[];
+  collaboration?: AgentCollaboration | null;
   review_revision?: number;
   reviewer_id?: number | null;
   reviewed_at?: string | null;
@@ -294,6 +307,8 @@ export interface SessionReply {
   reply: string;
   verified_submission_id?: number | null;
   verdict?: string | null;
+  accepted?: boolean;
+  replayed?: boolean;
 }
 
 export interface SessionHistory {
@@ -302,6 +317,7 @@ export interface SessionHistory {
   level: number;
   submission_id: number;
   verified_submission_id?: number | null;
+  verdict?: string | null;
   turns: { role: "tutor" | "student"; level: number; content: string }[];
 }
 
@@ -552,12 +568,12 @@ export const api = {
   createSession: (submissionId: number) =>
     post<SessionReply>("/sessions", { submission_id: submissionId }),
   getSession: (id: number) => get<SessionHistory>("/sessions/" + id),
-  sendMessage: (sessionId: number, content: string) =>
-    post<SessionReply>("/sessions/" + sessionId + "/messages", { content }),
+  sendMessage: (sessionId: number, content: string, requestId?: string) =>
+    post<SessionReply>("/sessions/" + sessionId + "/messages", { content, ...(requestId ? { request_id: requestId } : {}) }),
   verifySession: (sessionId: number, submissionId: number) =>
     post<SessionReply>("/sessions/" + sessionId + "/verify", { submission_id: submissionId }),
-  mySubmissions: () => get<MySubmission[]>("/me/submissions"),
-  coachQueue: () => get<CoachItem[]>("/coach/queue"),
+  mySubmissions: (beforeId?: number) => get<MySubmission[]>("/me/submissions" + (beforeId ? `?before_id=${beforeId}` : "")),
+  coachQueue: (beforeId?: number) => get<CoachItem[]>("/coach/queue" + (beforeId ? `?before_id=${beforeId}` : "")),
   coachOverview: () => get<Overview>("/coach/overview"),
   coachJudging: (signal?: AbortSignal) => get<JudgingQueue>("/coach/judging", { signal }),
   downloadCard: async (id: number) => {

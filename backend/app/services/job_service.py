@@ -196,6 +196,7 @@ class JobService:
         job.manual_retries += 1
         job.attempts = 0
         job.status = "queued"
+        job.last_error = None
         job.owner_token = None
         job.lease_expires_at = None
         job.available_at = func.clock_timestamp()

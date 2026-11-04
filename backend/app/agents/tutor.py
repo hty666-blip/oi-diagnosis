@@ -87,6 +87,7 @@ class DiagnosisView:
     problem_context: str = ""
     verdict: str | None = None
     execution_context: str = ""
+    collaboration_context: str = ""
 
 
 @dataclass

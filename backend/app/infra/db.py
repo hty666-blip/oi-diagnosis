@@ -34,7 +34,9 @@ def configure_database_engine(target) -> None:
 
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.app_debug,
+    # 不记录包含学生源码、执行输出和密码哈希的 SQL 参数。
+    echo=False,
+    hide_parameters=True,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,

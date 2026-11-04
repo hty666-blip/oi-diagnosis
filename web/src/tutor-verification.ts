@@ -1,5 +1,9 @@
 import type { SessionHistory, SessionReply } from "./api";
 
+export function shouldVerifySubmission(status: string, originId: number, candidateId: number, alreadyVerified: boolean): boolean {
+  return ["open", "unverified"].includes(status) && candidateId !== originId && !alreadyVerified;
+}
+
 export function sameSource(code: string, language: string, previousCode: string, previousLanguage: string): boolean {
   return language === previousLanguage && code.replace(/\r\n/g, "\n") === previousCode.replace(/\r\n/g, "\n");
 }

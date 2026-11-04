@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser
@@ -103,6 +106,7 @@ def _to_out(
                 "route": (diag.model_meta or {}).get("route"),
                 "autofixable": (diag.model_meta or {}).get("autofixable", False),
                 "degraded": diag.degraded or [],
+                "collaboration": (diag.model_meta or {}).get("collaboration"),
                 "confidence": diag.confidence,
                 "review_revision": diag.review_revision,
                 "reviewer_id": diag.reviewer_id,
@@ -236,9 +240,16 @@ async def diagnose_submission(
     sub = await accessible_submission(session, user, submission_id)
     if sub.stage != "READY" or sub.verdict is None:
         raise HTTPException(status_code=409, detail="提交尚未完成判题，请先等待结果或重新提交")
-    before = (
-        await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id))
-    ).scalar_one_or_none()
+    try:
+        before = (await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id)
+                    .with_for_update(nowait=True).execution_options(populate_existing=True))).scalar_one_or_none()
+    except OperationalError as exc:
+        if getattr(exc.orig, "args", [None])[0] not in (3572, 1205):
+            raise
+        await session.rollback()
+        raise HTTPException(409, "该提交正在协作分析或复核，请稍后刷新记录，不必重复点击。") from exc
+    if before is None:
+        raise HTTPException(409, "初始判题诊断尚未保存，请先核对任务是否完成。")
     if before and before.reviewer_id is not None:
         raise HTTPException(status_code=409, detail="该诊断已有教师复核，请保留审定记录或提交新版本代码")
     initial_revision = before.review_revision if before else 0
@@ -251,12 +262,29 @@ async def diagnose_submission(
     evidence = [{"id": e.id, "type": e.type, "payload": e.payload} for e in rows]
 
     client = await runtime_client(session)
+    input_digest = hashlib.sha256(json.dumps({
+        "code": sub.code_hash, "verdict": effective_verdict(sub), "language": sub.lang,
+        "evidence": [(row.id, row.digest) for row in rows], "engine": "collaboration-v1",
+        "model": getattr(client, "model", ""), "base_url": getattr(client, "base_url", ""),
+        "available": bool(getattr(client, "available", False)),
+    }, sort_keys=True).encode()).hexdigest()
+    meta = before.model_meta or {}
+    if meta.get("input_digest") == input_digest and (meta.get("collaboration") or {}).get("mode") in ("multi_agent", "rules"):
+        return _diagnosis_response(sub, before)
+    observed = 0
+
+    async def observer(role, used, reason):
+        nonlocal observed
+        observed += 1
+        await observe_call(session, client, "agent_" + role, used=used, reason=reason)
+
     out = await run_diagnosis(
         submission_id=sub.id, code=sub.code, verdict=effective_verdict(sub), evidence=evidence,
-        language=sub.lang, llm=client,
+        language=sub.lang, llm=client, observer=observer,
     )
     draft = out["draft"]
-    await observe_call(session, client, "diagnosis", used="llm_hypothesis" in (draft.degraded or []))
+    if not observed:
+        await observe_call(session, None, "diagnosis", used=False, reason="rules_path")
 
     diag = (
         await session.execute(select(Diagnosis).where(Diagnosis.submission_id == sub.id)
@@ -281,23 +309,31 @@ async def diagnose_submission(
         "nature": [n.model_dump() for n in draft.nature],
         "hint_seed": draft.hint_seed,
         "critique_issues": (out["critique"].issues if out.get("critique") else []),
-        "engine": "graph-stub-v1",
+        "engine": "collaboration-v1",
+        "input_digest": input_digest,
+        "collaboration": out["collaboration"],
     }
     diag.review_revision = (diag.review_revision or 0) + 1
     session.add(diag)
     await session.commit()
 
+    return _diagnosis_response(sub, diag)
+
+
+def _diagnosis_response(sub: Submission, diag: Diagnosis) -> dict:
+    meta = diag.model_meta or {}
     return {
         "submission_id": sub.id,
         "verdict": effective_verdict(sub),
-        "status": out["status"],
-        "route": out["route"],
-        "attempts": out["attempts"],
-        "confidence": draft.confidence,
-        "narrative": draft.narrative,
-        "first_hint_level": draft.first_hint_level,
-        "nature": [n.model_dump() for n in draft.nature],
-        "mechanism": [c.model_dump() for c in draft.mechanism],
+        "status": diag.status,
+        "route": meta.get("route", "human"),
+        "attempts": meta.get("attempts", 0),
+        "confidence": diag.confidence,
+        "narrative": diag.narrative,
+        "first_hint_level": meta.get("first_hint_level", 0),
+        "nature": diag.nature or [],
+        "mechanism": diag.mechanism or [],
+        "collaboration": meta.get("collaboration"),
         "review_revision": diag.review_revision,
         "reviewer_id": diag.reviewer_id,
         "reviewed_at": diag.reviewed_at.isoformat() if diag.reviewed_at else None,

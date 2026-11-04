@@ -586,3 +586,14 @@ button:disabled { cursor: not-allowed; opacity: .6; }
 .runtime-operations .admin-actions { flex-wrap: wrap; }
 .runtime-operations table { min-width: 620px; }
 .runtime-operations input { min-width: 0; }
+
+/* Actual role handoffs, shared by student diagnosis and coach review. */
+.agent-collaboration { margin: 22px 0; border-top: 1px solid var(--line); padding-top: 16px; }
+.agent-collaboration > summary { cursor: pointer; font-weight: 600; line-height: 1.8; }
+.agent-collaboration > summary span { display: block; margin-left: 17px; font-size: 12px; font-weight: 400; color: var(--text); }
+.agent-collaboration > ol { list-style: none; padding: 0; margin: 18px 0; }
+.agent-collaboration > ol > li { padding: 14px 0; border-bottom: 1px solid var(--line-soft); }
+.agent-step-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.agent-step-head > span { color: var(--muted); font-size: 12px; }
+.agent-step-summary { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.agent-collaboration li ul { padding-left: 20px; line-height: 1.8; }

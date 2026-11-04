@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sourceModule } from "./load-source.mjs";
 
-const { sameSource, verificationRecovery, verifyWithRefresh } = await sourceModule("../src/tutor-verification.ts");
+const { sameSource, shouldVerifySubmission, verificationRecovery, verifyWithRefresh } = await sourceModule("../src/tutor-verification.ts");
+
+test("已解决或暂停会话不因新提交反复核验，待核对绑定可接受新的正式核验", () => {
+  for (const status of ["resolved", "blocked", "escalated", "unavailable"]) {
+    assert.equal(shouldVerifySubmission(status, 1, 3, false), false);
+  }
+  assert.equal(shouldVerifySubmission("unverified", 1, 3, false), true);
+  assert.equal(shouldVerifySubmission("open", 1, 3, false), true);
+  assert.equal(shouldVerifySubmission("open", 1, 1, false), false);
+  assert.equal(shouldVerifySubmission("open", 1, 3, true), false);
+});
 
 test("未修改的提交应返回编辑器；等待判题和网络故障仍可重试", () => {
   assert.equal(verificationRecovery({ status: 409, code: "verification_unchanged" }), "edit");

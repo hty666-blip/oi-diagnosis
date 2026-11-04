@@ -30,6 +30,17 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("答疑重试携带同一草稿编号，无编号旧客户端仍只发送正文", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return json({}); };
+  await api.sendMessage(8, "还是不会", "legacy-question-id");
+  await api.sendMessage(8, "还是不会", "legacy-question-id");
+  await api.sendMessage(8, "还是不会");
+  assert.deepEqual(calls[0], { url: "/api/v1/sessions/8/messages", body: { content: "还是不会", request_id: "legacy-question-id" } });
+  assert.deepEqual(calls[1], calls[0]);
+  assert.deepEqual(calls[2].body, { content: "还是不会" });
+});
+
 test("题库预览确认只发送预览编号，提交携带当前题面版本并区分历史读取上下文", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({ preview_id: "stored-preview" }); };

@@ -6,6 +6,32 @@ from sqlalchemy import select
 from app.domain.models import Diagnosis, HintSession
 
 
+@pytest.mark.parametrize("old_failure", ["counts", "stage"])
+@pytest.mark.parametrize("new_verdict", ["AC", "WA", "SAMPLE_PASS"])
+async def test_stale_verified_binding_can_accept_a_newer_real_submission(api_context, old_failure, new_verdict):
+    ctx = api_context
+    original = await ctx.submission(code_hash="start")
+    old = await ctx.submission(code_hash="old", verdict="AC")
+    old.tests_passed = {"scope": "package", "passed": True, "total": 1} if old_failure == "counts" else {"scope": "package", "passed": 1, "total": 1}
+    if old_failure == "stage":
+        old.stage = "RUNNING"
+    hs = HintSession(submission_id=original.id, student_id=ctx.users.student.id,
+                     verified_submission_id=old.id, status="resolved")
+    ctx.session.add(hs)
+    await ctx.session.flush()
+    fresh = await ctx.submission(code_hash="new", verdict=new_verdict,
+        tests_passed={"scope": "samples" if new_verdict == "SAMPLE_PASS" else "package", "passed": 0 if new_verdict == "WA" else 3, "total": 3})
+    response = await ctx.client.post(f"/api/v1/sessions/{hs.id}/verify", headers=ctx.headers(),
+                                     json={"submission_id": fresh.id})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == ("resolved" if new_verdict == "AC" else "open")
+    assert response.json()["verified_submission_id"] == fresh.id
+    if old_failure == "counts":
+        assert old.tests_passed["passed"] is True
+    else:
+        assert old.stage == "RUNNING"
+
+
 @pytest.mark.parametrize("counts", [
     {"scope": "package", "total": True, "passed": 1},
     {"scope": "package", "total": 1, "passed": True},

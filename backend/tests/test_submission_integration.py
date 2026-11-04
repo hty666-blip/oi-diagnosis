@@ -58,6 +58,24 @@ async def test_sample_only_and_missing_tests_are_never_ac(api_context, monkeypat
     assert no_tests.json()["id"] != result.json()["id"]
 
 
+async def test_executor_measurements_are_saved_with_their_time_basis(api_context, monkeypatch):
+    ctx = api_context
+    sample_problem(ctx)
+
+    class MeasuredRunner(SampleRunner):
+        async def run(self, artifact_id, **kwargs):
+            return CommandResult(status="Accepted", exit_code=0, time_ns=12_000_000,
+                                 memory_bytes=4096, stdout="1\n", time_kind="container_wall")
+
+    monkeypatch.setattr("app.services.submission_service.build_runner", MeasuredRunner)
+    response = await submit(ctx)
+    assert response.status_code == 200, response.text
+    assert response.json()["time_ms"] == 12 and response.json()["memory_kb"] == 4
+    proof = await ctx.client.get(f"/api/v1/submissions/{response.json()['id']}/evidence", headers=ctx.headers())
+    run = next(e for e in proof.json() if e["type"] == "run_trace")
+    assert run["payload"]["time_kind"] == "container_wall"
+
+
 @pytest.mark.parametrize("fail_at", ["compile", "run"])
 async def test_infrastructure_failure_remains_retryable(api_context, monkeypatch, fail_at):
     ctx = api_context

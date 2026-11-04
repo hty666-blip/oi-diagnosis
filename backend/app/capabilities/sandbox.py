@@ -34,6 +34,7 @@ class CommandResult:
     stderr: str = ""
     error: str | None = None
     file_ids: dict[str, str] = field(default_factory=dict)
+    time_kind: str = "cpu"
 
     @property
     def time_ms(self) -> int:

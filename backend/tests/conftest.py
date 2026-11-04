@@ -20,6 +20,11 @@ from app.infra.db import configure_database_engine, database_engine_options, get
 from app.main import app
 
 
+def pytest_sessionstart(session):
+    if os.environ.get("REQUIRE_DATABASE_TESTS") == "1" and not os.environ.get("TEST_DATABASE_URL"):
+        raise pytest.UsageError("已要求数据库集成测试，但缺少 TEST_DATABASE_URL；拒绝以跳过用例代替验证。")
+
+
 @pytest.fixture
 async def api_context(monkeypatch):
     url = os.environ.get("TEST_DATABASE_URL")
