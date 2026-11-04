@@ -66,14 +66,14 @@ export default function TrainingLessonPanel({ trainingId, teacher, refreshToken,
     <ErrorNotice message={error} />
     {notice && <p className="scope-note" role="status">{notice}</p>}
     {teacher && analysis && <>
-      <p className="muted">基于当前可见名单和本次训练最新提交，更新于 {dateLabel(analysis.observed_at)}。人数按学生计，同一学生重复提交不会重复计数。</p>
+      <p className="muted">按本次训练最新提交统计，更新于 {dateLabel(analysis.observed_at)}。</p>
       <div className="table-scroll"><table><caption className="sr-only">本次训练单题学情</caption><thead><tr><th>题目</th><th>最新状态分布</th><th>修改结果</th></tr></thead><tbody>
         {analysis.problems.map((problem) => <tr key={problem.pid}><th scope="row">{problem.pid}<small>{problem.title}</small></th>
           <td>{Object.entries(problem.counts).map(([state, count]) => <span className="lesson-count" key={state}>{stateLabels[state] ?? state} {count} 人</span>)}</td>
           <td>先前未通过、最新正式通过 {problem.repaired} 人<small>错因尚未分类 {problem.unclassified} 人</small></td></tr>)}
       </tbody></table></div>
       <h4>共性问题与依据</h4>
-      {!analysis.issues.length && <p className="muted">当前没有带可核对证据的错因分类。可以从下方案例查看实际记录，不能据此判断全班没有薄弱点。</p>}
+      {!analysis.issues.length && <p className="muted">暂无可核对的错因分类，可先查看提交案例。</p>}
       {analysis.issues.map((issue) => <div className="lesson-issue" key={`${issue.pid}:${issue.code}:${issue.source}`}>
         <strong>{issue.pid} · {issue.label} · {issue.students} 人</strong><span className="muted">{issue.source === "teacher" ? "教师已确认" : "自动分析 · 待教练确认"}</span>
         <div className="row">{issue.submission_ids.slice(0, 8).map((id) => <button className="ghost" key={id} onClick={() => onEvidence(id)}>查看提交 #{id}</button>)}</div>
@@ -89,7 +89,7 @@ export default function TrainingLessonPanel({ trainingId, teacher, refreshToken,
       {conflict && <p className="scope-note" role="status">服务器已有其他版本。当前输入已保留，可复制内容后载入最新草稿。</p>}
       <label className="sr-only" htmlFor={`lesson-draft-${trainingId}`}>讲评草稿内容</label>
       <textarea id={`lesson-draft-${trainingId}`} className="lesson-editor" rows={14} maxLength={12000} value={text} disabled={disabled} onChange={(e) => setText(e.target.value)} placeholder="可以直接编写讲评，也可以根据训练记录生成草稿。支持 Markdown 和局部代码块。" />
-      <p className="muted">发布内容对训练名单内学生可见。请核对解释与案例，避免在公开讲评中填写学生姓名或账号。刷新学情会保留未保存的文字。</p>
+      <p className="muted">发布前请核对案例，并移除学生姓名、账号等个人信息。</p>
       <div className="row lesson-actions">
         <button className="ghost" disabled={disabled || dirty || conflict} onClick={() => void act("generate")}>{busy === "generate" ? "正在生成…" : "生成讲评草稿"}</button>
         <button className="primary" disabled={disabled || !text.trim() || conflict} onClick={() => void act("save")}>{busy === "save" ? "正在保存…" : "保存草稿"}</button>

@@ -38,7 +38,7 @@ export default function StudentProfiles({ user, onTraining, onPractice }: {
     finally { setExporting(false); }
   }
   return <>
-    <div className="page-head"><div><h1>{teacher ? "学生训练档案" : "我的训练档案"}</h1><p>查看训练、个别指导和补练记录，跟进真实提交变化。</p></div><div className="row"><button className="ghost" disabled={loading || !selected} onClick={() => void load()}>刷新档案</button><button className="ghost" disabled={!profile || exporting} onClick={() => void download()}>{exporting ? "正在导出…" : "导出档案"}</button></div></div>
+    <div className="page-head"><div><h1>{teacher ? "学生训练档案" : "我的训练档案"}</h1></div><div className="row"><button className="ghost" disabled={loading || !selected} onClick={() => void load()}>刷新档案</button><button className="ghost" disabled={!profile || exporting} onClick={() => void download()}>{exporting ? "正在导出…" : "导出档案"}</button></div></div>
     {teacher && <label className="feedback-student">选择学生<select value={selected} onChange={(e) => setSelected(Number(e.target.value))}>{!roster.length && <option value={0}>暂无本班学生</option>}{roster.map((student) => <option key={student.id} value={student.id}>{student.class_name} · {student.name}</option>)}</select></label>}
     <ErrorNotice message={error} onRetry={selected ? () => void load() : undefined} />
     {loading && <p role="status">正在读取学生训练档案…</p>}
@@ -52,7 +52,7 @@ export default function StudentProfiles({ user, onTraining, onPractice }: {
           <td>{teacher ? problem.cell && <button className="ghost" onClick={() => setCodeId(problem.cell!.id)}>查看代码与证据</button> : <button className="ghost" onClick={() => onPractice({ id: task.id, title: task.title, pid: problem.pid, submissionId: problem.cell?.id })}>继续练习</button>}</td></tr>)}</tbody></table></div>
         {task.latest_feedback && <div className="profile-feedback"><h4>最近个别反馈 · 共 {task.feedback_count} 条</h4><p className="feedback-content">{task.latest_feedback.content}</p><FeedbackStatus feedback={task.latest_feedback} /></div>}
       </li>)}</ol>
-      <p className="scope-note">档案仅汇总最近最多 100 份当前仍有访问权限的训练。正式通过指题包测试通过，不代表独立完成或已经掌握知识点。{profile.truncated ? "更早记录未包含在本次汇总中。" : ""}</p></>}
+      <p className="scope-note">汇总最近 100 份可访问训练。正式通过仅指题包测试通过。{profile.truncated ? "更早记录未包含在本次汇总中。" : ""}</p></>}
     {teacher && codeId && <ReviewPanel key={codeId} submissionId={codeId} onReviewed={() => void load()} />}
   </>;
 }

@@ -74,7 +74,7 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
   }
 
   return <>
-    <div className="page-head"><div><h1>{teacher ? "训练工作台" : "我的训练"}</h1><p>{teacher ? "布置训练，按学生和题目查看真实完成情况。" : "进入教练布置的训练，提交代码并继续提问。"}</p></div>
+    <div className="page-head"><div><h1>{teacher ? "训练工作台" : "我的训练"}</h1></div>
       <div className="row"><button className="ghost" disabled={loading || saving} onClick={() => void load(detail?.id)}>刷新训练</button>
       {teacher && !draft && <button className="primary" disabled={loading || saving || !groups.length} onClick={() => edit()}>布置训练</button>}</div></div>
     <ErrorNotice message={error} onRetry={draft ? undefined : () => void load(detail?.id)} />
@@ -82,7 +82,7 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
     {loading && <p role="status">正在读取训练与完成记录…</p>}
     {teacher && !loading && <details className="training-roster"><summary>班级名单 · {roster.length} 人</summary>
       {!roster.length ? <p>当前账号没有可用班级名单，请由管理员为学生和教练配置班级后再布置训练。</p> : groups.map((group) => <p key={group}><strong>{group}</strong>：{roster.filter((s) => s.class_name === group).map((s) => s.name).join("、")}</p>)}
-      <p className="dim">名单沿用账号的班级信息，发布时保存训练名单。学生转班后不能继续访问原班训练。</p></details>}
+      <p className="dim">发布时固定名单；学生转班后不再访问原班训练。</p></details>}
     {draft && <section className="card training-form"><h2>{editingId ? "编辑训练草稿" : "布置新训练"}</h2>
       <form onSubmit={(e) => { e.preventDefault(); void save(); }}><fieldset disabled={saving} className="training-form-fields">
         <div className="training-fields"><label>训练名称<input required maxLength={120} value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></label>
@@ -104,7 +104,7 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
         </li>)}</ol>
         <label>查找题目<input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="题号或标题" /></label>
         <div className="training-bank">{problems.filter((p) => (p.pid + p.title).toLowerCase().includes(search.toLowerCase())).map((p) => <div className="row" key={p.pid}><span>{p.pid} · {p.title} <span className="dim">{p.verification_scope === "package" ? "已配置正式测试" : p.verification_scope === "samples" ? "仅样例，暂不计正式完成" : `题包等级 ${p.package_level}`}</span></span><button type="button" className="ghost" disabled={draft.problems.some((v) => v.pid === p.pid) || draft.problems.length >= 20} onClick={() => setDraft({ ...draft, problems: [...draft.problems, { pid: p.pid, required: true }] })}>添加</button></div>)}</div>
-        <p className="scope-note">正式题包全部通过才计入完成。只有样例或缺少测试的题目可用于练习，暂不能计入正式完成。</p>
+        <p className="scope-note">仅正式测试全部通过计入完成；样例题可用于练习。</p>
         <div className="row"><button className="primary" disabled={saving || !draft.title.trim() || !draft.problems.some((p) => p.required) || draft.student_ids?.length === 0}>{saving ? "正在保存…" : "保存草稿并预览"}</button><button type="button" className="ghost" disabled={saving} onClick={() => setDraft(null)}>取消编辑</button></div>
       </fieldset></form></section>}
     <div className="training-layout" aria-busy={loading}>
@@ -131,7 +131,7 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
                 <button className="ghost" onClick={() => teacher ? setSelectedCode(cell.id) : onPractice({ id: detail.id, pid: detail.problems[i].pid, title: detail.title, submissionId: cell.id })}>{teacher ? "查看代码与证据" : "继续练习"}</button>
               </>}</td>)}</tr>)}</tbody></table></div>
             {!detail.rows.length && <p className="empty">当前班级没有仍具访问权限的发布名单成员。</p>}
-            <p className="scope-note">每名学生每题只看本次训练的最新提交；自由练习和其他训练不计入。执行故障不算代码错误。数据更新于 {dateLabel(detail.observed_at)}。</p></>}
+            <p className="scope-note">按本训练最新提交统计，不含自由练习。执行故障单独标记。更新于 {dateLabel(detail.observed_at)}。</p></>}
           {detail.status === "published" && <><TrainingFeedbackPanel key={`feedback-${detail.id}`} detail={detail} user={user} targetStudentId={feedbackStudent} onRemediate={remediate} /><TrainingLessonPanel key={detail.id} trainingId={detail.id} teacher={teacher} refreshToken={detail.observed_at} onEvidence={setSelectedCode} /></>}
         </>}
       </section>

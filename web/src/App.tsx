@@ -13,6 +13,7 @@ import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./compon
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
 import AgentCollaboration from "./components/AgentCollaboration";
 import SubmissionLineage from "./components/SubmissionLineage";
+import NavIcon from "./components/NavIcon";
 import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import JudgingQueuePanel from "./components/JudgingQueuePanel";
 import {
@@ -106,17 +107,19 @@ export default function App() {
 
   return (
     <div className="shell">
+      <a className="skip-link" href="#main">跳到主内容</a>
+      <header className="app-header">
+        <div className="brand"><span className="brand-mark" aria-hidden="true">OI</span><span className="name">错题诊断<span className="brand-context">竞赛训练工作台</span></span></div>
+        <div className="header-user"><span>{user.display_name || user.username}</span><span className="role-label">{ROLE_LABEL[user.role]}{user.class_name ? " / " + user.class_name : ""}</span></div>
+      </header>
       <aside className="sidebar">
-        <div className="brand"><span className="dot" aria-hidden="true" /><span className="name">OI 诊断<small>看证据，自己改对</small></span></div>
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}>{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}><NavIcon name={item.key as "trainings" | "submit" | "my" | "profiles" | "coach" | "admin"} />{item.label}</button>)}
         </nav>
-        <button className="ghost" onClick={() => setView("password")}>修改密码</button>
-        <div className="sidebar-foot"><div className="user-card">
-          <div className="avatar" aria-hidden="true">{(user.display_name || user.username).slice(0, 1)}</div>
-          <div className="who"><b>{user.display_name || user.username}</b><span>{ROLE_LABEL[user.role]}{user.class_name ? " · " + user.class_name : ""}</span></div>
+        <div className="sidebar-foot">
+          <button className="ghost" onClick={() => setView("password")}>修改密码</button>
           <button className="logout" onClick={() => { clearSession(); setUser(null); }}>退出</button>
-        </div></div>
+        </div>
       </aside>
       <main className="main" id="main">
         {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={`${user.id}:${practice?.id ?? "free"}:${practice?.pid ?? ""}`} userId={user.id} restore={restore} training={practice ?? undefined} /></div>}
@@ -507,14 +510,14 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
 
   return (
     <>
-      <div className="page-head"><div><h1>{training ? training.title : "练习与诊断"}</h1><p>先看执行证据，再检查代码；修改后重新提交验证。</p></div>
+      <div className="page-head"><div><h1>{training ? training.title : "练习与诊断"}</h1></div>
         <label className="problem-picker"><span className="dim">选择题目</span><select aria-label="选择题目" value={pid} disabled={!!busy || loadingProblems || !!training} onChange={(e) => selectProblem(e.target.value)}>
           {!pid && <option value="">{loadingProblems ? "正在加载题目…" : "暂无可用题目"}</option>}
           {pid && !problems.some((p) => p.pid === pid) && <option value={pid}>{pid} · {training ? "训练固定版本" : "历史提交版本"}</option>}
           {problems.map((problem) => <option key={problem.pid} value={problem.pid}>{problem.pid + " · " + (problem.pid === pid && detail ? detail.title : problem.title) + (problem.verification_scope === "package" ? " · 已配置正式测试" : problem.verification_scope === "samples" ? " · 仅公开样例" : "")}</option>)}
         </select></label>
       </div>
-      {!training && sub && <p className="muted">当前继续提交 #{sub.id} 所用的题目版本。另开新练习会保留编辑器代码，与原答疑和提交关系分开。<button className="ghost" disabled={!!busy || phase === "pending" || !problems.some((p) => p.pid === pid)} onClick={startCurrentPractice}>使用当前上架版本开始新练习</button></p>}
+      {!training && sub && <p className="muted">当前使用提交 #{sub.id} 的题目版本。<button className="ghost" disabled={!!busy || phase === "pending" || !problems.some((p) => p.pid === pid)} onClick={startCurrentPractice}>使用当前上架版本开始新练习</button></p>}
       <ErrorNotice message={problemError} onRetry={() => void loadProblems()} />
       {!loadingProblems && !problemError && !problems.length && !pid && <div className="card empty">题库暂无上架题目。原训练和历史记录仍可继续；请联系教师或管理员核对题目。</div>}
       <ErrorNotice message={error} />
@@ -534,7 +537,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
             <h3 className="sample-title">题目样例</h3>
             {!detail.samples.length && <p className="muted">题面未提供样例。提交后的测试范围以实际执行记录为准。</p>}
             {detail.samples.map((sample, index) => <div className="sample" key={index}><div><span className="dim">输入 {index + 1}</span><pre>{sample.input}</pre></div><div><span className="dim">预期输出 {index + 1}</span><pre>{sample.output}</pre></div></div>)}
-            <p className="dim">来源：{detail.source || "未注明"}。通过样例不代表覆盖所有边界情况。</p>
+            <p className="dim">来源：{detail.source || "未注明"}</p>
           </>}
         </section>
         <section className="oj-work" aria-label="代码与执行结果">
@@ -556,7 +559,7 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
             <div className="row editor-actions"><button className="primary" onClick={() => void run()} disabled={!!busy || phase === "pending" || (!sub && pendingId !== null) || !detail || !code.trim() || unchangedTutorCode}>
               {busy === "judge" ? "正在发送任务…" : busy === "cancel" ? "正在核对取消…" : busy === "diagnose" ? "正在分析证据…" : busy === "restore" ? "正在恢复…" : phase === "pending" ? "当前任务仍在处理" : sub ? "重新提交验证" : "提交并验证"}
             </button><span className="dim">草稿保留在当前浏览器</span></div>
-            <p id="code-submission-note" className="scope-note">{hasChanged ? "代码或语言已有修改。下方结果对应上次提交，请重新提交验证改动。" : unchangedTutorCode ? `代码和语言与提交 #${sub!.id} 一致。修改上方代码后，才能核验这轮答疑中的修改。` : "请在上方编辑器填写代码，聊天中粘贴的代码不会自动替换这里的内容。"}</p>
+            <p id="code-submission-note" className="scope-note">{hasChanged ? "代码或语言已有修改。下方结果对应上次提交，请重新提交验证改动。" : unchangedTutorCode ? `代码和语言与提交 #${sub!.id} 一致。修改上方代码后，才能核验这轮答疑中的修改。` : "请在代码编辑器中修改；聊天内容不会替换代码。"}</p>
           </div>
           {pendingId && !sub && <section className="card" aria-label="恢复判题任务"><h2>提交 #{pendingId}</h2><p role="status">{polling ? "正在读取服务器保存的任务状态…" : "状态查询已暂停，代码草稿和服务器任务均已保留。"}</p><ErrorNotice message={taskError} onRetry={() => void watchTask(pendingId, pid, workRequest.current)} /></section>}
           {sub && <section className="card" aria-label="本次执行结果" aria-live="polite">
@@ -579,10 +582,10 @@ function SubmitView({ userId, restore, training }: { userId: number; restore: { 
             <p className="scope-note">{sub.verdict === "CE" ? "编译未通过，尚未运行测试。请先检查下方编译器信息。"
               : sub.verdict === "SAMPLE_PASS" ? "当前仅通过题面样例，尚未验证其他输入。请继续检查边界情况；这里不会把样例通过记为完整解决。"
               : sub.verdict === "NO_TESTS" ? "编译已完成，但没有可运行的测试数据，无法判断程序结果是否正确。"
-              : sub.tests_passed?.scope === "package" ? "结果基于本次固定版本的题包测试数据，不代表对所有可能输入的数学证明。"
+              : sub.tests_passed?.scope === "package" ? "结果基于本次题包测试。"
               : sub.tests_passed?.scope === "samples" ? "本次仅使用题面样例测试，以下结论也仅限于这些执行记录。"
               : "这条记录尚未标注完整测试范围，重新提交后可查看实际验证范围。"}</p>
-            {busy === "diagnose" && <p role="status" className="muted">执行结果已保留，正在核对证据并协作分析；完成后可查看各角色的结论与审查记录。</p>}
+            {busy === "diagnose" && <p role="status" className="muted">正在协作分析…</p>}
             <ErrorNotice message={diagError ? "执行已完成，诊断未完成：" + diagError : ""} onRetry={() => void retryDiagnosis()} />
             {diag && !["SAMPLE_PASS", "NO_TESTS"].includes(sub.verdict ?? "") && <div className="diagnosis-block">
               <h3>{diag.reviewed_at ? "当前审定说明" : diag.route === "llm_hypothesis" ? "待核实的模型建议" : diag.status === "needs_human" ? "现有证据与下一步检查" : "自动诊断说明"}</h3>
@@ -729,7 +732,6 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
 
   return <section className="card" aria-label="代码讲解与修改验证">
     <div className="card-head"><h2>代码讲解与修改验证</h2><span className="sub">答疑 Agent · 当前代码 #{session?.verified_submission_id ?? submissionId}</span></div>
-    <p className="muted">直接结合已提交的代码和执行记录讲解。没懂可以继续问，老师会逐句解释；修改编辑器内容后请重新提交验证。</p>
     {loading && <p role="status">正在读取代码并准备讲解…</p>}
     <ErrorNotice message={error} onRetry={!session ? () => setRetry((value) => value + 1) : undefined} />
     <ErrorNotice message={verifyError ? "本次判题结果已保存。" + verifyError : ""} onRetry={verifyAction === "retry" ? () => setVerifyRetry((value) => value + 1) : undefined} />
@@ -750,7 +752,7 @@ function TutorPanel({ submissionId, userId, latestSubmitted, onEditCode }: { sub
         }} disabled={busy || verifying} />
         <button type="submit" className="primary" disabled={!draft.content.trim() || busy || verifying}>{busy ? "正在讲解…" : "提问"}</button>
       </form> : <div className="row recovery-actions"><p className="scope-note" role="status">{session.status === "unverified" ? "历史核验结果待核对，请重新提交正式测试后新建答疑。" : session.status === "unavailable" ? "暂时无法确认核验状态，请重新查询；现有记录已保留。" : "本次提示已暂停，可以保留现有记录并重新开启一轮提示。"}</p><button className="ghost" onClick={restart}>重新开启提示</button></div>}
-      {["open", "resolved"].includes(session.status) && <p id={"chat-keys-" + submissionId} className="dim">Enter 发送 · Shift＋Enter 换行 · 未发送的问题保存在当前浏览器</p>}
+      {["open", "resolved"].includes(session.status) && <p id={"chat-keys-" + submissionId} className="dim">Enter 发送 / Shift＋Enter 换行</p>}
     </>}
   </section>;
 }
@@ -774,7 +776,7 @@ function MyView({ onContinue }: { onContinue: (id: number) => void }) {
   }
   useEffect(() => { void load(); }, []);
   return <>
-    <div className="page-head"><div><h1>提交记录</h1><p>重新打开代码和执行证据，继续修改。测试通过记录不等同于知识点掌握度。</p></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新记录</button></div>
+    <div className="page-head"><div><h1>提交记录</h1></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新记录</button></div>
     <ErrorNotice message={error} onRetry={() => void load()} />
     <div className="card">
       {loading ? <div className="empty" role="status">正在加载提交记录…</div> : !rows.length && !error ? <div className="empty">还没有提交记录。从「练习与诊断」选择一道题，提交你的第一份代码。</div> : <div className="table-scroll"><table><thead><tr><th>题目 / 提交</th><th>执行结果</th><th>诊断摘要</th><th>操作</th></tr></thead><tbody>
@@ -814,7 +816,7 @@ function CoachView({ userId }: { userId: number }) {
   }
   useEffect(() => { void load(); }, []);
   return <>
-    <div className="page-head"><div><h1>待复核记录</h1><p>核对学生源码和执行证据，再确认、修订或退回诊断。每次处理都会留下审计记录。</p></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新队列</button></div>
+    <div className="page-head"><div><h1>待复核记录</h1></div><button className="ghost" onClick={() => void load()} disabled={loading || loadingMore}>刷新队列</button></div>
     {overview && <p className="muted">当前可见提交 {overview.submissions} 条 · 诊断 {overview.diagnoses} 条 · 待复核 {overview.pending_review} 条</p>}
     <JudgingQueuePanel />
     <ErrorNotice message={error} onRetry={() => void load()} />
