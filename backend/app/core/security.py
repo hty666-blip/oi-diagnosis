@@ -10,13 +10,18 @@ import hashlib
 import hmac
 import os
 import re
+import secrets
 import time
 
 import jwt
 
 from app.core.config import settings
 
-PBKDF2_ROUNDS = 120_000
+PBKDF2_ROUNDS = 310_000
+LEGACY_PBKDF2_ROUNDS = 120_000
+PASSWORD_ALGORITHM = "pbkdf2_sha256"
+TOKEN_ISSUER = "oi-diagnosis"
+TOKEN_AUDIENCE = "oi-web"
 MAX_PASSWORD_LENGTH = 1024
 MAX_TOKEN_LENGTH = 8192
 MAX_USER_ID = 2**63 - 1
@@ -28,7 +33,25 @@ SUBJECT_PATTERN = re.compile(r"[1-9][0-9]{0,18}\Z")
 def hash_password(password: str, *, salt: bytes | None = None) -> str:
     salt = salt or os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ROUNDS)
-    return "pbkdf2$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(dk).decode()
+    return "$".join((PASSWORD_ALGORITHM, str(PBKDF2_ROUNDS),
+                     base64.b64encode(salt).decode(), base64.b64encode(dk).decode()))
+
+
+def _password_parts(stored: str) -> tuple[int, bytes, bytes]:
+    parts = stored.split("$")
+    if len(parts) == 3 and parts[0] == "pbkdf2":
+        rounds, salt_b64, digest_b64 = LEGACY_PBKDF2_ROUNDS, parts[1], parts[2]
+    elif len(parts) == 4 and parts[0] == PASSWORD_ALGORITHM:
+        rounds, salt_b64, digest_b64 = int(parts[1]), parts[2], parts[3]
+    else:
+        raise ValueError("不支持的密码哈希格式")
+    if not 100_000 <= rounds <= 1_000_000:
+        raise ValueError("密码哈希迭代次数无效")
+    salt = base64.b64decode(salt_b64, validate=True)
+    digest = base64.b64decode(digest_b64, validate=True)
+    if not salt or len(digest) != hashlib.sha256().digest_size:
+        raise ValueError("密码哈希长度无效")
+    return rounds, salt, digest
 
 
 def verify_password(password: str, stored: str) -> bool:
@@ -37,17 +60,19 @@ def verify_password(password: str, stored: str) -> bool:
     if not isinstance(stored, str) or len(stored) > 256:
         return False
     try:
-        algo, salt_b64, dk_b64 = stored.split("$")
-        if algo != "pbkdf2":
-            return False
-        salt = base64.b64decode(salt_b64, validate=True)
-        expect = base64.b64decode(dk_b64, validate=True)
-        if len(expect) != hashlib.sha256().digest_size:
-            return False
-        got = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ROUNDS)
+        rounds, salt, expect = _password_parts(stored)
+        got = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)
         return hmac.compare_digest(expect, got)
     except Exception:  # noqa: BLE001
         return False
+
+
+def password_needs_rehash(stored: str) -> bool:
+    try:
+        rounds, _, _ = _password_parts(stored)
+        return not stored.startswith(f"{PASSWORD_ALGORITHM}$") or rounds < PBKDF2_ROUNDS
+    except (TypeError, ValueError):
+        return True
 
 
 # 不存在的账号仍做相同轮数的密码校验；该值绝不作为任何账号的凭据。
@@ -68,7 +93,7 @@ def validate_security_settings() -> None:
         raise ValueError("非开发环境必须关闭 APP_DEBUG")
 
 
-def create_access_token(user_id: int, role: str, username: str) -> str:
+def create_access_token(user_id: int, role: str, username: str, token_version: int = 0) -> str:
     if type(user_id) is not int or not 0 < user_id <= MAX_USER_ID:
         raise ValueError("无效的账号编号")
     if role not in USER_ROLES:
@@ -80,6 +105,10 @@ def create_access_token(user_id: int, role: str, username: str) -> str:
         "sub": str(user_id),
         "role": role,
         "username": username,
+        "ver": token_version,
+        "iss": TOKEN_ISSUER,
+        "aud": TOKEN_AUDIENCE,
+        "jti": secrets.token_urlsafe(16),
         "iat": now,
         "exp": now + settings.access_token_expire_minutes * 60,
     }
@@ -92,7 +121,8 @@ def decode_token(token: str) -> dict | None:
     try:
         payload = jwt.decode(
             token, settings.jwt_secret, algorithms=[settings.jwt_alg],
-            options={"require": ["sub", "role", "username", "iat", "exp"]},
+            audience=TOKEN_AUDIENCE, issuer=TOKEN_ISSUER,
+            options={"require": ["sub", "role", "username", "iat", "exp", "iss", "aud", "jti"]},
         )
         subject = payload["sub"]
         if not isinstance(subject, str) or not SUBJECT_PATTERN.fullmatch(subject):
@@ -102,6 +132,8 @@ def decode_token(token: str) -> dict | None:
         if type(payload["iat"]) is not int or type(payload["exp"]) is not int:
             return None
         if payload["iat"] < 0 or payload["exp"] <= payload["iat"]:
+            return None
+        if not isinstance(payload["jti"], str) or not payload["jti"] or len(payload["jti"]) > 128:
             return None
         username = payload["username"]
         if not isinstance(username, str) or not username or len(username) > 64:

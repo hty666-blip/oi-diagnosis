@@ -4,9 +4,11 @@
 
 用法（后端已启动）:
     backend\\.venv\\Scripts\\python.exe scripts\\seed_demo.py
+    backend\\.venv\\Scripts\\python.exe scripts\\seed_demo.py --users-only
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import random
 import sys
@@ -20,8 +22,9 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.core.config import settings  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
-from app.domain.models import User  # noqa: E402
+from app.domain.models import ClassTeacher, SchoolClass, User  # noqa: E402
 from app.infra.db import SessionLocal, dispose_engine  # noqa: E402
+from app.services.admin_service import management_lock  # noqa: E402
 
 BASE = "http://127.0.0.1:8000/api/v1"
 PASSWORD = "123456"
@@ -98,20 +101,42 @@ def require_demo_environment() -> None:
 async def ensure_users() -> None:
     require_demo_environment()
     async with SessionLocal() as s:
+        await management_lock(s)
+
+        async def group(name: str) -> SchoolClass:
+            row = await s.scalar(select(SchoolClass).where(SchoolClass.name == name))
+            if row is None:
+                row = SchoolClass(name=name)
+                s.add(row)
+                await s.flush()
+            if row.archived:
+                raise RuntimeError("演示班级已归档，请在管理员端核对后再初始化缺失账号")
+            return row
+
         for username, name, klass in STUDENTS:
             user = (await s.execute(select(User).where(User.username == username))).scalar_one_or_none()
             if user is None:
+                current = await group(klass)
                 s.add(User(username=username, display_name=name, role="student",
-                           class_name=klass, password_hash=hash_password(PASSWORD)))
+                           class_id=current.id, class_name=klass, password_hash=hash_password(PASSWORD)))
         for username, name, role in [("teacher01", "王老师", "teacher"), ("admin", "管理员", "admin")]:
             user = (await s.execute(select(User).where(User.username == username))).scalar_one_or_none()
             if user is None:
-                s.add(User(username=username, display_name=name, role=role,
-                           class_name="初一 1 班" if role == "teacher" else "",
-                           password_hash=hash_password(PASSWORD)))
-            elif role == "teacher" and not (user.class_name or "").strip():
-                user.class_name = "初一 1 班"
+                user = User(username=username, display_name=name, role=role,
+                            class_name="", password_hash=hash_password(PASSWORD))
+                s.add(user)
+                await s.flush()
+                if role == "teacher":
+                    current = await group("初一 1 班")
+                    s.add(ClassTeacher(class_id=current.id, teacher_id=user.id))
         await s.commit()
+
+
+async def ensure_users_and_close() -> None:
+    try:
+        await ensure_users()
+    finally:
+        await dispose_engine()
 
 
 def login(cli: httpx.Client, username: str) -> str:
@@ -121,13 +146,22 @@ def login(cli: httpx.Client, username: str) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--users-only",
+        action="store_true",
+        help="只创建演示登录账号，不调用判题和诊断接口",
+    )
+    args = parser.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:  # noqa: BLE001
         pass
 
-    asyncio.run(ensure_users())
+    asyncio.run(ensure_users_and_close())
     print(f"账号就绪：{len(STUDENTS)} 名学生 + teacher01 + admin（密码 {PASSWORD}）")
+    if args.users_only:
+        return 0
 
     random.seed(42)
     total = 0
@@ -167,7 +201,6 @@ def main() -> int:
                      json={"content": "改好了，过了！"})
             print(f"  [{username}] 会话 #{sess} 已记录，仍需修改后提交核验")
 
-    asyncio.run(dispose_engine())
     print("\n演示数据生成完毕。登录：student01 / teacher01 / admin，密码 123456")
     return 0
 

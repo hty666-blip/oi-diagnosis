@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.models import Diagnosis, Evidence, JudgeJob, Submission, User
+from app.infra.sql_types import after_seconds
 from app.services.access import accessible_submission
 
 ERROR_MESSAGES = {
@@ -126,7 +126,7 @@ class JobService:
             job.status = "running"
             job.attempts += 1
             job.owner_token = uuid4().hex
-            job.lease_expires_at = func.clock_timestamp() + timedelta(seconds=max(5, settings.judge_job_lease_seconds))
+            job.lease_expires_at = after_seconds(max(5, settings.judge_job_lease_seconds))
             job.finished_at = None
             submission.stage = "COMPILING"
             submission.verdict = None
@@ -144,7 +144,7 @@ class JobService:
                 JudgeJob.id == lease.job_id, JudgeJob.status == "running",
                 JudgeJob.owner_token == lease.owner_token,
                 JudgeJob.attempts == lease.attempt, JudgeJob.lease_expires_at > func.clock_timestamp(),
-            ).values(lease_expires_at=func.clock_timestamp() + timedelta(seconds=max(5, settings.judge_job_lease_seconds))))
+            ).values(lease_expires_at=after_seconds(max(5, settings.judge_job_lease_seconds))))
         await self.session.commit()
         return result.rowcount == 1
 
@@ -168,7 +168,7 @@ class JobService:
         job.lease_expires_at = None
         job.last_error = failure_message(reason, retrying=pending,
                                          manual_retry_available=job.manual_retries < settings.judge_job_max_manual_retries)
-        job.available_at = func.clock_timestamp() + timedelta(seconds=min(2 ** job.attempts, 10) if pending else 0)
+        job.available_at = after_seconds(min(2 ** job.attempts, 10) if pending else 0)
         job.finished_at = None if pending else func.now()
         await self.session.execute(update(Submission).where(Submission.id == lease.submission_id).values(
             stage="QUEUED" if pending else "SANDBOX_ERROR", verdict=None, tests_passed=None,
@@ -176,7 +176,7 @@ class JobService:
         await self.session.commit()
         return True
 
-    async def retry(self, submission_id: int, user: User) -> JudgeJob:
+    async def retry(self, submission_id: int, user: User, *, commit: bool = True) -> JudgeJob:
         submission = await accessible_submission(self.session, user, submission_id)
         if user.role != "admin" and submission.student_id != user.id:
             raise HTTPException(status_code=403, detail="只能重试自己提交的判题任务")
@@ -196,6 +196,7 @@ class JobService:
         job.manual_retries += 1
         job.attempts = 0
         job.status = "queued"
+        job.last_error = None
         job.owner_token = None
         job.lease_expires_at = None
         job.available_at = func.clock_timestamp()
@@ -203,11 +204,14 @@ class JobService:
         submission.stage = "QUEUED"
         submission.verdict = None
         submission.tests_passed = None
-        await self.session.commit()
-        await self.session.refresh(job)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(job)
+        else:
+            await self.session.flush()
         return job
 
-    async def cancel(self, submission_id: int, user: User) -> JudgeJob:
+    async def cancel(self, submission_id: int, user: User, *, commit: bool = True) -> JudgeJob:
         submission = await accessible_submission(self.session, user, submission_id)
         if user.role != "admin" and submission.student_id != user.id:
             raise HTTPException(status_code=403, detail="只能取消自己提交的判题任务")
@@ -223,7 +227,8 @@ class JobService:
             .execution_options(populate_existing=True)
         )).scalar_one()
         if job.status == "cancelled":
-            await self.session.commit()
+            if commit:
+                await self.session.commit()
             return job
         if job.status not in ("queued", "running") or submission.stage == "READY":
             raise HTTPException(status_code=409, detail="任务已结束，请查看最新执行结果")
@@ -240,6 +245,9 @@ class JobService:
         submission.stage = "CANCELLED"
         submission.verdict = None
         submission.tests_passed = None
-        await self.session.commit()
-        await self.session.refresh(job)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(job)
+        else:
+            await self.session.flush()
         return job

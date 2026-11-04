@@ -11,7 +11,7 @@ from app.services.submission_service import decide_verdict
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
     monkeypatch.setattr(docker_runner, "RUN_ROOT", tmp_path / "runs")
-    return DockerRunner()
+    return DockerRunner(image=os.getenv("TEST_JUDGE_IMAGE", docker_runner.IMAGE))
 
 
 def artifact(runner):
@@ -35,6 +35,27 @@ async def test_missing_or_inconsistent_exit_evidence_cannot_be_accepted(runner, 
     with pytest.raises(SandboxError, match='退出状态'):
         await runner.run(str(work))
     assert not list(work.glob('.exit-*'))
+
+
+@pytest.mark.parametrize("language", ["c11", "cpp17", "java17", "python3"])
+async def test_language_runtime_arguments_and_reserved_exit_code_stay_distinct(runner, monkeypatch, language):
+    runner.set_language(language)
+    work = runner.run_root / "job-language"
+    work.mkdir()
+    (work / runner.spec.artifact).write_bytes(b"artifact")
+    literal = "space ; $(printf forged) ' \" end"
+
+    async def execute(work, command, **kwargs):
+        name = next(part for part in command if part.startswith(".exit-"))
+        (work / name).write_text("125", encoding="ascii")
+        offset = command.index(name) + 1
+        assert command[offset:] == [*runner.spec.run_command(512), literal]
+        return 1, "", ""
+
+    monkeypatch.setattr(runner, "_docker", execute)
+    result = await runner.run(str(work), extra_args=[literal])
+    assert result.status == "Non Zero Exit Status" and result.exit_code == 125
+    assert not list(work.glob(".exit-*"))
 
 
 @pytest.mark.skipif(os.environ.get('RUN_DOCKER_TESTS') != '1', reason='需要显式启用真实Docker')
@@ -64,5 +85,28 @@ int main(int argc, char** argv) {
         timed_out = await runner.run(comp.artifact_id, extra_args=['spin'], time_limit_ms=500)
         assert timed_out.status == 'Time Limit Exceeded'
         assert not list(runner._workdir(comp.artifact_id).glob('.exit-*'))
+    finally:
+        await runner.cleanup(comp.artifact_id)
+
+
+@pytest.mark.skipif(os.environ.get("RUN_DOCKER_TESTS") != "1", reason="需要显式启用真实Docker")
+@pytest.mark.parametrize(
+    ("language", "code"),
+    [
+        ("c11", '#include <stdlib.h>\nint main(int argc,char**argv){return argc>1?atoi(argv[1]):0;}'),
+        ("java17", 'public class Main { public static void main(String[] args) {'
+                    ' System.exit(args.length > 0 ? Integer.parseInt(args[0]) : 0); } }'),
+        ("python3", 'import sys\nsys.exit(int(sys.argv[1]) if len(sys.argv) > 1 else 0)\n'),
+    ],
+)
+async def test_real_language_programs_preserve_student_exit_codes(runner, language, code):
+    runner.set_language(language)
+    comp = await runner.compile(code)
+    assert comp.ok, comp.stderr
+    try:
+        for exit_code in (0, 124, 125, 126, 127, 137, 255):
+            result = await runner.run(comp.artifact_id, extra_args=[str(exit_code)])
+            assert result.exit_code == exit_code, (language, result)
+            assert result.status == ("Accepted" if exit_code == 0 else "Non Zero Exit Status")
     finally:
         await runner.cleanup(comp.artifact_id)

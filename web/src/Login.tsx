@@ -40,28 +40,16 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
     <div className="login">
       <div className="login-brand">
         <div className="mark">
-          <span className="dot" />
-          <span>OI 错题诊断</span>
+          <span className="brand-mark" aria-hidden="true">OI</span>
+          <span>错题诊断</span>
         </div>
-        <div>
-          <h1>
-            看懂一次报错，
-            <br />
-            自己完成下一次修改。
-          </h1>
-          <p>
-            查看编译与运行记录，按提示检查代码。
-            <br />
-            修改后重新提交，用新的执行结果验证你的判断。
-          </p>
-        </div>
-        <div className="foot">本地教学工作台 · C++17</div>
+        <span className="brand-context">信息学竞赛训练平台</span>
       </div>
 
       <div className="login-panel">
         <form className="login-card" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-          <h2>登录</h2>
-          <p className="hint">登录后可继续本机草稿。{demos.length > 0 ? "也可选择下方演示账号。" : "请使用教师分配的账号。"}</p>
+          <h1>登录</h1>
+          <p className="hint">{demos.length > 0 ? "输入账号，或选择演示账号。" : "使用分配的账号登录。"}</p>
 
           <div className="field">
             <label htmlFor="login-username">用户名</label>
@@ -88,7 +76,7 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
           </button>
 
           {demos.length > 0 && <div className="demo-accounts">
-            <div className="label">一键填入演示账号</div>
+            <div className="label">演示账号</div>
             <div className="demo-grid">
               {demos.map((d) => (
                 <button

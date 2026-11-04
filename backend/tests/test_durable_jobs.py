@@ -1,27 +1,23 @@
-"""独立 PostgreSQL 会话回归：持久任务、并发领取、失效写入与恢复。"""
+"""独立 MySQL 会话回归：持久任务、并发领取、失效写入与恢复。"""
 
 import asyncio
-import os
 from contextlib import suppress
-from datetime import timedelta
 from types import SimpleNamespace
-from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import event, func, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlalchemy.schema import CreateSchema, DropSchema
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.capabilities.sandbox import CommandResult, CompileResult, SandboxError
 from app.capabilities.test_suite import JudgeSuite
 from app.capabilities.triage import triage
 from app.core.config import settings
 from app.core.security import create_access_token
-from app.domain.models import Base, Diagnosis, Evidence, JudgeJob, Problem, Submission, User
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission, User
 from app.infra.db import get_session
+from app.infra.sql_types import after_seconds
 from app.main import app
 from app.services.job_service import JobService, LeaseLost, require_lease
 from app.services.submission_service import SubmissionService, VerdictResult
@@ -29,18 +25,11 @@ from app.worker import JudgeWorker
 
 
 @pytest.fixture
-async def jobs_context(api_context):
-    schema = "judge_jobs_" + uuid4().hex
-    engine = create_async_engine(
-        os.environ["TEST_DATABASE_URL"], poolclass=NullPool,
-        execution_options={"schema_translate_map": {None: schema}},
-    )
+async def jobs_context(api_context, isolated_database):
+    engine = isolated_database
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     previous = app.dependency_overrides.get(get_session)
     try:
-        async with engine.begin() as connection:
-            await connection.execute(CreateSchema(schema))
-            await connection.run_sync(Base.metadata.create_all)
         async with sessions() as session:
             student = User(username="job_student", role="student", class_name="A", password_hash="unused")
             peer = User(username="job_peer", role="student", class_name="A", password_hash="unused")
@@ -67,9 +56,7 @@ async def jobs_context(api_context):
             app.dependency_overrides.pop(get_session, None)
         else:
             app.dependency_overrides[get_session] = previous
-        async with engine.begin() as connection:
-            await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
-        await engine.dispose()
+
 
 
 class Runner:
@@ -98,9 +85,9 @@ async def claim(ctx):
 
 async def make_available(ctx, job_id, *, expire=False):
     async with ctx.sessions() as session:
-        fields = {"available_at": func.now() - timedelta(seconds=1)}
+        fields = {"available_at": after_seconds(-1)}
         if expire:
-            fields["lease_expires_at"] = func.now() - timedelta(seconds=1)
+            fields["lease_expires_at"] = after_seconds(-1)
         await session.execute(update(JudgeJob).where(JudgeJob.id == job_id).values(**fields))
         await session.commit()
 
@@ -123,6 +110,38 @@ async def test_async_acceptance_is_durable_and_duplicate_reuses_one_job(jobs_con
         assert await session.scalar(select(func.count()).select_from(JudgeJob)) == 1
     denied = await ctx.client.get(f"/api/v1/submissions/{first['id']}", headers=ctx.headers(ctx.peer))
     assert denied.status_code == 404
+
+
+async def test_concurrent_identical_requests_share_one_transactional_job(jobs_context, monkeypatch):
+    import app.services.submission_service as submission_module
+
+    original = submission_module.management_lock
+    both_entered = asyncio.Event()
+    entered = 0
+
+    async def start_together(session):
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            both_entered.set()
+        await asyncio.wait_for(both_entered.wait(), timeout=5)
+        await original(session)
+
+    monkeypatch.setattr(submission_module, "management_lock", start_together)
+    first, second = await asyncio.gather(enqueue(jobs_context), enqueue(jobs_context))
+    assert first["id"] == second["id"] and first["job"]["id"] == second["job"]["id"]
+    async with jobs_context.sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(Submission)) == 1
+        assert await session.scalar(select(func.count()).select_from(JudgeJob)) == 1
+
+
+async def test_maximum_unicode_source_fits_the_database_without_truncation(jobs_context):
+    source = "//" + "中" * 99_998
+    queued = await enqueue(jobs_context, source)
+    assert queued["code"] == source
+    async with jobs_context.sessions() as session:
+        stored = await session.get(Submission, queued["id"])
+        assert stored.code == source
 
 
 async def test_worker_completes_and_polling_returns_the_saved_result(jobs_context, monkeypatch):
@@ -316,7 +335,7 @@ async def test_lease_checks_use_wall_clock_even_in_an_old_transaction(jobs_conte
         await session.scalar(select(func.now()))  # 固定本事务的 now()。
         async with ctx.sessions() as control:
             await control.execute(update(JudgeJob).where(JudgeJob.id == lease.job_id).values(
-                lease_expires_at=func.clock_timestamp() + timedelta(milliseconds=50)
+                lease_expires_at=after_seconds(0.05)
             ))
             await control.commit()
         await asyncio.sleep(0.1)
@@ -427,7 +446,7 @@ async def test_queue_insert_failure_cannot_leave_an_orphan_submission(jobs_conte
 
         event.listen(session.sync_session, "before_flush", invalidate_job)
         try:
-            with pytest.raises(IntegrityError):
+            with pytest.raises(DBAPIError, match="ck_judge_job_attempts"):
                 await SubmissionService(session, sandbox=Runner()).create(
                     ctx.problem.pid, "int main(){}", ctx.student.id, background=True
                 )

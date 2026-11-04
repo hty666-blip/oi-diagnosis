@@ -8,6 +8,8 @@ export interface AuthUser {
   display_name: string;
   role: "student" | "teacher" | "admin";
   class_name: string;
+  class_id?: number | null;
+  must_change_password?: boolean;
 }
 
 interface SessionSnapshot { token: string; user: AuthUser; storedUser: string }
@@ -91,7 +93,7 @@ export function messageOf(error: unknown): string {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
     super(message);
     this.name = "ApiError";
   }
@@ -106,13 +108,25 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
     window.dispatchEvent(new Event("oi-session-expired"));
     throw new ApiError("登录已过期，请重新登录；本机代码草稿已保留。", 401);
   }
+  if (login && res.status === 503) {
+    throw new Error("登录服务暂时不可用，请确认数据库和后端已经启动。");
+  }
   if (!res.ok) {
     let detail = "";
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail.message === "string") {
+        detail = body.detail.message;
+        if (typeof body.detail.code === "string") code = body.detail.code;
+      }
       else if (Array.isArray(body.detail)) {
-        detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
+        detail = body.detail.map((item: { msg?: string; loc?: (string | number)[] }) => {
+          const labels: Record<string, string> = { problems: "题目", rows: "数据行", samples: "样例", cases: "正式测试", input: "输入", output: "预期输出", license_note: "许可说明", reviewer: "审核人", statement_md: "题面", source: "来源", pid: "题号", title: "标题" };
+          const path = (item.loc ?? []).filter((v) => v !== "body").map((v) => typeof v === "number" ? String(v + 1) : labels[v] ?? v).join(" / ");
+          return (path ? path + "：" : "") + (item.msg ?? "请求字段无效");
+        }).filter(Boolean).join("；");
       }
     } catch { /* 不把服务器 HTML 或内部错误堆栈显示给学生。 */ }
     if (snapshot) assertSession(snapshot);
@@ -121,7 +135,7 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
       404: "记录不存在，或当前账号无权访问。",
       429: "操作过于频繁，请稍后重试。",
       503: "判题服务暂时不可用，代码已保留，请稍后再次提交。",
-    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status);
+    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status, code);
   }
   return res;
 }
@@ -174,6 +188,7 @@ export interface Problem {
   samples: number;
   package_level: string;
   source: string;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface ProblemDetail {
@@ -186,7 +201,12 @@ export interface ProblemDetail {
   source: string;
   source_url: string;
   package_level: string;
-  time_limit_ms: number;
+  time_limit_ms: number | null;
+  memory_limit_mb?: number | null;
+  license_note?: string;
+  revision?: number;
+  version_id?: number | null;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface NatureTag {
@@ -208,6 +228,8 @@ export interface TestSummary {
 
 export interface SubmissionResult {
   id: number;
+  training_id?: number | null;
+  problem_version_id?: number | null;
   parent_submission_id?: number | null;
   stage: string;
   verdict: string | null;
@@ -215,6 +237,7 @@ export interface SubmissionResult {
   problem_pid?: string;
   problem_title?: string;
   code?: string;
+  language: SubmissionLanguage;
   job?: JudgeJob | null;
   diagnosis?: {
     narrative: string;
@@ -223,6 +246,7 @@ export interface SubmissionResult {
     nature: NatureTag[];
     mechanism: DiagResult["mechanism"];
     degraded?: string[];
+    collaboration?: AgentCollaboration | null;
     review_revision?: number;
     reviewer_id?: number | null;
     reviewed_at?: string | null;
@@ -241,6 +265,15 @@ export interface JudgeJob {
   lease_expires_at: string | null;
 }
 
+export interface AgentCollaboration {
+  version: "collaboration-v1";
+  mode: "multi_agent" | "rules" | "degraded";
+  rounds: number;
+  human_review_required: boolean;
+  steps: { agent: string; method: string; status: string; round: number; summary: string;
+    evidence_ids: number[]; feedback: string[] }[];
+}
+
 export interface DiagResult {
   submission_id: number;
   verdict: string | null;
@@ -252,6 +285,7 @@ export interface DiagResult {
   nature: NatureTag[];
   mechanism: { code: string; confidence: number; evidence_ids?: number[]; explain?: string }[];
   degraded?: string[];
+  collaboration?: AgentCollaboration | null;
   review_revision?: number;
   reviewer_id?: number | null;
   reviewed_at?: string | null;
@@ -271,14 +305,19 @@ export interface SessionReply {
   level: number;
   action: string;
   reply: string;
-  verified_submission_id?: number;
+  verified_submission_id?: number | null;
   verdict?: string | null;
+  accepted?: boolean;
+  replayed?: boolean;
 }
 
 export interface SessionHistory {
   session_id: number;
   status: string;
   level: number;
+  submission_id: number;
+  verified_submission_id?: number | null;
+  verdict?: string | null;
   turns: { role: "tutor" | "student"; level: number; content: string }[];
 }
 
@@ -294,10 +333,13 @@ export interface MySubmission {
   problem_title?: string;
   stage?: string;
   tests_passed?: TestSummary | null;
+  language: SubmissionLanguage;
   diagnosis_status?: string | null;
   review_revision?: number;
   reviewer_id?: number | null;
 }
+
+export type SubmissionLanguage = "c11" | "cpp17" | "java17" | "python3";
 
 export interface CoachItem {
   diagnosis_id: number;
@@ -345,6 +387,7 @@ export interface LineageItem {
   id: number;
   parent_submission_id: number | null;
   code: string;
+  language: SubmissionLanguage;
   verdict: string | null;
   stage: string;
   tests_passed: TestSummary | null;
@@ -372,20 +415,142 @@ export interface JudgingQueue {
   }[];
 }
 
+export interface TrainingInput {
+  title: string; class_name: string; objective: string; description: string; due_at: string;
+  problems: { pid: string; required: boolean }[];
+  student_ids?: number[] | null;
+  source_training_id?: number | null;
+}
+export interface Training extends TrainingInput {
+  id: number; teacher_id: number; status: "draft" | "published"; published_at: string | null;
+}
+export interface TrainingDetail extends Training {
+  problems: { pid: string; required: boolean; title: string; package_level: string }[];
+  rows: { student_id: number; name: string; complete: boolean; cells: (null | {
+    id: number; stage: string; verdict: string | null; tests_passed: TestSummary | null;
+    state: "complete" | "pending" | "failed" | "cancelled"; passed: boolean; late: boolean; attempts: number;
+  })[] }[];
+  summary: { students: number; participated: number; completed: number; late_submissions: number };
+  observed_at: string;
+}
+
+export interface TrainingAnalysis {
+  summary: TrainingDetail["summary"];
+  basis_digest: string; observed_at: string;
+  problems: { pid: string; title: string; required: boolean; students: number;
+    counts: Record<string, number>; repaired: number; unclassified: number }[];
+  issues: { pid: string; code: string; label: string; source: "teacher" | "automatic";
+    students: number; submission_ids: number[] }[];
+  examples: { submission_id: number; pid: string; language: string; verdict: string | null;
+    code: string; code_truncated: boolean; narrative: string;
+    evidence: { id: number; type: string; excerpt: string }[] }[];
+}
+export interface TrainingLesson {
+  published: { revision: number; content: string; published_at: string } | null;
+  draft?: { revision: number; content: string; source: "ai" | "facts" | "manual";
+    basis_digest: string; created_at: string; stale: boolean } | null;
+  history?: NonNullable<TrainingLesson["draft"]>[];
+  analysis?: TrainingAnalysis;
+}
+
+export interface StudentFeedback {
+  id: number; content: string; author: string; created_at: string; read_at: string | null;
+  submission_id: number | null; source_pid: string | null;
+  followup: { has_new_submission: boolean; passed: boolean; latest_submission_id: number | null };
+}
+export interface FeedbackHistory {
+  student: { id: number; name: string }; items: StudentFeedback[]; truncated: boolean; observed_at: string;
+}
+export interface StudentProfile {
+  student: { id: number; name: string; class_name: string };
+  summary: { trainings: number; completed: number; remedial: number };
+  truncated: boolean; observed_at: string;
+  items: (Omit<Training, "problems"> & { complete: boolean; feedback_count: number; latest_feedback: StudentFeedback | null;
+    problems: { pid: string; title: string; required: boolean; cell: TrainingDetail["rows"][number]["cells"][number] }[] })[];
+}
+
 export const api = {
+  runtimeJudging: (state = "all", q = "", offset = 0) => get<RuntimeJudging>(`/admin/runtime/judging?state=${state}&q=${encodeURIComponent(q)}&offset=${offset}`),
+  runtimeJobAction: (id: number, action: "retry" | "cancel", job: RuntimeJob) => post(`/admin/runtime/judging/${id}/${action}`, { status: job.status, attempts: job.attempts, manual_retries: job.manual_retries }),
+  runtimeJudgeCheck: (language: string) => post<{ ok: boolean; language: string; backend: string; checked_at: string }>(`/admin/runtime/judge-check?language=${language}`),
+  runtimeAI: () => get<RuntimeAI>("/admin/runtime/ai"),
+  runtimeAICheck: (body: { expected_version: number; base_url: string; model: string; api_key: string }) => post<{ check_id: string; ok: boolean; error: string; latency_ms: number | null; expires_at: string }>("/admin/runtime/ai/check", body),
+  runtimeAIActivate: (check_id: string) => post<RuntimeAI>("/admin/runtime/ai/activate", { check_id }),
+  runtimeAIDisable: (expected_version: number) => post<RuntimeAI>("/admin/runtime/ai/disable", { expected_version }),
+  runtimeBackups: () => get<RuntimeBackups>("/admin/runtime/backups"),
+  runtimeBackup: (action: "create" | "verify", request_id: string, artifactId?: string) => post<MaintenanceTask>(`/admin/runtime/backups/${action}${artifactId ? `?artifact_id=${artifactId}` : ""}`, { request_id }),
+  runtimeMaintenanceRetry: (id: string) => post<MaintenanceTask>(`/admin/runtime/maintenance/${id}/retry`),
+  runtimeDownload: async (id: string) => {
+    const { response, snapshot, signal } = await request(`/admin/runtime/backups/${id}/download`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = `oi-backup-${id}.oibak`; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  catalogProblems: (q = "", offset = 0, state = "all") => get<{ items: CatalogProblem[]; has_more: boolean }>(`/admin/problems?q=${encodeURIComponent(q)}&offset=${offset}&state=${state}`),
+  catalogLocalPackages: () => get<{ pid: string; title: string; valid: boolean; cases: number; package_level: string }[]>("/admin/problems/local-packages"),
+  catalogPreview: (problems: unknown[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/import/preview", { problems, rights_confirmed }),
+  catalogLocalPreview: (pids: string[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/local-packages/preview", { pids, rights_confirmed }),
+  catalogConfirm: (preview_id: string) => post<{ items: { id: number; pid: string; revision: number; changed: boolean; is_active: boolean }[]; replayed: boolean }>("/admin/problems/import/confirm", { preview_id }),
+  catalogState: (id: number, expected_version: number, is_active: boolean) => post<CatalogProblem>(`/admin/problems/${id}/state`, { expected_version, is_active }),
+  catalogHistory: (id: number) => get<{ items: CatalogVersion[]; truncated: boolean }>(`/admin/problems/${id}/versions`),
+  catalogVersion: (id: number, versionId: number) => get<{ problem: Record<string, unknown>; revision: number; snapshot_available: boolean }>(`/admin/problems/${id}/versions/${versionId}`),
+  adminOverview: () => get<AdminOverview>("/admin/overview"),
+  adminUsers: (q = "", offset = 0, groupId?: number) => get<{ items: AdminAccount[]; has_more: boolean }>(`/admin/users?q=${encodeURIComponent(q)}&offset=${offset}${groupId == null ? "" : `&group_id=${groupId}`}`),
+  adminTeachers: () => get<{ id: number; name: string; enabled: boolean }[]>("/admin/teachers"),
+  adminClasses: () => get<AdminClass[]>("/admin/classes"),
+  adminAudit: (before?: number) => get<{ items: AdminAudit[]; has_more: boolean }>("/admin/audit" + (before ? `?before_id=${before}` : "")),
+  createAccount: (body: AccountInput) => post<AdminAccount>("/admin/users", body),
+  editAccount: async (id: number, body: { expected_version: number; display_name: string; role: AuthUser["role"]; enabled: boolean }) => readJson<AdminAccount>(await request(`/admin/users/${id}`, body, "PATCH")),
+  resetPassword: (id: number, body: { expected_version: number; password: string }) => post<AdminAccount>(`/admin/users/${id}/password`, body),
+  transferPreview: (id: number, body: { expected_version: number; class_id: number | null }) => post<TransferImpact>(`/admin/users/${id}/transfer/preview`, body),
+  transferStudent: (id: number, body: { expected_version: number; class_id: number | null }) => post<AdminAccount>(`/admin/users/${id}/transfer`, body),
+  createClass: (name: string, teacher_ids: number[] = [], student_accounts: AccountInput[] = []) => post<{ id: number }>("/admin/classes", { name, teacher_ids, student_accounts }),
+  editClass: async (id: number, body: { name: string; expected_version: number; archived: boolean; teacher_ids: number[]; transfer_to: number | null }) => readJson<{ transferred: number }>(await request(`/admin/classes/${id}`, body, "PATCH")),
+  importPreview: (rows: AccountInput[]) => post<{ rows: { row: number; username: string; display_name: string; role: string; class_id: number | null }[]; errors: { row: number; message: string }[] }>("/admin/users/import/preview", { rows }),
+  importAccounts: (rows: AccountInput[]) => post<AdminAccount[]>("/admin/users/import", { rows }),
+  changePassword: (current_password: string, new_password: string) => post<{ access_token: string; user: AuthUser }>("/auth/password", { current_password, new_password }),
+  trainings: () => get<Training[]>("/trainings"),
+  training: (id: number) => get<TrainingDetail>("/trainings/" + id),
+  trainingRoster: () => get<{ id: number; name: string; class_name: string }[]>("/trainings/roster"),
+  saveTraining: (body: TrainingInput, id?: number) => post<TrainingDetail>(id ? `/trainings/${id}/draft` : "/trainings", body),
+  publishTraining: (id: number) => post<TrainingDetail>(`/trainings/${id}/publish`),
+  trainingLesson: (id: number) => get<TrainingLesson>(`/trainings/${id}/lesson`),
+  generateTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/generate`, { expected_revision: revision }),
+  saveTrainingLesson: (id: number, revision: number, content: string, digest: string) =>
+    post<TrainingLesson>(`/trainings/${id}/lesson/draft`, { expected_revision: revision, content, basis_digest: digest }),
+  publishTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/publish`, { expected_revision: revision }),
+  studentProfile: (id: number) => get<StudentProfile>(`/students/${id}/profile`),
+  trainingFeedback: (trainingId: number, studentId: number) => get<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`),
+  sendTrainingFeedback: (trainingId: number, studentId: number, content: string, requestId: string, submissionId?: number | null) =>
+    post<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`, { content, request_id: requestId, submission_id: submissionId ?? null }),
+  markFeedbackRead: (trainingId: number, feedbackId: number) => post<FeedbackHistory>(`/trainings/${trainingId}/feedback/${feedbackId}/read`),
+  downloadStudentProfile: async (id: number) => {
+    const { response, snapshot, signal } = await request(`/students/${id}/profile/report`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; link.download = `学生训练档案-${id}.md`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
-  getProblem: (pid: string) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid)),
-  submit: (pid: string, code: string, parentId?: number | null) =>
+  getProblem: (pid: string, trainingId?: number, submissionId?: number) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid) + (trainingId ? `?training_id=${trainingId}` : submissionId ? `?submission_id=${submissionId}` : "")),
+  submit: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null) =>
     post<SubmissionResult>("/submissions", {
-      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
     }),
-  submitAsync: (pid: string, code: string, parentId?: number | null, signal?: AbortSignal) =>
+  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal, trainingId?: number, problemVersionId?: number | null) =>
     post<SubmissionResult>("/submissions", {
-      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      ...(trainingId === undefined ? {} : { training_id: trainingId }),
+      ...(problemVersionId == null ? {} : { problem_version_id: problemVersionId }),
     }, { signal, headers: { Prefer: "respond-async" } }),
   retrySubmission: (id: number, signal?: AbortSignal) =>
     post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),
@@ -403,12 +568,12 @@ export const api = {
   createSession: (submissionId: number) =>
     post<SessionReply>("/sessions", { submission_id: submissionId }),
   getSession: (id: number) => get<SessionHistory>("/sessions/" + id),
-  sendMessage: (sessionId: number, content: string) =>
-    post<SessionReply>("/sessions/" + sessionId + "/messages", { content }),
+  sendMessage: (sessionId: number, content: string, requestId?: string) =>
+    post<SessionReply>("/sessions/" + sessionId + "/messages", { content, ...(requestId ? { request_id: requestId } : {}) }),
   verifySession: (sessionId: number, submissionId: number) =>
     post<SessionReply>("/sessions/" + sessionId + "/verify", { submission_id: submissionId }),
-  mySubmissions: () => get<MySubmission[]>("/me/submissions"),
-  coachQueue: () => get<CoachItem[]>("/coach/queue"),
+  mySubmissions: (beforeId?: number) => get<MySubmission[]>("/me/submissions" + (beforeId ? `?before_id=${beforeId}` : "")),
+  coachQueue: (beforeId?: number) => get<CoachItem[]>("/coach/queue" + (beforeId ? `?before_id=${beforeId}` : "")),
   coachOverview: () => get<Overview>("/coach/overview"),
   coachJudging: (signal?: AbortSignal) => get<JudgingQueue>("/coach/judging", { signal }),
   downloadCard: async (id: number) => {
@@ -425,3 +590,68 @@ export const api = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 };
+
+export interface AdminAccount extends AuthUser {
+  enabled: boolean; token_version: number; must_change_password: boolean;
+}
+export interface AccountInput {
+  username: string; display_name: string; role: AuthUser["role"]; password: string; class_id: number | null;
+}
+export interface AdminClass {
+  id: number; name: string; archived: boolean; version: number; teacher_ids: number[]; students: number;
+  training_owners: { teacher_id: number; count: number }[];
+}
+export interface AdminAudit {
+  id: number; actor: string; action: string; target: string; before: Record<string, unknown>; after: Record<string, unknown>; created_at: string;
+}
+export interface TransferImpact { student: string; from: string; to: string; affected_trainings: number; notice: string }
+export interface AdminOverview {
+  observed_at: string; database: string; accounts: Record<AuthUser["role"], number>; disabled: number;
+  unassigned_students: number; classes_without_teacher: { id: number; name: string }[]; active_classes: number;
+  llm_enabled: boolean; worker_status: "online" | "unknown"; judging: JudgingQueue;
+}
+
+export interface RuntimeWorkers {
+  observed_at: string; stale_after_seconds: number; api_judge_enabled: boolean; maintenance_enabled: boolean;
+  items: { id: string; kind: string; state: string; current_job: string | null; seen_at: string; age_seconds: number; online: boolean }[];
+}
+export interface RuntimeJob {
+  id: number; status: string; attempts: number; max_attempts: number; manual_retries: number;
+  retryable: boolean; cancelable: boolean; last_error: string | null; lease_expires_at: string | null;
+}
+export interface RuntimeJudging {
+  items: { job: RuntimeJob; submission_id: number; stage: string; student: string; pid: string; title: string; protected: boolean; problem_version_id: number | null; created_at: string }[];
+  has_more: boolean; summary: JudgingQueue; workers: RuntimeWorkers; backend: string;
+  last_check: { ok: boolean; language: string; backend: string; checked_at: string } | null;
+}
+export interface RuntimeAI {
+  version: number; enabled: boolean; configured: boolean; environment_allowed: boolean; key_configured: boolean;
+  base_url: string; model: string; source: string; checked_at: string | null; observed_at: string;
+  last_check: { ok: boolean; error: string; created_at: string; base_url: string; model: string; latency_ms: number | null } | null;
+  usage: { observed_records: number; external_calls: number; prompt_tokens: number | null; completion_tokens: number | null; unknown_usage: number };
+  events: { id: number; feature: string; model: string; called: boolean; used_model: boolean; error: string; latency_ms: number | null; prompt_tokens: number | null; completion_tokens: number | null; created_at: string }[];
+}
+export interface MaintenanceTask {
+  id: string; kind: string; artifact_id: string; status: string; attempts: number; error: string;
+  result: Record<string, unknown>; created_at: string; finished_at: string | null;
+}
+export interface RuntimeBackups {
+  items: { id: string; sha256: string; size: number; counts: Record<string, number>; revision: string; created_at: string; verified_at: string | null }[];
+  tasks: MaintenanceTask[]; verify_configured: boolean; workers: RuntimeWorkers;
+}
+
+export interface CatalogProblem {
+  id: number; pid: string; title: string; revision: number; catalog_version: number; is_active: boolean;
+  package_level: string; source: string; source_url: string; license_note: string;
+  samples: number; cases: number | null; scope: string | null; notes: string[];
+}
+export interface CatalogVersion {
+  id: number; revision: number; title: string; source: string; digest: string; reviewer: string;
+  created_by: number | null; created_at: string; cases: number | null;
+}
+export interface CatalogPreview {
+  preview_id: string; expires_at: string; notice: string;
+  rows: { pid: string; title: string; existing_revision: number | null; action: "create" | "new_version" | "unchanged";
+    package_level: string; scope: string; cases: number; samples: number; source: string; source_url: string;
+    license_note: string; reviewer: string; digest: string; notice: string }[];
+}

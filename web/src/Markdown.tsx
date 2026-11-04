@@ -1,13 +1,33 @@
-﻿import { type ReactNode } from "react";
+import { type ReactNode } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 
 /**
  * 极简 Markdown 渲染：只覆盖题面里出现的语法。
- * 不引入 react-markdown，原因：题面结构稳定，自己写 60 行更可控，
+ * 不引入 react-markdown，原因：题面结构稳定，轻量解析更可控，
  * 且不会因为依赖升级导致构建失败（本项目已经踩过 esbuild 的坑）。
  */
+function math(source: string, key: string, displayMode = false): ReactNode {
+  const html = katex.renderToString(source.trim(), {
+    displayMode,
+    output: "htmlAndMathml",
+    throwOnError: false,
+    strict: "ignore",
+    trust: false,
+  });
+
+  return (
+    <span
+      key={key}
+      className={displayMode ? "math-display-inner" : "math-inline"}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\$[^$]+\$)/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\$(?!\$)[^$\n]+\$)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -15,8 +35,11 @@ function inline(text: string, key: string): ReactNode[] {
     if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
     if (tok.startsWith("**")) out.push(<strong key={`${key}-b${i}`}>{tok.slice(2, -2)}</strong>);
-    else if (tok.startsWith("`")) out.push(<code key={`${key}-c${i}`} className="inline-code">{tok.slice(1, -1)}</code>);
-    else out.push(<span key={`${key}-m${i}`} className="math">{tok}</span>);
+    else if (tok.startsWith("`")) {
+      out.push(<code key={`${key}-c${i}`} className="inline-code">{tok.slice(1, -1)}</code>);
+    } else {
+      out.push(math(tok.slice(1, -1), `${key}-m${i}`));
+    }
     last = m.index + tok.length;
     i += 1;
   }
@@ -29,7 +52,7 @@ export default function Markdown({ text }: { text: string }) {
   const blocks: ReactNode[] = [];
   let para: string[] = [];
   let code: string[] | null = null;
-
+  let displayMath: string[] | null = null;
   let list: string[] = [];
   let key = 0;
 
@@ -63,9 +86,22 @@ export default function Markdown({ text }: { text: string }) {
           </pre>
         );
         code = null;
-
       } else {
         code.push(raw);
+      }
+      continue;
+    }
+
+    if (displayMath) {
+      if (line.trim() === "$$") {
+        blocks.push(
+          <div key={`math${key++}`} className="math-display">
+            {math(displayMath.join("\n"), `math-inner${key}`, true)}
+          </div>
+        );
+        displayMath = null;
+      } else {
+        displayMath.push(raw);
       }
       continue;
     }
@@ -74,6 +110,25 @@ export default function Markdown({ text }: { text: string }) {
       flushPara();
       flushList();
       code = [];
+      continue;
+    }
+
+    const singleLineMath = /^\s*\$\$(.+)\$\$\s*$/.exec(line);
+    if (singleLineMath) {
+      flushPara();
+      flushList();
+      blocks.push(
+        <div key={`math${key++}`} className="math-display">
+          {math(singleLineMath[1], `math-inner${key}`, true)}
+        </div>
+      );
+      continue;
+    }
+
+    if (line.trim() === "$$") {
+      flushPara();
+      flushList();
+      displayMath = [];
       continue;
     }
 
@@ -117,9 +172,15 @@ export default function Markdown({ text }: { text: string }) {
       </pre>
     );
   }
+  if (displayMath) {
+    blocks.push(
+      <div key={`math${key++}`} className="math-display">
+        {math(displayMath.join("\n"), `math-inner${key}`, true)}
+      </div>
+    );
+  }
   flushPara();
   flushList();
 
   return <div className="md">{blocks}</div>;
 }
-
