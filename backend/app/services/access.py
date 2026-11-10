@@ -7,6 +7,7 @@ from sqlalchemy import or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models import HintSession, Submission, User
+from app.services.class_access import teacher_class_scope
 
 
 def submission_scope(user: User):
@@ -14,9 +15,9 @@ def submission_scope(user: User):
     if user.role == "admin":
         return true()
     own = Submission.student_id == user.id
-    if user.role == "teacher" and (user.class_name or "").strip():
+    if user.role == "teacher":
         students = select(User.id).where(
-            User.role == "student", User.class_name == user.class_name
+            User.role == "student", teacher_class_scope(user)
         )
         return or_(own, Submission.student_id.in_(students))
     return own

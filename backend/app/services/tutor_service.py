@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,24 +11,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.compose import compose
 from app.agents.tutor import (
     DiagnosisView,
+    OutputComparison,
     SessionView,
     decide,
     is_confused,
     safe_output,
 )
-from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, HintSession, HintTurn, Submission, User
+from app.domain.models import (
+    Diagnosis,
+    Evidence,
+    HintMessageReceipt,
+    HintSession,
+    HintTurn,
+    Submission,
+    User,
+)
 from app.gateway.llm import LLMClient
 from app.services.access import accessible_hint_session, accessible_submission
 from app.services.evidence_text import has_escaped_input
-from app.services.judgement import effective_verdict
+from app.services.judgement import effective_verdict, valid_test_summary
+from app.services.problem_versions import resolve_problem
+from app.services.runtime_ai import observe_call, runtime_client
 
 
 class TutorService:
     def __init__(self, session: AsyncSession, user: User) -> None:
         self.session = session
         self.user = user
+
+    async def _visible_status(self, hs: HintSession) -> str:
+        if hs.status != "resolved":
+            return hs.status
+        verified = await self.session.get(Submission, hs.verified_submission_id) if hs.verified_submission_id else None
+        if verified is None or verified.stage != "READY" or effective_verdict(verified) != "AC":
+            return "unverified"
+        return "resolved"
 
     async def create(self, submission_id: int) -> tuple[HintSession, HintTurn]:
         sub = await accessible_submission(self.session, self.user, submission_id, lock=True)
@@ -68,21 +88,66 @@ class TutorService:
 
         view = await self._diagnosis_view(diag, submission_id)
         decision = decide(SessionView(level=0, has_student_input=False), "", view)
+        client = await runtime_client(self.session, factory=LLMClient)
+        content = await compose(decision, view, "", client)
+        reason = (getattr(getattr(client, "last_call", None), "meta", {}) or {}).get("tutor_fallback_reason", "")
+        await observe_call(self.session, client, "tutor", used=bool(getattr(client, "last_call", None) and client.last_call.ok and not reason), reason=reason)
         turn = HintTurn(session_id=hs.id, role="tutor", level=decision.level,
-                        content=decision.content)
+                        content=content)
         self.session.add(turn)
         await self.session.commit()
         await self.session.refresh(hs)
         await self.session.refresh(turn)
         return hs, turn
 
-    async def reply(self, session_id: int, message: str) -> dict:
+    async def _current_message_state(self, hs: HintSession) -> dict:
+        """重放只复用消息正文，会话与核验信息始终来自当前绑定。"""
+        source_id = hs.verified_submission_id or hs.submission_id
+        source = await self.session.get(Submission, source_id)
+        if source is not None:
+            source = await accessible_submission(self.session, self.user, source_id)
+            original = await accessible_submission(self.session, self.user, hs.submission_id)
+            if source.student_id != hs.student_id or source.problem_id != original.problem_id:
+                raise HTTPException(status_code=409, detail="答疑绑定的提交归属不一致，请重新开启提示")
+        return {
+            "status": await self._visible_status(hs),
+            "level": hs.level,
+            "verified_submission_id": hs.verified_submission_id,
+            "verdict": effective_verdict(source) if source is not None else None,
+        }
+
+    async def reply(self, session_id: int, message: str, request_id: str | None = None) -> dict:
         hs = await accessible_hint_session(self.session, self.user, session_id, lock=True)
-        if hs.status in ("resolved", "escalated", "blocked"):
-            return {"session_id": hs.id, "status": hs.status, "level": hs.level,
-                    "reply": "这次会话已经结束，可以开一个新的。", "action": "closed"}
+        # 会话锁串行化并发重放；回执不能绕过当前账号的归属校验。
+        request_hash = sha256(request_id.encode("utf-8")).hexdigest() if request_id is not None else None
+        content_hash = sha256(message.encode("utf-8")).hexdigest()
+        if request_hash is not None:
+            receipt = await self.session.scalar(select(HintMessageReceipt).where(
+                HintMessageReceipt.session_id == hs.id,
+                HintMessageReceipt.request_hash == request_hash,
+            ))
+            if receipt is not None:
+                if receipt.actor_id != self.user.id or receipt.content_sha256 != content_hash:
+                    raise HTTPException(status_code=409, detail="该消息编号已用于其他内容或账号，请核对后重新发送")
+                return {
+                    **receipt.response,
+                    **await self._current_message_state(hs),
+                    "accepted": True,
+                    "replayed": True,
+                }
+        if (hs.status in ("escalated", "blocked")
+                or (hs.status == "resolved" and await self._visible_status(hs) != "resolved")):
+            status = await self._visible_status(hs)
+            return {"session_id": hs.id, "status": status, "level": hs.level,
+                    "reply": ("历史核验结果待核对，请重新提交正式测试后新建答疑。" if status == "unverified"
+                              else "这次会话已经结束，可以开一个新的。"), "action": "closed",
+                    "accepted": False, "replayed": False}
 
         source_submission_id = hs.verified_submission_id or hs.submission_id
+        source = await accessible_submission(self.session, self.user, source_submission_id)
+        original = await accessible_submission(self.session, self.user, hs.submission_id)
+        if source.student_id != hs.student_id or source.problem_id != original.problem_id:
+            raise HTTPException(status_code=409, detail="答疑绑定的提交归属不一致，请重新开启提示")
         diag = (
             await self.session.execute(
                 select(Diagnosis).where(Diagnosis.submission_id == source_submission_id)
@@ -104,6 +169,15 @@ class TutorService:
             )
         ).scalars().all()
 
+        history = []
+        for turn in reversed(recent):
+            # 修改核验之后只讨论当前绑定版本，不把上一版自述混进新执行记录。
+            if turn.role == "tutor" and turn.content.startswith("核验提交 #"):
+                history.clear()
+            else:
+                history.append((turn.role, turn.content))
+        dialogue = tuple(history)
+
         # 当前层级里，学生已经连续说了几次"不会"
         stuck = 0
         for turn in recent:
@@ -120,19 +194,21 @@ class TutorService:
             SessionView(level=hs.level, failed_attempts=hs.failed_attempts,
                         cheat_flags=hs.cheat_flags, status=hs.status,
                         has_student_input=bool(message.strip()), turn=student_turns,
-                        stuck_count=stuck),
+                        stuck_count=stuck, history=dialogue),
             message, view,
         )
 
         # 规则定边界，模型写措辞；模型不可用则用模板
         if decision.action in ("hint", "explain") and decision.mode != "gate":
-            llm = LLMClient() if settings.llm_enabled else None
-            content = await compose(decision, view, message, llm)
+            llm = await runtime_client(self.session, factory=LLMClient)
+            content = await compose(decision, view, message, llm, history=dialogue)
+            reason = (getattr(getattr(llm, "last_call", None), "meta", {}) or {}).get("tutor_fallback_reason", "")
+            await observe_call(self.session, llm, "tutor", used=bool(getattr(llm, "last_call", None) and llm.last_call.ok and not reason), reason=reason)
         else:
             content = decision.content
 
         # 防代做最后一道闸门
-        if not safe_output(content):
+        if not safe_output(content, source_code=view.source_code):
             content = "这段我先不贴完整代码，按上面的提示改一处，我们再一起看结果。"
 
         self.session.add(HintTurn(session_id=hs.id, role="student", level=hs.level,
@@ -146,9 +222,7 @@ class TutorService:
             hs.cheat_flags += 1
             if hs.cheat_flags >= 3:
                 hs.status = "blocked"
-        await self.session.commit()
-
-        return {
+        result = {
             "session_id": hs.id,
             "status": hs.status,
             "level": hs.level,
@@ -156,7 +230,19 @@ class TutorService:
             "reply": content,
             "dependency_signal": decision.dependency_signal,
             "mastery": None,
+            "verified_submission_id": hs.verified_submission_id,
+            "verdict": effective_verdict(source),
+            "accepted": True,
+            "replayed": False,
         }
+        if request_hash is not None:
+            self.session.add(HintMessageReceipt(
+                session_id=hs.id, request_hash=request_hash, actor_id=self.user.id,
+                content_sha256=content_hash, response=result,
+            ))
+        # 消息、会话状态、调用观察与回执一起提交。事务失败后不得留下成功回执。
+        await self.session.commit()
+        return result
 
     async def verify(self, session_id: int, submission_id: int) -> dict:
         """绑定修改后真实提交；样例通过和学生口述均不能关闭答疑。"""
@@ -165,11 +251,32 @@ class TutorService:
         candidate = await accessible_submission(self.session, self.user, submission_id)
         if candidate.student_id != hs.student_id or candidate.problem_id != original.problem_id:
             raise HTTPException(status_code=409, detail="核验提交必须属于同一学生和同一道题")
-        if candidate.id <= original.id or candidate.code_hash == original.code_hash:
-            raise HTTPException(status_code=409, detail="请先修改代码并重新提交，再核验新提交")
+        if candidate.training_id != original.training_id:
+            raise HTTPException(status_code=409, detail="核验提交必须属于同一次训练或自由练习")
+        if candidate.problem_version_id != original.problem_version_id:
+            raise HTTPException(409, "核验提交使用了不同题目版本，请从原提交继续修改后重新提交")
+        same_source = (
+            candidate.code_hash == original.code_hash and candidate.lang == original.lang
+        )
+        if candidate.id <= original.id:
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_not_new",
+                "message": f"提交 #{candidate.id} 不是答疑起点 #{original.id} 之后的新提交。请修改上方代码后重新提交。",
+            })
+        if same_source:
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_unchanged",
+                "message": f"提交 #{candidate.id} 与答疑起点 #{original.id} 的代码和语言相同。请修改上方代码后重新提交；重试当前记录不会产生新的修改。",
+            })
         if candidate.stage != "READY" or candidate.verdict is None:
-            raise HTTPException(status_code=409, detail="新提交尚未完成判题")
-        if hs.status == "resolved":
+            raise HTTPException(status_code=409, detail={
+                "code": "verification_pending", "message": "新提交尚未完成判题，请等待完成后再核验。",
+            })
+        stale_binding = hs.status == "resolved" and await self._visible_status(hs) == "unverified"
+        if stale_binding and hs.verified_submission_id is None:
+            raise HTTPException(409, {"code": "verification_restart",
+                "message": "历史核验绑定已缺失，请保留原记录并为新提交重新开启代码讲解。"})
+        if hs.status == "resolved" and not stale_binding:
             if hs.verified_submission_id != candidate.id:
                 raise HTTPException(status_code=409, detail="答疑已经绑定其他通过题包核验的提交")
             return self._verification_reply(hs, candidate, "这次答疑已完成核验。")
@@ -182,12 +289,13 @@ class TutorService:
             raise HTTPException(status_code=409, detail="请核验更新的提交，不能回退到之前的版本")
 
         hs.verified_submission_id = candidate.id
-        counts = candidate.tests_passed or {}
+        if stale_binding:
+            hs.status = "open"
+        counts = valid_test_summary(candidate) or {}
         complete = (
             effective_verdict(candidate) == "AC"
             and counts.get("scope") == "package"
-            and isinstance(counts.get("total"), int)
-            and counts["total"] > 0
+            and counts.get("total", 0) > 0
             and counts.get("passed") == counts["total"]
         )
         if complete:
@@ -206,6 +314,10 @@ class TutorService:
 
     @staticmethod
     def _verification_reply(hs: HintSession, candidate: Submission, text: str = "") -> dict:
+        status = hs.status
+        if status == "resolved" and (candidate.stage != "READY" or effective_verdict(candidate) != "AC"):
+            status = "unverified"
+            text = "历史核验结果待核对，请重新提交正式测试后新建答疑。"
         if not text:
             if hs.status == "resolved":
                 text = "修改后的代码已通过当前题包测试，这次答疑已解决。"
@@ -218,24 +330,44 @@ class TutorService:
             else:
                 text = "修改后的代码仍有失败测试，请对照这次提交的证据继续检查。"
         return {
-            "session_id": hs.id, "status": hs.status, "level": hs.level,
-            "action": "resolved" if hs.status == "resolved" else "verify",
+            "session_id": hs.id, "status": status, "level": hs.level,
+            "action": "resolved" if status == "resolved" else "verify",
             "reply": text, "mastery": None,
             "verified_submission_id": hs.verified_submission_id,
             "verdict": effective_verdict(candidate),
         }
 
     async def _diagnosis_view(self, diag: Diagnosis | None, submission_id: int) -> DiagnosisView:
-        view = _diag_view(diag)
+        submission = await self.session.get(Submission, submission_id)
+        view = _diag_view(diag, submission.lang if submission else "cpp17")
+        collaboration = (diag.model_meta or {}).get("collaboration") if diag is not None else None
+        if isinstance(collaboration, dict):
+            records = collaboration.get("steps", [])
+            view.collaboration_context = "\n".join(
+                f"{record.get('agent')}（{record.get('status')}）：{str(record.get('summary', ''))[:500]}"
+                for record in records[-6:] if isinstance(record, dict)
+            )[:2200]
+            if "critic_blocked" in (diag.degraded or []):
+                view.collaboration_context = "先前候选错因未通过独立审查，不得沿用。只依据原始源码和执行事实讲解。"
+        if submission is not None:
+            view.source_code = submission.code
+            view.verdict = effective_verdict(submission)
+            problem = await resolve_problem(self.session, submission.problem_id, submission.problem_version_id)
+            if problem is not None:
+                view.problem_context = f"{problem.pid} {problem.title}\n{problem.statement_md}"
         rows = (
             await self.session.execute(
                 select(Evidence).where(
-                    Evidence.submission_id == submission_id, Evidence.type == "run_trace"
+                    Evidence.submission_id == submission_id, Evidence.type.in_(("compile_log", "run_trace"))
                 ).order_by(Evidence.id)
             )
         ).scalars().all()
         for evidence in rows:
             payload = evidence.payload or {}
+            if evidence.type == "compile_log":
+                if payload.get("ok") is False:
+                    view.execution_context = "编译未通过，尚未运行测试。编译器信息：\n" + str(payload.get("stderr", ""))[:3000]
+                continue
             failed = (
                 payload.get("matched") is False
                 or payload.get("status") != "Accepted"
@@ -245,10 +377,34 @@ class TutorService:
                 ))
             )
             if failed:
+                view.execution_context = (
+                    f"运行状态={payload.get('status')}；退出码={payload.get('exit_code')}；"
+                    f"输入={str(payload.get('stdin', payload.get('input', '')))[:1000]!r}；"
+                    f"实际输出={str(payload.get('stdout', ''))[:1000]!r}；"
+                    f"预期输出={str(payload.get('expected', ''))[:1000]!r}"
+                )
+                if (payload.get("input_truncated") or payload.get("stdout_truncated")
+                        or payload.get("expected_truncated") or payload.get("escaped_fields")):
+                    view.execution_context += "（展示内容可能截断或转义，不能作为完整原始输入输出。）"
                 if not payload.get("input_truncated") and not has_escaped_input(payload):
                     view.counterexample = str(payload.get("stdin", payload.get("input", "")))
                 view.counterexample_minimized = False
+                actual, expected = payload.get("stdout"), payload.get("expected")
+                escaped = payload.get("escaped_fields") or []
+                escaped_output = isinstance(escaped, list) and any(
+                    isinstance(path, str) and (path in {"/stdout", "/expected"}
+                                              or path.startswith(("/stdout/", "/expected/")))
+                    for path in escaped
+                )
+                if (payload.get("status") == "Accepted" and payload.get("exit_code", 0) == 0
+                        and isinstance(actual, str) and isinstance(expected, str)
+                        and len(actual) <= 2000 and len(expected) <= 2000
+                        and not payload.get("stdout_truncated") and not payload.get("expected_truncated")
+                        and not escaped_output and not outputs_equal(actual, expected)):
+                    view.comparison = OutputComparison(expected=expected, actual=actual, origin="execution")
                 break
+        if not view.execution_context and submission is not None:
+            view.execution_context = f"当前判定={view.verdict}；保存的测试摘要={submission.tests_passed!r}"
         return view
 
     async def get(self, session_id: int) -> dict:
@@ -260,22 +416,21 @@ class TutorService:
         ).scalars().all()
         return {
             "session_id": hs.id,
-            "status": hs.status,
-            "level": hs.level,
+            **await self._current_message_state(hs),
             "cheat_flags": hs.cheat_flags,
             "submission_id": hs.submission_id,
-            "verified_submission_id": hs.verified_submission_id,
             "turns": [{"role": t.role, "level": t.level, "content": t.content} for t in turns],
         }
 
 
-def _diag_view(diag: Diagnosis | None) -> DiagnosisView:
+def _diag_view(diag: Diagnosis | None, language: str = "cpp17") -> DiagnosisView:
     if diag is None:
-        return DiagnosisView()
+        return DiagnosisView(language=language)
     nature = diag.nature or []
     top = nature[0] if nature else {}
     mechanism = (diag.mechanism or [{}])[0]
     return DiagnosisView(
+        language=language,
         p=str(top.get("p", "P2")),
         code=str(top.get("code", mechanism.get("code", ""))),
         message=str(top.get("message", mechanism.get("explain", diag.narrative or ""))),

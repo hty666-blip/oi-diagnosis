@@ -1,33 +1,41 @@
-"""可选 PostgreSQL 集成环境：TEST_DATABASE_URL 必须指向独立测试库。"""
+"""可选数据库集成环境：TEST_DATABASE_URL 必须指向独立测试库。"""
 
 from __future__ import annotations
 
 import os
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
+from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.core.config import settings
 from app.core.security import create_access_token
-from app.domain.models import Diagnosis, Problem, Submission, User
-from app.infra.db import get_session
+from app.domain.models import Base, Diagnosis, Problem, Submission, User
+from app.infra.db import configure_database_engine, database_engine_options, get_session
 from app.main import app
+
+
+def pytest_sessionstart(session):
+    if os.environ.get("REQUIRE_DATABASE_TESTS") == "1" and not os.environ.get("TEST_DATABASE_URL"):
+        raise pytest.UsageError("已要求数据库集成测试，但缺少 TEST_DATABASE_URL；拒绝以跳过用例代替验证。")
 
 
 @pytest.fixture
 async def api_context(monkeypatch):
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
-        pytest.skip("设置 TEST_DATABASE_URL 后运行 PostgreSQL HTTP 集成测试")
+        pytest.skip("设置 TEST_DATABASE_URL 后运行数据库 HTTP 集成测试")
     if "test" not in (make_url(url).database or "").lower():
         pytest.fail("TEST_DATABASE_URL 必须指向名称含 test 的独立测试数据库")
     monkeypatch.setattr(settings, "llm_enabled", False)
     monkeypatch.setattr(settings, "jwt_secret", "integration-test-secret-is-at-least-32-bytes-long")
-    engine = create_async_engine(url, poolclass=NullPool)
+    engine = create_async_engine(url, poolclass=NullPool, **database_engine_options(url))
+    configure_database_engine(engine)
     async with engine.connect() as connection:
         transaction = await connection.begin()
         session = AsyncSession(
@@ -86,3 +94,26 @@ async def api_context(monkeypatch):
             await session.close()
             await transaction.rollback()
     await engine.dispose()
+
+
+@pytest.fixture
+async def isolated_database(api_context):
+    """并发测试使用独占 schema；MySQL 测试账号需创建、删除测试库的权限。"""
+    url = os.environ["TEST_DATABASE_URL"]
+    schema = "test_isolated_" + uuid4().hex
+    engine = create_async_engine(
+        url, poolclass=NullPool, **database_engine_options(url),
+        execution_options={"schema_translate_map": {None: schema}},
+    )
+    configure_database_engine(engine)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(CreateSchema(schema))
+            await connection.run_sync(Base.metadata.create_all)
+        yield engine
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(DropSchema(
+                schema, cascade=engine.dialect.name == "postgresql", if_exists=True
+            ))
+        await engine.dispose()

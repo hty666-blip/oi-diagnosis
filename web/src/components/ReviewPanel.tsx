@@ -5,6 +5,7 @@ import {
 } from "../api";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./RecordUI";
 import { executionLabel } from "../evidence-state";
+import AgentCollaboration from "./AgentCollaboration";
 
 const DECISION_LABEL: Record<ReviewDecision, string> = {
   confirm: "确认诊断", revise: "修订诊断", return: "退回补充",
@@ -108,13 +109,14 @@ export default function ReviewPanel({ submissionId, onReviewed }: { submissionId
     <ErrorNotice message={error} onRetry={() => void load()} />
     {loading && <p role="status">正在读取学生源码、执行证据和审计版本…</p>}
     {submission && <><div className="row"><strong>{submission.problem_pid} {submission.problem_title}</strong><VerdictBadge verdict={submission.verdict} tests={submission.tests_passed} /><CardDownload id={submission.id} /></div>
-      <p className="muted">教师只审定诊断说明，机器判题结果始终保留。</p>
+      <p className="muted">复核只修改诊断说明，不改变判题结果。</p>
       <div className="review-layout">
         <section aria-label="学生源码与证据"><h3>学生提交的代码</h3><pre className="review-code"><code>{submission.code}</code></pre>
           <EvidencePanel items={evidence} loading={loading} error="" onRetry={() => void load()} />
         </section>
         <section aria-label="诊断审定">
           <h3>当前诊断说明</h3><p className="narrative">{submission.diagnosis?.narrative || "暂无自动诊断说明。"}</p>
+          <AgentCollaboration value={submission.diagnosis?.collaboration} reviewed={!!submission.diagnosis?.reviewed_at} />
           {history && <p className="dim">当前审定版本 {history.current_revision}</p>}
           <form className="review-form" onSubmit={(e) => { e.preventDefault(); void save(); }}>
             <label htmlFor="review-decision">处理方式</label>
@@ -127,12 +129,12 @@ export default function ReviewPanel({ submissionId, onReviewed }: { submissionId
             </fieldset>
             <label htmlFor="review-narrative">{decision === "revise" ? "修订后的诊断说明与依据" : decision === "return" ? "需要学生补充什么" : "确认说明与依据"}</label>
             <textarea id="review-narrative" rows={5} minLength={6} maxLength={4000} required value={narrative} onChange={(e) => setNarrative(e.target.value)} disabled={saving} placeholder={decision === "return" ? "说明还缺哪些信息，以及学生下一步应如何补充。" : "说明观察到的事实、引用的证据及建议检查的代码。至少 6 个字。"} />
-            <p className="dim">每次提交会新增审计记录，保存操作者与变更前后内容。</p>
+
             <button type="submit" className="primary" disabled={loading || saving || !history || mustRefresh || narrative.trim().length < 6 || (decision !== "return" && !selected.length)}>{saving ? "正在保存审定…" : "保存" + DECISION_LABEL[decision]}</button>
           </form>
         </section>
       </div>
-      <section className="review-audit" aria-label="审定历史"><h3>审定历史</h3>{history?.items.length ? <ReviewEntries items={history.items} /> : <p className="muted">尚无人工审定。首次提交也会完整记录变更前后的内容。</p>}</section>
+      <section className="review-audit" aria-label="审定历史"><h3>审定历史</h3>{history?.items.length ? <ReviewEntries items={history.items} /> : <p className="muted">暂无复核记录。</p>}</section>
     </>}
   </section>;
 }

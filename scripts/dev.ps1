@@ -1,9 +1,12 @@
 # 一键启动本地开发环境（PowerShell）；可先用 -CheckOnly 检查参数。
 param(
     [switch]$SkipCompose,
+    [switch]$SkipJudge,
+    [switch]$GoJudge,
     [switch]$SkipInstall,
     [switch]$DisableLlm,
     [switch]$NoReload,
+    [switch]$Reload,
     [switch]$CheckOnly,
     [ValidateRange(1024, 65535)][int]$Port = 8000
 )
@@ -49,9 +52,24 @@ if (-not $SkipCompose) {
     $EnvironmentPath = Join-Path $ProjectRoot '.env'
     if (Test-Path -LiteralPath $EnvironmentPath) { $ComposeArgs += @('--env-file', $EnvironmentPath) }
     $ComposeArgs += @('-f', (Join-Path $ProjectRoot 'deploy\compose.dev.yml'))
-    & docker @ComposeArgs up -d
+    $Services = @('mysql', 'redis')
+    $useGoJudge = $GoJudge -or $env:JUDGE_BACKEND -eq 'gojudge'
+    if (-not $env:JUDGE_BACKEND -and (Test-Path -LiteralPath $EnvironmentPath)) {
+        $useGoJudge = $useGoJudge -or [bool](Select-String -LiteralPath $EnvironmentPath -Pattern '^\s*JUDGE_BACKEND\s*=\s*["'']?gojudge["'']?\s*$' -Quiet)
+    }
+    if (-not $SkipJudge -and $useGoJudge) {
+        $ComposeArgs += @('--profile', 'gojudge')
+        $Services += 'judge'
+    } elseif (-not $SkipJudge) {
+        & docker image inspect oi-judge:dev --format '{{.Id}}' *> $null
+        if ($LASTEXITCODE -ne 0) {
+            & docker @ComposeArgs build judge
+            Assert-NativeSuccess 'Docker 判题镜像构建'
+        }
+    }
+    & docker @ComposeArgs up -d @Services
     Assert-NativeSuccess '开发基础设施启动'
-    foreach ($serviceName in @('postgres', 'redis')) {
+    foreach ($serviceName in @('mysql', 'redis')) {
         Wait-For $serviceName {
             $containerId = & docker @ComposeArgs ps -q $serviceName
             if ($LASTEXITCODE -ne 0 -or -not $containerId) { return $false }
@@ -59,11 +77,13 @@ if (-not $SkipCompose) {
             return $LASTEXITCODE -eq 0 -and $health -eq 'healthy'
         }
     }
-    Wait-For 'judge' {
+    if (-not $SkipJudge -and $useGoJudge) {
+      Wait-For 'judge' {
         $containerId = & docker @ComposeArgs ps -q judge
         if ($LASTEXITCODE -ne 0 -or -not $containerId) { return $false }
         $running = & docker inspect --format '{{.State.Running}}' $containerId 2>$null
         return $LASTEXITCODE -eq 0 -and $running -eq 'true'
+      }
     }
 }
 
@@ -80,11 +100,14 @@ try {
     }
     & $PythonPath -c "import sys; from app.core.config import settings; sys.exit(0 if settings.app_env.strip().lower() == 'dev' else 2)"
     Assert-NativeSuccess '开发环境检查：该脚本仅允许 APP_ENV=dev'
+    & $PythonPath (Join-Path $ProjectRoot 'scripts\init_database.py')
+    Assert-NativeSuccess 'MySQL 数据库初始化'
     & $PythonPath -m alembic upgrade head
     Assert-NativeSuccess '数据库迁移'
     Write-Host "启动 API: http://127.0.0.1:$Port/docs" -ForegroundColor Green
     $ServerArgs = @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', "$Port")
-    if (-not $NoReload) { $ServerArgs += '--reload' }
+    # Windows Docker 子进程需要默认事件循环，重载仅在明确指定时启用。
+    if ($Reload -and -not $NoReload) { $ServerArgs += '--reload' }
     & $PythonPath @ServerArgs
     Assert-NativeSuccess 'API 服务'
 } finally { Pop-Location }

@@ -1,21 +1,17 @@
-"""真实 PostgreSQL HTTP 复核回归：归属、证据、版本、审计与机器结果保护。"""
+"""真实 MySQL HTTP 复核回归：归属、证据、版本、审计与机器结果保护。"""
 
 import asyncio
-import os
 from types import SimpleNamespace
-from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlalchemy.schema import CreateSchema, DropSchema
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.capabilities.sandbox import CompileResult
 from app.core.security import create_access_token
-from app.domain.models import Base, Diagnosis, DiagnosisReview, Evidence, Problem, Submission, User
+from app.domain.models import Diagnosis, DiagnosisReview, Evidence, Problem, Submission, User
 from app.infra.db import get_session
 from app.main import app
 from app.services.review_service import ReviewService
@@ -69,6 +65,22 @@ async def test_teacher_confirms_with_replayable_audit_without_changing_verdict(a
     assert history.json()["items"][0]["created_at"]
     queue = await ctx.client.get("/api/v1/coach/queue", headers=ctx.headers(ctx.users.teacher))
     assert queue.json() == []
+
+
+@pytest.mark.parametrize("score", [None, 0.8])
+async def test_revised_explanation_does_not_inherit_machine_confidence(api_context, score):
+    ctx = api_context
+    submission, diagnosis, evidence = await _reviewable(ctx)
+    diagnosis.confidence = 0.55
+    await ctx.session.flush()
+    response = await ctx.client.post("/api/v1/coach/reviews", headers=ctx.headers(ctx.users.teacher),
+        json=_payload(submission, evidence, decision="revise", confidence=score,
+                      narrative="已重新核对证据，当前应检查计算过程中的赋值操作。"))
+    assert response.status_code == 200, response.text
+    review = response.json()["review"]
+    assert review["before"]["confidence"] == 0.55
+    assert review["after"]["confidence"] == score
+    assert review["after"]["model_meta"]["confidence_source"] == ("unscored" if score is None else "teacher")
 
 
 async def test_teacher_can_return_then_revise_without_overwriting_history(api_context):
@@ -190,19 +202,12 @@ async def test_database_rejects_audit_updates_and_deletes(api_context):
 
 
 @pytest.fixture
-async def concurrent_context(api_context):
-    """独立 schema 提供已提交种子；每个 HTTP 请求使用独立 PG 连接。"""
-    schema = "review_race_" + uuid4().hex
-    engine = create_async_engine(
-        os.environ["TEST_DATABASE_URL"], poolclass=NullPool,
-        execution_options={"schema_translate_map": {None: schema}},
-    )
+async def concurrent_context(api_context, isolated_database):
+    """独立 schema 提供已提交种子；每个 HTTP 请求使用独立数据库连接。"""
+    engine = isolated_database
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     previous_override = app.dependency_overrides.get(get_session)
     try:
-        async with engine.begin() as connection:
-            await connection.execute(CreateSchema(schema))
-            await connection.run_sync(Base.metadata.create_all)
         async with sessions() as session:
             student = User(username="student", role="student", class_name="A", password_hash="unused")
             teacher = User(username="teacher", role="teacher", class_name="A", password_hash="unused")
@@ -234,9 +239,7 @@ async def concurrent_context(api_context):
             app.dependency_overrides[get_session] = previous_override
         else:
             app.dependency_overrides.pop(get_session, None)
-        async with engine.begin() as connection:
-            await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
-        await engine.dispose()
+
 
 
 async def test_simultaneous_review_writes_accept_exactly_one_version(concurrent_context, monkeypatch):
@@ -263,6 +266,39 @@ async def test_simultaneous_review_writes_accept_exactly_one_version(concurrent_
     async with ctx.sessions() as session:
         assert await session.scalar(select(func.count()).select_from(DiagnosisReview)) == 1
         assert (await session.scalar(select(Diagnosis))).review_revision == 1
+
+
+async def test_concurrent_diagnoses_reserve_before_any_model_cost(concurrent_context, monkeypatch):
+    from test_agent_collaboration import fake_team
+
+    ctx = concurrent_context
+    client, calls, _ = fake_team(evidence_id=ctx.evidence.id)
+    transport = client.transport
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked(request):
+        if not entered.is_set():
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=10)
+        return await transport.handle_async_request(request)
+
+    client.transport = httpx.MockTransport(blocked)
+
+    async def configured(session):
+        return client
+
+    monkeypatch.setattr("app.api.v1.submissions.runtime_client", configured)
+    url = f"/api/v1/submissions/{ctx.submission.id}/diagnose"
+    first = asyncio.create_task(ctx.client.post(url, headers=ctx.student_headers))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        second = await ctx.client.post(url, headers=ctx.student_headers)
+        assert second.status_code == 409 and not calls
+    finally:
+        release.set()
+        completed = await first
+    assert completed.status_code == 200, completed.text
+    assert len(calls) == 3
 
 
 async def test_simultaneous_identical_submission_reuses_one_inflight_job(concurrent_context, monkeypatch):

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-05T00:51:28+08:00",
+  "title": "Design System: OI 错题诊断",
+  "extensions": {
+    "shadows": [
+      { "name": "flat", "value": "none", "purpose": "常规表面、控件与弹窗不使用投影。" }
+    ],
+    "motion": [
+      { "name": "primary-state", "value": "background .12s", "purpose": "主按钮背景状态过渡；减少动态效果时关闭。" },
+      { "name": "navigation-state", "value": "background .15s, color .15s", "purpose": "导航悬停反馈；减少动态效果时关闭。" }
+    ],
+    "breakpoints": [
+      { "name": "practice-single-column", "value": "1100px" },
+      { "name": "compact-desktop", "value": "1056px" },
+      { "name": "stacked-window", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "主操作",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "提交、保存等主要动作。",
+      "html": "<button class=\"ds-primary\">提交并验证</button>",
+      "css": ".ds-primary{min-height:36px;padding:8px 16px;border:1px solid transparent;border-radius:0;background:var(--accent,#0f62fe);color:var(--panel,#ffffff);font:400 14px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif;cursor:pointer;transition:background .12s}.ds-primary:hover{background:var(--accent-2,#0043ce)}.ds-primary:active{background:#002d9c}.ds-primary:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:2px}.ds-primary:disabled{opacity:.5;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "次操作",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "刷新、取消与辅助入口。",
+      "html": "<button class=\"ds-secondary\">刷新记录</button>",
+      "css": ".ds-secondary{min-height:36px;padding:7px 12px;border:1px solid var(--line,#e0e0e0);border-radius:0;background:var(--panel,#ffffff);color:var(--text,#161616);font:400 13px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif;cursor:pointer;transition:border-color .15s,color .15s}.ds-secondary:hover{border-color:#8d8d8d;background:var(--bg-soft,#f4f4f4)}.ds-secondary:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:2px}.ds-secondary:disabled{opacity:.5;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "文字字段",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "浅灰底与底线的用户名字段。",
+      "html": "<label class=\"ds-field\">用户名<input class=\"ds-input\" autocomplete=\"username\" /></label>",
+      "css": ".ds-field{display:grid;gap:6px;color:var(--text,#161616);font:400 13px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif}.ds-input{min-height:42px;padding:9px 12px;background:var(--bg-soft,#f4f4f4);color:var(--text,#161616);border:1px solid transparent;border-bottom-color:#8d8d8d;border-radius:0;font:400 14px/1.5 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif}.ds-input:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:-2px;border-bottom-color:var(--accent,#0f62fe)}"
+    },
+    {
+      "name": "侧导航",
+      "kind": "nav",
+      "refersTo": "navigation-item",
+      "description": "灰底当前项、蓝色图标与可见键盘焦点。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主要导航\"><button class=\"ds-nav-item ds-current\" aria-current=\"page\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M5 4 1 8l4 4M11 4l4 4-4 4\" /></svg>自由练习</button><button class=\"ds-nav-item\">提交记录</button></nav>",
+      "css": ".ds-nav{width:208px;background:var(--bg,#f4f4f4)}.ds-nav-item{display:flex;align-items:center;gap:12px;width:100%;height:44px;padding:0 20px;border:0;border-radius:0;background:transparent;color:var(--muted,#525252);font:400 14px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif;text-align:left;cursor:pointer;transition:background .15s,color .15s}.ds-nav-item:hover{background:#e8e8e8;color:var(--text,#161616)}.ds-nav-item.ds-current{background:#e0e0e0;color:var(--text,#161616);font-weight:600}.ds-current svg{color:var(--accent,#0f62fe)}.ds-nav-item:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:2px}@media(prefers-reduced-motion:reduce){.ds-nav-item{transition:none}}"
+    },
+    {
+      "name": "管理页签",
+      "kind": "nav",
+      "description": "当前项下划线与键盘焦点分别可见。",
+      "html": "<div class=\"ds-tabs\"><button class=\"ds-tab\" aria-pressed=\"true\">管理首页</button><button class=\"ds-tab\" aria-pressed=\"false\">账号管理</button></div>",
+      "css": ".ds-tabs{display:flex;border-bottom:1px solid #c6c6c6}.ds-tab{min-height:44px;padding:12px 18px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:var(--muted,#525252);font:400 13px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif;cursor:pointer}.ds-tab:hover{background:#e8e8e8;color:var(--text,#161616)}.ds-tab[aria-pressed=true]{border-bottom-color:var(--accent,#0f62fe);color:var(--text,#161616);font-weight:600}.ds-tab:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:-4px}"
+    },
+    {
+      "name": "状态标签",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "使用文字与浅底组合呈现状态。",
+      "html": "<span class=\"ds-badge ds-warning\">仅公开样例</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border:0;border-radius:0;background:var(--line,#e0e0e0);color:var(--muted,#525252);font:400 12px/1.6 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif}.ds-warning{background:#fcf4d6;color:#684e00}"
+    },
+    {
+      "name": "内容容器",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "白色平面内容区，靠标题与留白分组。",
+      "html": "<section class=\"ds-card\"><h2 class=\"ds-card-title\">本次执行结果</h2><p class=\"ds-card-note\">结果基于本次题包测试。</p></section>",
+      "css": ".ds-card{padding:24px;margin-bottom:20px;background:var(--panel,#ffffff);color:var(--text,#161616);border:0;border-radius:0;box-shadow:none;font:400 14px/1.55 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif}.ds-card-title{margin:0 0 20px;font-size:16px;font-weight:500}.ds-card-note{margin:12px 0 0;color:var(--muted,#525252);font-size:12px;line-height:1.7}"
+    },
+    {
+      "name": "源码编辑器",
+      "kind": "custom",
+      "description": "深色源码区是常规浅色工作台的局部例外。",
+      "html": "<label class=\"ds-code-label\">你的代码<textarea class=\"ds-code\" spellcheck=\"false\">#include &lt;iostream&gt;\nint main() {\n    return 0;\n}</textarea></label>",
+      "css": ".ds-code-label{display:grid;gap:12px;color:var(--text,#161616);font:500 14px 'IBM Plex Sans','Microsoft YaHei','PingFang SC',sans-serif}.ds-code{width:100%;min-height:340px;padding:20px;background:#161616;color:#f4f4f4;border:1px solid #393939;border-radius:0;font:400 13px/1.75 'Cascadia Code','JetBrains Mono',Consolas,monospace;resize:vertical;white-space:pre;overflow-x:auto;tab-size:4}.ds-code:focus-visible{outline:2px solid var(--accent,#0f62fe);outline-offset:-2px;border-bottom-color:var(--accent,#0f62fe)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "证据工作台",
+    "overview": "学生练习、教练安排训练与复核、管理员处理平台事务。先呈现标题、工具条和工作内容，解释紧邻相关状态与操作。\n\n白色内容区置于灰色画布，用排版、留白和细线分组。蓝色标记操作、选择和焦点，语义色表示执行状态。产品事实见 [README](README.md) 与 [改进需求基线](docs/改进需求基线.md)。",
+    "keyCharacteristics": [
+      "电脑任务布局，列表、表格、题面和编辑器承担主体内容。",
+      "平面表面、直角控件、有限强调色。",
+      "执行事实、模型建议、人工审定与恢复动作分别可识别。"
+    ],
+    "rules": [],
+    "dos": [
+      "Do 先呈现任务、数据和操作；删除重复介绍、无关机制解释、伪精确指标与无证据效果承诺。",
+      "Do 保留决定下一步所需的测试范围、权限影响、导入许可、不可逆操作后果和错误恢复说明，并放在相关操作附近。",
+      "Do 区分无测试、样例通过、题包通过、基础设施失败、模型建议和人工审定；缩短文案时保持这些事实边界。",
+      "Do 沿用角色入口、控件状态、键盘行为与电脑布局，核对实际渲染的溢出和可操作性。",
+      "Do 初赛逐题审核区分预览、修订与历史；题型级别分值同排、知识点双列，反馈获取焦点，历史只读。"
+    ],
+    "donts": [
+      "Don't 为视觉整理删除、合并或改变既有功能、事件、权限、请求参数和数据流；学生、教练、管理员现有流程及历史恢复、导出、复核、任务重试/取消均须保留。",
+      "Don't 把测试通过改写为完整正确或已经掌握，也不把合成验收截图当作真实教学效果。",
+      "Don't 将参考文档的官网营销布局、第三方标识、大号轻字标题、渐变或装饰性展示区搬入工作台。"
+    ]
+  }
+}

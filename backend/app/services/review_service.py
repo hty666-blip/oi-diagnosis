@@ -42,6 +42,7 @@ class ReviewCreate(BaseModel):
     narrative: StorageText = Field(min_length=6, max_length=4000)
     evidence_ids: list[EvidenceId] = Field(default_factory=list, max_length=100)
     mechanism: list[ReviewMechanism] | None = Field(default=None, max_length=11)
+    confidence: float | None = Field(default=None, strict=True, ge=0, le=1)
 
     @field_validator("narrative")
     @classmethod
@@ -58,7 +59,7 @@ def diagnosis_snapshot(diagnosis: Diagnosis) -> dict:
         "mechanism": diagnosis.mechanism or [],
         "cognition": diagnosis.cognition or [],
         "nature": diagnosis.nature or [],
-        "confidence": diagnosis.confidence,
+        "confidence": None if (diagnosis.model_meta or {}).get("confidence_source") == "unscored" else diagnosis.confidence,
         "status": diagnosis.status,
         "degraded": diagnosis.degraded or [],
         "model_meta": diagnosis.model_meta or {},
@@ -131,6 +132,13 @@ class ReviewService:
                 raise HTTPException(status_code=422, detail="每条机制解释必须引用本次选中的真实证据")
 
         before = diagnosis_snapshot(diagnosis)
+        confidence_source = (diagnosis.model_meta or {}).get("confidence_source", "machine")
+        if payload.confidence is not None:
+            diagnosis.confidence = payload.confidence
+            confidence_source = "teacher"
+        elif payload.decision != "confirm":
+            diagnosis.confidence = 0.0
+            confidence_source = "unscored"
         diagnosis.narrative = payload.narrative
         diagnosis.mechanism = mechanism
         # 一次代码审定不能替学生推断认知缺陷；修订时也不沿用旧定位。
@@ -145,6 +153,7 @@ class ReviewService:
             **(diagnosis.model_meta or {}),
             "route": "human" if payload.decision == "return" else "teacher_review",
             "review_decision": payload.decision,
+            "confidence_source": confidence_source,
             "reviewer_name": self.user.display_name or self.user.username,
             "review_evidence_ids": evidence_ids,
         }

@@ -1,18 +1,37 @@
-﻿"""应用入口。M0 只需要 /health 能起来。"""
+﻿"""应用入口：认证、教学业务及可恢复的后台工作器。"""
 
 from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.api.errors import request_validation_error_handler
-from app.api.v1 import auth, card, catalog, operations, reviews, submissions, system, tutor
+from app.api.v1 import (
+    admin,
+    admin_problems,
+    admin_runtime,
+    admin_written,
+    auth,
+    card,
+    catalog,
+    operations,
+    reviews,
+    students,
+    submissions,
+    system,
+    trainings,
+    tutor,
+    written_questions,
+)
+from app.capabilities.sandbox import SandboxError
 from app.core.config import settings
 from app.core.security import validate_security_settings
 from app.infra.db import dispose_engine, ping
+from app.maintenance_worker import MaintenanceWorker
 from app.worker import JudgeWorker
 
 
@@ -20,6 +39,7 @@ from app.worker import JudgeWorker
 async def lifespan(app: FastAPI):
     validate_security_settings()
     worker = asyncio.create_task(JudgeWorker().run_forever()) if settings.judge_worker_enabled else None
+    maintenance = asyncio.create_task(MaintenanceWorker().run_forever()) if settings.maintenance_worker_enabled else None
     try:
         yield
     finally:
@@ -27,6 +47,10 @@ async def lifespan(app: FastAPI):
             worker.cancel()
             with suppress(asyncio.CancelledError):
                 await worker
+        if maintenance is not None:
+            maintenance.cancel()
+            with suppress(asyncio.CancelledError):
+                await maintenance
         await dispose_engine()
 
 
@@ -44,8 +68,20 @@ app.include_router(tutor.router, prefix="/api/v1")
 app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
+app.include_router(admin_problems.router, prefix="/api/v1")
+app.include_router(admin_runtime.router, prefix="/api/v1")
+app.include_router(admin_written.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
+app.include_router(trainings.router, prefix="/api/v1")
+app.include_router(students.router, prefix="/api/v1")
+app.include_router(written_questions.router, prefix="/api/v1")
+
+
+@app.exception_handler(SandboxError)
+async def unavailable_problem(request: Request, exc: SandboxError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": "题目版本暂不可用，请联系管理员核对题面与测试快照"})
 
 
 @app.get("/health", tags=["ops"])

@@ -29,7 +29,7 @@ Python 使用 4 空格缩进、类型标注、`snake_case` 函数和模块、`Pa
 
 ## 测试要求
 
-使用 pytest 与 pytest-asyncio，文件命名为 `test_*.py`，函数命名为 `test_*`；异步测试支持自动模式。为诊断规则、证据校验、模型降级和辅导防代做行为补充回归用例，外部 HTTP 调用优先使用 `httpx.MockTransport`。CI 尚未强制覆盖率阈值；前端契约测试位于 `web/tests/`，使用 Node 内置测试运行器。界面变更还需通过构建并手动验证相关流程。
+使用 pytest 与 pytest-asyncio，文件命名为 `test_*.py`，函数命名为 `test_*`；异步测试支持自动模式。为证据交接、独立审查、意见驱动修订、模型降级及直接源码讲解补充回归，外部 HTTP 调用优先使用 `httpx.MockTransport`。集成测试使用独立 MySQL，并设置 `REQUIRE_DATABASE_TESTS=1` 防止缺配置时静默跳过；常规测试关闭付费模型。CI 尚未强制覆盖率阈值；前端契约测试位于 `web/tests/`，使用 Node 内置测试运行器。界面变更还需通过构建并手动验证相关流程。
 
 ## 提交与 Pull Request
 
