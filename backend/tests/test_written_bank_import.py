@@ -224,8 +224,10 @@ async def preview(ctx, data=None):
 async def test_http_stage_is_idempotent_and_never_installs_programming_problems(api_context):
     ctx = api_context
     before = await ctx.session.scalar(select(func.count()).select_from(Problem))
-    first = await preview(ctx)
-    again = await preview(ctx)
+    # ZIP 头带生成时间；重传测试必须复用同一字节流，不能重新生成另一份归档。
+    archive = make_zip()
+    first = await preview(ctx, archive)
+    again = await preview(ctx, archive)
     assert first["id"] == again["id"] and again["replayed"]
     assert await ctx.session.scalar(select(func.count()).select_from(WrittenCandidate)) == 0
     path = f"/api/v1/admin/written-bank/batches/{first['id']}"
