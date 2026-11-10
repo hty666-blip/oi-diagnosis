@@ -471,7 +471,23 @@ export interface StudentProfile {
 
 export interface WrittenBatch {
   id: string; status: "preview" | "staged"; created_at: string; expires_at: string; staged_at: string | null;
-  summary: { questions: number; papers: number; groups: number; assets: number; knowledge_nodes: number; knowledge_leaves: number; source_canonical_count: number; candidate_count: number; published_count: number; flags: Record<string, number> };
+  summary: { questions: number; papers: number; groups: number; assets: number; knowledge_nodes: number; knowledge_leaves: number; source_canonical_count: number; candidate_count: number; published_count: number; approved_count?: number; withdrawn_count?: number; flags: Record<string, number> };
+}
+export interface WrittenDraft {
+  stem: string; shared_stem: string; question_type: "single_choice" | "multiple_choice" | "true_false" | "fill_blank";
+  level: "J" | "S" | null; options: { id: string; text: string }[]; answer: Record<string, unknown>; score: number;
+  scoring_rule: "all_or_nothing" | "exact_text" | "unconfirmed"; primary_knowledge_point_id: string | null;
+  secondary_knowledge_point_ids: string[]; explanation: string; answer_reference: string;
+}
+export interface WrittenPublication { id: number; revision: number; catalog_version: number; is_active: boolean }
+export interface WrittenReviewState {
+  revision: number; status: "needs_review" | "approved" | "withdrawn"; draft: WrittenDraft;
+  resolutions: Record<string, string>; source_flags: string[]; reviewed_by: number | null; reviewed_at: string | null;
+  publication: WrittenPublication | null;
+}
+export interface WrittenReviewInput {
+  expected_revision: number; request_id: string; action: "save" | "approve" | "withdraw" | "reopen";
+  note: string; draft?: WrittenDraft; rights_confirmed: boolean; resolutions: Record<string, string>;
 }
 export interface WrittenRow {
   external_id: string; paper_id: string; question_type: string; level: string | null; stem: string;
@@ -485,15 +501,20 @@ export interface WrittenDetail {
   normalized: { independent_id: string; related_question_id: string | null; issues: string[]; knowledge_suggestions: { id: string; name: string; basis: string }[] };
   group: { shared_stem: string; asset_paths?: string[] } | null;
   sources: { id: string; title: string; url?: string; license?: string }[];
-  knowledge_points: { id: string; name: string }[];
+  knowledge_points: { id: string; name: string; is_leaf?: boolean }[];
+  review: WrittenReviewState | null;
 }
 
 export const api = {
   writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
   writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
   writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
-  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal) => get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}`, { signal }),
+  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all") => get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}`, { signal }),
   writtenQuestion: (id: string, question: string, signal?: AbortSignal) => get<WrittenDetail>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}`, { signal }),
+  writtenReview: (id: string, question: string, body: WrittenReviewInput) => post<WrittenDetail & { replayed: boolean; applied_revision: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/review`, body),
+  writtenReviewHistory: (id: string, question: string, before?: number, signal?: AbortSignal) => get<{ items: { revision: number; actor_id: number; action: string; note: string; created_at: string }[]; has_more: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history${before == null ? "" : `?before=${before}`}`, { signal }),
+  writtenHistoricalReview: (id: string, question: string, revision: number, signal?: AbortSignal) => get<{ revision: number; action: string; actor_id: number; note: string; snapshot: { draft: WrittenDraft } }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history/${revision}`, { signal }),
+  writtenPublicationState: (id: number, expected_version: number, is_active: boolean) => post<WrittenPublication>(`/admin/written-bank/published/${id}/state`, { expected_version, is_active }),
   writtenAsset: async (id: string, path: string, signal?: AbortSignal) => {
     const result = await request(`/admin/written-bank/batches/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`, undefined, "GET", { signal });
     const blob = await result.response.blob();

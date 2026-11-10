@@ -53,6 +53,18 @@ test("候选题图片读取后再次确认账号，迟到图片不能交给新�
   await assert.rejects(pending, /登录已失效/);
 });
 
+test("逐题审核保留预期修订与重放编号，上下架使用独立状态版本", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => { calls.push({ url, body: options.body && JSON.parse(options.body) }); return json({}); };
+  const input = { request_id: "review-request", expected_revision: 3, action: "approve", note: "人工核对", rights_confirmed: true, resolutions: { answer_conflict: "已逐项核对" }, draft: { answer: { kind: "boolean", value: false } } };
+  await api.writtenReview("fixed-batch", "q /1", input);
+  assert.deepEqual(calls[0], { url: "/api/v1/admin/written-bank/batches/fixed-batch/questions/q%20%2F1/review", body: input });
+  await api.writtenPublicationState(8, 6, false);
+  assert.deepEqual(calls[1], { url: "/api/v1/admin/written-bank/published/8/state", body: { expected_version: 6, is_active: false } });
+  await api.writtenQuestions("fixed-batch", 0, "", "", false, undefined, "approved");
+  assert.ok(calls[2].url.includes("state=approved"));
+});
+
 test("候选题查询与图片路径编码，读取不绕过管理员权限错误", async () => {
   const calls = [];
   globalThis.fetch = async (url) => { calls.push(url); return json({}); };

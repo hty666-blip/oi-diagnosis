@@ -23,6 +23,9 @@ from app.services.backup_service import (
     RECEIPT_SOURCE_REVISION,
     RECEIPT_TABLE,
     RECEIPT_TARGET_REVISION,
+    REVIEW_CANDIDATE_DEFAULTS,
+    REVIEW_TABLES,
+    REVIEW_TARGET_REVISION,
     WRITTEN_TABLES,
     WRITTEN_TARGET_REVISION,
     BackupError,
@@ -138,6 +141,41 @@ def test_current_written_backup_keeps_candidate_data_and_asset_strings(decoder, 
     assert io.read(path, sha)["tables"] == data
 
 
+@pytest.mark.parametrize("source", [RECEIPT_SOURCE_REVISION, RECEIPT_TARGET_REVISION, WRITTEN_TARGET_REVISION])
+def test_review_schema_explicitly_upgrades_legacy_archives(decoder, monkeypatch, source):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES)
+    monkeypatch.setattr(backup_service, "current_revision", lambda: REVIEW_TARGET_REVISION)
+    old = names - REVIEW_TABLES
+    if source != WRITTEN_TARGET_REVISION:
+        old -= WRITTEN_TABLES
+    if source == RECEIPT_SOURCE_REVISION:
+        old -= {RECEIPT_TABLE}
+    data = {name: [] for name in old}
+    if "written_candidate" in data:
+        data["written_candidate"] = [{"record": {"id": "synthetic"}, "review_status": "needs_review"}]
+    sha = archive_payload(io, path, {"format": "oi-backup-v1", "revision": source, "tables": data})
+    restored = io.read(path, sha)
+    assert restored["source_revision"] == source
+    assert restored["revision"] == REVIEW_TARGET_REVISION
+    assert all(restored["tables"][name] == [] for name in REVIEW_TABLES)
+    if source == WRITTEN_TARGET_REVISION:
+        row = restored["tables"]["written_candidate"][0]
+        assert all(row[k] == value for k, value in REVIEW_CANDIDATE_DEFAULTS.items())
+
+
+@pytest.mark.parametrize("change", [{"revision": 7}, {"draft_metadata": {}}, {"review_status": "approved"}])
+def test_old_candidate_backup_cannot_forge_review_state(decoder, monkeypatch, change):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES)
+    monkeypatch.setattr(backup_service, "current_revision", lambda: REVIEW_TARGET_REVISION)
+    data = {name: [] for name in names - REVIEW_TABLES}
+    data["written_candidate"] = [{"review_status": "needs_review", **change}]
+    sha = archive_payload(io, path, {"format": "oi-backup-v1", "revision": WRITTEN_TARGET_REVISION, "tables": data})
+    with pytest.raises(BackupError, match="invalid_archive"):
+        io.read(path, sha)
+
+
 @pytest.fixture
 async def replay_restore_target(monkeypatch):
     url = make_url(os.environ["TEST_DATABASE_URL"])
@@ -199,7 +237,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES:
+    for table in WRITTEN_TABLES | REVIEW_TABLES:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -211,7 +249,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == WRITTEN_TARGET_REVISION
+    assert restored["restored_revision"] == REVIEW_TARGET_REVISION
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

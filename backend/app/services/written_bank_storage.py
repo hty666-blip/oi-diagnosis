@@ -49,19 +49,22 @@ async def load_bytes(session, batch_id: str, key: str, expected_digest: str) -> 
         raise HTTPException(409, "候选快照校验失败，请重新导入") from exc
 
 
-def save_payload(session, batch_id: str, payload: dict) -> dict:
+def save_payload(session, batch_id: str, payload: dict, key: str = "payload") -> dict:
     compressed = zlib.compress(
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     )
-    save_bytes(session, batch_id, "payload", compressed)
-    return {"codec": "zlib-json-v1", "digest": hashlib.sha256(compressed).hexdigest()}
+    save_bytes(session, batch_id, key, compressed)
+    return {"codec": "zlib-json-v1", "digest": hashlib.sha256(compressed).hexdigest(), "key": key}
 
 
 async def load_payload(session, batch) -> dict:
-    metadata = batch.payload
+    return await load_snapshot(session, batch.id, batch.payload)
+
+
+async def load_snapshot(session, batch_id: str, metadata: dict) -> dict:
     if metadata.get("codec") != "zlib-json-v1" or not isinstance(metadata.get("digest"), str):
         raise HTTPException(409, "候选快照格式不可用，请重新导入")
-    compressed = await load_bytes(session, batch.id, "payload", metadata["digest"])
+    compressed = await load_bytes(session, batch_id, metadata.get("key", "payload"), metadata["digest"])
     try:
         decoder = zlib.decompressobj()
         raw = decoder.decompress(compressed, MAX_EXPANDED + 1)

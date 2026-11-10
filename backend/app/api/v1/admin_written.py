@@ -1,4 +1,4 @@
-"""管理员笔试候选导入：固定预览，幂等暂存，不提供正式发布接口。"""
+"""管理员笔试题库：固定导入、逐题修订、人工审核与版本发布。"""
 
 import asyncio
 import hashlib
@@ -6,26 +6,68 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from sqlalchemy import delete, select
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import defer
 
 from app.api.deps import AdminUser, SessionDep
-from app.domain.models import WrittenCandidate, WrittenImportAsset, WrittenImportBatch
+from app.api.input_types import ObjectPathId
+from app.domain.models import (
+    WrittenCandidate,
+    WrittenImportAsset,
+    WrittenImportBatch,
+    WrittenQuestion,
+    WrittenQuestionVersion,
+    WrittenReviewRevision,
+)
 from app.services.admin_service import admin_write, audit
 from app.services.written_bank_package import MAX_UPLOAD, PackageError, parse_package
-from app.services.written_bank_storage import load_bytes, load_payload, save_bytes, save_payload
+from app.services.written_bank_storage import (
+    load_bytes,
+    load_payload,
+    load_snapshot,
+    save_bytes,
+    save_payload,
+)
+from app.services.written_review import (
+    ReviewInput,
+    apply_review,
+    candidate_for,
+    publication_out,
+    review_state,
+)
 
 router = APIRouter(prefix="/admin/written-bank", tags=["admin-written-bank"])
 
 
-def batch_out(batch):
+def batch_out(batch, stats=None):
     return {
         "id": batch.id,
         "status": batch.status,
-        "summary": batch.summary,
+        "summary": {**batch.summary, **(stats or {})},
         "created_at": batch.created_at,
         "expires_at": batch.expires_at,
         "staged_at": batch.staged_at,
+    }
+
+
+async def batch_stats(session, batch_ids):
+    rows = (
+        await session.execute(
+            select(
+                WrittenCandidate.batch_id,
+                func.sum(case((WrittenCandidate.review_status == "approved", 1), else_=0)),
+                func.sum(case((WrittenCandidate.review_status == "withdrawn", 1), else_=0)),
+                func.sum(case((WrittenQuestion.is_active.is_(True), 1), else_=0)),
+            )
+            .outerjoin(WrittenQuestion, WrittenQuestion.candidate_id == WrittenCandidate.id)
+            .where(WrittenCandidate.batch_id.in_(batch_ids))
+            .group_by(WrittenCandidate.batch_id)
+        )
+    ).all()
+    return {
+        bid: {"approved_count": int(a), "withdrawn_count": int(w), "published_count": int(p)}
+        for bid, a, w, p in rows
     }
 
 
@@ -55,7 +97,8 @@ async def batches(session: SessionDep, user: AdminUser):
             .limit(51)
         )
     ).all()
-    return {"items": [batch_out(b) for b in rows[:50]], "has_more": len(rows) > 50}
+    stats = await batch_stats(session, [b.id for b in rows[:50]])
+    return {"items": [batch_out(b, stats.get(b.id)) for b in rows[:50]], "has_more": len(rows) > 50}
 
 
 @router.post("/imports/preview")
@@ -189,10 +232,57 @@ async def questions(
     q: str = Query("", max_length=120),
     paper_id: str = Query("", max_length=80),
     flagged: bool = False,
+    state: str = Query("all", pattern="^(all|needs_review|approved|withdrawn)$"),
 ):
     batch = await get_batch(session, user, batch_id)
     # 有界快照使预览和暂存页面口径相同；正文分页输出，避免整包返回给浏览器。
     payload = await load_payload(session, batch)
+    if batch.status == "staged":
+        where = [WrittenCandidate.batch_id == batch.id]
+        if q:
+            where.append(
+                WrittenCandidate.search_text.icontains(q, autoescape=True)
+                | WrittenCandidate.external_id.icontains(q, autoescape=True)
+            )
+        if paper_id:
+            where.append(WrittenCandidate.paper_id == paper_id)
+        if flagged:
+            where.append(func.json_length(WrittenCandidate.issues) > 0)
+        if state != "all":
+            where.append(WrittenCandidate.review_status == state)
+        total = await session.scalar(
+            select(func.count()).select_from(WrittenCandidate).where(*where)
+        )
+        candidates = (
+            await session.scalars(
+                select(WrittenCandidate)
+                .where(*where)
+                .order_by(WrittenCandidate.id)
+                .offset(offset)
+                .limit(25)
+            )
+        ).all()
+        stats = await batch_stats(session, [batch.id])
+        items = [
+            {
+                **candidate_out(c.record, c.normalized),
+                "stem": c.search_text[:160],
+                "review_status": c.review_status,
+                "question_type": c.question_type,
+                "level": c.level,
+                "revision": c.revision,
+            }
+            for c in candidates
+        ]
+        return {
+            "batch": batch_out(batch, stats.get(batch.id)),
+            "items": items,
+            "total": total,
+            "has_more": total > offset + 25,
+            "papers": [
+                {"id": p["id"], "title": p.get("title", p["id"])} for p in payload["papers"]
+            ],
+        }
     records = payload["questions"]
     reviews = payload["reviews"]
     filtered = [
@@ -214,18 +304,160 @@ async def questions(
 @router.get("/batches/{batch_id}/questions/{question_id}")
 async def question(batch_id: UUID, question_id: str, session: SessionDep, user: AdminUser):
     batch = await get_batch(session, user, batch_id)
+    return await question_detail(session, batch, question_id)
+
+
+async def question_detail(session, batch, question_id):
     payload = await load_payload(session, batch)
     record = next((q for q in payload["questions"] if q["id"] == question_id), None)
     if not record:
         raise HTTPException(404, "候选题不存在")
     group = next((g for g in payload["question_groups"] if g["id"] == record.get("group_id")), None)
+    candidate = (
+        await candidate_for(session, batch.id, question_id) if batch.status == "staged" else None
+    )
     return {
         "record": record,
         "normalized": payload["reviews"][question_id],
         "group": group,
         "sources": payload["sources"],
         "knowledge_points": payload["knowledge_points"]["nodes"],
+        "review": await review_state(session, batch, candidate, payload) if candidate else None,
     }
+
+
+@router.post("/batches/{batch_id}/questions/{question_id}/review")
+async def review_question(
+    batch_id: UUID,
+    question_id: str,
+    body: ReviewInput,
+    request: Request,
+    session: SessionDep,
+    user: AdminUser,
+):
+    await admin_write(session, user, request)
+    batch = await get_batch(session, user, batch_id)
+    candidate = await candidate_for(session, batch.id, question_id)
+    if batch.status != "staged" or not candidate:
+        raise HTTPException(409, "请先暂存题包，再开始逐题审核")
+    replayed, applied = await apply_review(session, batch, candidate, user, body)
+    await session.commit()
+    return {
+        **await question_detail(session, batch, question_id),
+        "replayed": replayed,
+        "applied_revision": applied,
+    }
+
+
+@router.get("/batches/{batch_id}/questions/{question_id}/history")
+async def review_history(
+    batch_id: UUID,
+    question_id: str,
+    session: SessionDep,
+    user: AdminUser,
+    before: int = Query(2**31 - 1, ge=1),
+):
+    batch = await get_batch(session, user, batch_id)
+    candidate = await candidate_for(session, batch.id, question_id)
+    if not candidate:
+        raise HTTPException(404, "候选题尚未暂存")
+    rows = (
+        await session.scalars(
+            select(WrittenReviewRevision)
+            .where(
+                WrittenReviewRevision.candidate_id == candidate.id,
+                WrittenReviewRevision.revision < before,
+            )
+            .order_by(WrittenReviewRevision.revision.desc())
+            .limit(21)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                "revision": r.revision,
+                "actor_id": r.actor_id,
+                "action": r.action,
+                "note": r.note,
+                "created_at": r.created_at,
+            }
+            for r in rows[:20]
+        ],
+        "has_more": len(rows) > 20,
+    }
+
+
+@router.get("/batches/{batch_id}/questions/{question_id}/history/{revision}")
+async def historical_review(
+    batch_id: UUID, question_id: str, revision: ObjectPathId, session: SessionDep, user: AdminUser
+):
+    batch = await get_batch(session, user, batch_id)
+    candidate = await candidate_for(session, batch.id, question_id)
+    if not candidate:
+        raise HTTPException(404, "候选题尚未暂存")
+    row = await session.scalar(
+        select(WrittenReviewRevision).where(
+            WrittenReviewRevision.candidate_id == candidate.id,
+            WrittenReviewRevision.revision == revision,
+        )
+    )
+    if not row:
+        raise HTTPException(404, "修订记录不存在")
+    return {
+        "revision": row.revision,
+        "action": row.action,
+        "actor_id": row.actor_id,
+        "note": row.note,
+        "snapshot": await load_snapshot(session, batch.id, row.snapshot_metadata),
+    }
+
+
+class PublicationStateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(strict=True, ge=0)
+    is_active: StrictBool
+
+
+@router.post("/published/{question_id}/state")
+async def publication_state(
+    question_id: ObjectPathId,
+    body: PublicationStateInput,
+    request: Request,
+    session: SessionDep,
+    user: AdminUser,
+):
+    await admin_write(session, user, request)
+    row = await session.get(WrittenQuestion, question_id, populate_existing=True)
+    if not row:
+        raise HTTPException(404, "发布题目不存在")
+    if row.catalog_version != body.expected_version:
+        raise HTTPException(409, "上下架状态已变化，请刷新题目")
+    if body.is_active:
+        candidate = await session.get(WrittenCandidate, row.candidate_id, populate_existing=True)
+        version = await session.scalar(
+            select(WrittenQuestionVersion).where(
+                WrittenQuestionVersion.question_id == row.id,
+                WrittenQuestionVersion.revision == row.revision,
+            )
+        )
+        if (
+            candidate.review_status != "approved"
+            or version is None
+            or version.review_revision != candidate.revision
+        ):
+            raise HTTPException(409, "最新修订尚未审核，不能上架旧版本")
+    row.is_active = body.is_active
+    row.catalog_version += 1
+    audit(
+        session,
+        user,
+        "written.state",
+        str(row.id),
+        {"catalog_version": body.expected_version},
+        {"is_active": row.is_active, "catalog_version": row.catalog_version},
+    )
+    await session.commit()
+    return publication_out(row)
 
 
 @router.get("/batches/{batch_id}/asset")

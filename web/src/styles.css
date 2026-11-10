@@ -861,3 +861,13 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-asset { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); }
 .written-locator, .written-raw { overflow-wrap: anywhere; white-space: pre-wrap; }
 .written-raw { max-height: 420px; overflow: auto; }
+.written-review-fields { display: grid; gap: 16px; border: 0; padding: 0; margin: 20px 0; }
+.written-review-fields legend { font-size: 16px; font-weight: 500; margin-bottom: 16px; }
+.written-review-fields label:not(.catalog-check) { display: grid; gap: 6px; }
+.written-review-fields textarea { width: 100%; resize: vertical; }
+.written-review-fields .written-review-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.written-review-fields .written-knowledge-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.written-review-fields select, .written-review-fields input:not([type=checkbox]):not([type=radio]) { width: 100%; min-width: 0; max-width: 100%; }
+.written-review-fields input:not([type=checkbox]):not([type=radio]) { padding: 9px 12px; color: var(--text); background: var(--bg-soft); border: 0; border-bottom: 1px solid var(--field-border); font: inherit; }
+.written-review-fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.written-option-edit { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px; align-items: center; gap: 12px; margin: 10px 0; }

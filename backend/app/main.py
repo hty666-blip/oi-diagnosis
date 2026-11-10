@@ -25,6 +25,7 @@ from app.api.v1 import (
     system,
     trainings,
     tutor,
+    written_questions,
 )
 from app.capabilities.sandbox import SandboxError
 from app.core.config import settings
@@ -75,6 +76,7 @@ app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")
 app.include_router(students.router, prefix="/api/v1")
+app.include_router(written_questions.router, prefix="/api/v1")
 
 
 @app.exception_handler(SandboxError)

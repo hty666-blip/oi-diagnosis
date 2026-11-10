@@ -113,6 +113,51 @@ class WrittenCandidate(Base):
     record: Mapped[dict] = mapped_column(JSON)
     normalized: Mapped[dict] = mapped_column(JSON)
     issues: Mapped[list] = mapped_column(JSON)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    draft_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenReviewRevision(Base):
+    __tablename__ = "written_review_revision"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "revision", name="uq_written_review_revision"),
+        UniqueConstraint("candidate_id", "request_id", name="uq_written_review_request"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("written_candidate.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    action: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str] = mapped_column(Text)
+    snapshot_metadata: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenQuestion(Base):
+    __tablename__ = "written_question"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("written_candidate.id"), unique=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    catalog_version: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    public_metadata: Mapped[dict] = mapped_column(JSON)
+
+
+class WrittenQuestionVersion(Base):
+    __tablename__ = "written_question_version"
+    __table_args__ = (UniqueConstraint("question_id", "revision", name="uq_written_question_version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), index=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    review_revision: Mapped[int] = mapped_column(Integer)
+    snapshot_metadata: Mapped[dict] = mapped_column(JSON)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class WrittenImportAsset(Base):
