@@ -14,6 +14,7 @@ from app.api.v1 import (
     admin,
     admin_problems,
     admin_runtime,
+    admin_written,
     auth,
     card,
     catalog,
@@ -69,6 +70,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(admin_problems.router, prefix="/api/v1")
 app.include_router(admin_runtime.router, prefix="/api/v1")
+app.include_router(admin_written.router, prefix="/api/v1")
 app.include_router(reviews.router, prefix="/api/v1")
 app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")

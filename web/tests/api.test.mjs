@@ -30,6 +30,39 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("笔试 ZIP 保留二进制并携带当前登录，暂存仅引用固定批次", async () => {
+  const calls = [];
+  const zip = new Blob([new Uint8Array([80, 75, 3, 4])]);
+  globalThis.fetch = async (url, options) => { calls.push({ url, options }); return json({ id: "fixed-batch" }); };
+  await api.writtenPreview(zip);
+  assert.equal(calls[0].options.body, zip);
+  assert.equal(calls[0].options.headers["Content-Type"], "application/zip");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer local-test-token");
+  await api.writtenStage("fixed-batch");
+  assert.equal(calls[1].url, "/api/v1/admin/written-bank/batches/fixed-batch/stage");
+  assert.equal(calls[1].options.body, undefined);
+});
+
+test("候选题图片读取后再次确认账号，迟到图片不能交给新账号", async () => {
+  let finish;
+  globalThis.fetch = async () => ({ ok: true, status: 200, blob: () => new Promise((resolve) => { finish = resolve; }) });
+  const pending = api.writtenAsset("batch", "assets/test.png");
+  await new Promise((resolve) => setImmediate(resolve));
+  setSession("new-token", secondUser);
+  finish(new Blob(["synthetic"]));
+  await assert.rejects(pending, /登录已失效/);
+});
+
+test("候选题查询与图片路径编码，读取不绕过管理员权限错误", async () => {
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(url); return json({}); };
+  await api.writtenQuestions("batch", 25, "空间 & 复杂度", "paper-1", true);
+  assert.ok(calls[0].includes("offset=25"));
+  assert.ok(calls[0].includes("q=" + encodeURIComponent("空间 & 复杂度")));
+  globalThis.fetch = async () => json({ detail: "没有权限访问该功能" }, 403);
+  await assert.rejects(api.writtenAsset("batch", "assets/a & b.png"), (e) => e instanceof ApiError && e.status === 403);
+});
+
 test("答疑重试携带同一草稿编号，无编号旧客户端仍只发送正文", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return json({}); };

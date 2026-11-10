@@ -85,6 +85,56 @@ class ProblemImportDraft(Base):
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
 
 
+class WrittenImportBatch(Base):
+    __tablename__ = "written_import_batch"
+    __table_args__ = (UniqueConstraint("actor_id", "digest", name="uq_written_actor_digest"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="preview", index=True)
+    summary: Mapped[dict] = mapped_column(JSON)
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    staged_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenCandidate(Base):
+    __tablename__ = "written_candidate"
+    __table_args__ = (UniqueConstraint("batch_id", "external_id", name="uq_written_candidate"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    external_id: Mapped[str] = mapped_column(String(80))
+    paper_id: Mapped[str] = mapped_column(String(80))
+    question_type: Mapped[str] = mapped_column(String(24))
+    level: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    review_status: Mapped[str] = mapped_column(String(24), default="needs_review")
+    search_text: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
+    record: Mapped[dict] = mapped_column(JSON)
+    normalized: Mapped[dict] = mapped_column(JSON)
+    issues: Mapped[list] = mapped_column(JSON)
+
+
+class WrittenImportAsset(Base):
+    __tablename__ = "written_import_asset"
+    __table_args__ = (UniqueConstraint("batch_id", "path", name="uq_written_asset"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    path: Mapped[str] = mapped_column(String(240))
+    media_type: Mapped[str] = mapped_column(String(40))
+    digest: Mapped[str] = mapped_column(String(64))
+
+
+class WrittenImportChunk(Base):
+    __tablename__ = "written_import_chunk"
+    __table_args__ = (UniqueConstraint("batch_id", "key", "position", name="uq_written_chunk"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(240))
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+
+
 class Submission(Base):
     __tablename__ = "submission"
 

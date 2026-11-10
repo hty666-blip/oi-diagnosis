@@ -23,6 +23,8 @@ from app.services.backup_service import (
     RECEIPT_SOURCE_REVISION,
     RECEIPT_TABLE,
     RECEIPT_TARGET_REVISION,
+    WRITTEN_TABLES,
+    WRITTEN_TARGET_REVISION,
     BackupError,
     BackupIO,
     encoded,
@@ -105,6 +107,37 @@ def test_m7_exception_does_not_automatically_follow_future_heads(decoder, monkey
         io.read(path, sha)
 
 
+@pytest.mark.parametrize("source", [RECEIPT_SOURCE_REVISION, RECEIPT_TARGET_REVISION])
+def test_written_schema_accepts_only_declared_old_tables_and_adds_empty_candidates(decoder, monkeypatch, source):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES)
+    monkeypatch.setattr(backup_service, "current_revision", lambda: WRITTEN_TARGET_REVISION)
+    old_names = names - WRITTEN_TABLES
+    if source == RECEIPT_SOURCE_REVISION:
+        old_names = old_names - {RECEIPT_TABLE}
+    data = {name: [] for name in old_names}
+    if RECEIPT_TABLE in data:
+        data[RECEIPT_TABLE] = [{"id": 7, "response": {"reply": "已有回执"}}]
+    sha = archive_payload(io, path, {"format": "oi-backup-v1", "revision": source, "tables": data})
+    restored = io.read(path, sha)
+    assert restored["revision"] == WRITTEN_TARGET_REVISION
+    assert restored["source_revision"] == source
+    assert all(restored["tables"][name] == [] for name in WRITTEN_TABLES)
+    if RECEIPT_TABLE in data:
+        assert restored["tables"][RECEIPT_TABLE] == data[RECEIPT_TABLE]
+
+
+def test_current_written_backup_keeps_candidate_data_and_asset_strings(decoder, monkeypatch):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES)
+    monkeypatch.setattr(backup_service, "current_revision", lambda: WRITTEN_TARGET_REVISION)
+    data = {name: [] for name in names}
+    data["written_candidate"] = [{"record": {"id": "synthetic"}, "review_status": "needs_review"}]
+    data["written_import_chunk"] = [{"key": "assets/test.png", "position": 0, "content": "c3ludGhldGlj"}]
+    sha = archive_payload(io, path, {"format": "oi-backup-v1", "revision": WRITTEN_TARGET_REVISION, "tables": data})
+    assert io.read(path, sha)["tables"] == data
+
+
 @pytest.fixture
 async def replay_restore_target(monkeypatch):
     url = make_url(os.environ["TEST_DATABASE_URL"])
@@ -165,6 +198,9 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     raw, counts, revision = await io.snapshot()
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
+    # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
+    for table in WRITTEN_TABLES:
+        assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
         payload["revision"] = RECEIPT_SOURCE_REVISION
@@ -175,7 +211,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == RECEIPT_TARGET_REVISION
+    assert restored["restored_revision"] == WRITTEN_TARGET_REVISION
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

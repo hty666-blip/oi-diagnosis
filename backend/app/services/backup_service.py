@@ -30,10 +30,12 @@ EXCLUDED = {"worker_heartbeat", "ai_configuration", "ai_configuration_check", "a
 MAGIC = b"OI-BACKUP-1\x00"
 MAX_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE = 32 * 1024 * 1024
-# 唯一兼容例外：新表只记录新增请求，不为旧答疑伪造历史回执。
+# 显式声明兼容的增量版本；新增表只能补空，不为旧数据伪造历史。
 RECEIPT_SOURCE_REVISION = "m7e93da8152b"
 RECEIPT_TARGET_REVISION = "n8fa0416c2de"
 RECEIPT_TABLE = "hint_message_receipt"
+WRITTEN_TARGET_REVISION = "o901b527d3ef"
+WRITTEN_TABLES = {"written_import_batch", "written_candidate", "written_import_asset", "written_import_chunk"}
 
 
 class BackupError(Exception):
@@ -175,16 +177,24 @@ class BackupIO:
             source_revision, target_revision = payload.get("revision"), current_revision()
             compatible = (source_revision == RECEIPT_SOURCE_REVISION
                           and target_revision == RECEIPT_TARGET_REVISION)
-            if source_revision != target_revision and not compatible:
+            written_compatible = (target_revision == WRITTEN_TARGET_REVISION
+                                  and source_revision in {RECEIPT_SOURCE_REVISION, RECEIPT_TARGET_REVISION})
+            if source_revision != target_revision and not compatible and not written_compatible:
                 raise BackupError("schema_mismatch")
             current_tables = {t.name for t in tables()}
-            expected_tables = current_tables - {RECEIPT_TABLE} if compatible else current_tables
+            added_tables = set()
+            if compatible or written_compatible and source_revision == RECEIPT_SOURCE_REVISION:
+                added_tables.add(RECEIPT_TABLE)
+            if written_compatible:
+                added_tables |= WRITTEN_TABLES
+            expected_tables = current_tables - added_tables
             data = payload.get("tables")
             if (not isinstance(data, dict) or set(data) != expected_tables
-                    or compatible and RECEIPT_TABLE not in current_tables):
+                    or not added_tables.issubset(current_tables)):
                 raise BackupError("invalid_archive")
-            if compatible:
-                data[RECEIPT_TABLE] = []
+            if added_tables:
+                for table in added_tables:
+                    data[table] = []
                 payload["revision"] = target_revision
             # 来源只能由已校验的原始结构版本推导，不能信备份自报的来源字段。
             payload["source_revision"] = source_revision

@@ -140,7 +140,7 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
   return res;
 }
 
-interface RequestOptions { signal?: AbortSignal; headers?: Record<string, string>; anonymous?: boolean }
+interface RequestOptions { signal?: AbortSignal; headers?: Record<string, string>; anonymous?: boolean; rawBody?: Blob }
 interface RequestResult { response: Response; snapshot: SessionSnapshot | null; signal?: AbortSignal }
 
 async function request(url: string, body?: unknown, method = "GET", options: RequestOptions = {}): Promise<RequestResult> {
@@ -152,7 +152,7 @@ async function request(url: string, body?: unknown, method = "GET", options: Req
       method,
       headers: { ...(snapshot ? { Authorization: "Bearer " + snapshot.token } : {}),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...options.headers },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: options.rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal: options.signal,
     });
   } catch {
@@ -469,7 +469,38 @@ export interface StudentProfile {
     problems: { pid: string; title: string; required: boolean; cell: TrainingDetail["rows"][number]["cells"][number] }[] })[];
 }
 
+export interface WrittenBatch {
+  id: string; status: "preview" | "staged"; created_at: string; expires_at: string; staged_at: string | null;
+  summary: { questions: number; papers: number; groups: number; assets: number; knowledge_nodes: number; knowledge_leaves: number; source_canonical_count: number; candidate_count: number; published_count: number; flags: Record<string, number> };
+}
+export interface WrittenRow {
+  external_id: string; paper_id: string; question_type: string; level: string | null; stem: string;
+  review_status: string; answer_status: string; issues: string[];
+}
+export interface WrittenPage {
+  batch: WrittenBatch; items: WrittenRow[]; total: number; has_more: boolean; papers: { id: string; title: string }[];
+}
+export interface WrittenDetail {
+  record: { id: string; stem: string; shared_stem?: string | null; options?: { id: string; text: string }[] | null; answer: unknown; answer_status?: string; answer_source_id?: string; answer_alternatives?: { raw?: string; option_ids?: string[]; value?: boolean; source_id?: string; note?: string }[]; source_ids?: string[]; source_locator?: string; primary_knowledge_point_id?: string | null; secondary_knowledge_point_ids?: string[]; asset_paths?: string[] };
+  normalized: { independent_id: string; related_question_id: string | null; issues: string[]; knowledge_suggestions: { id: string; name: string; basis: string }[] };
+  group: { shared_stem: string; asset_paths?: string[] } | null;
+  sources: { id: string; title: string; url?: string; license?: string }[];
+  knowledge_points: { id: string; name: string }[];
+}
+
 export const api = {
+  writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
+  writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
+  writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
+  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal) => get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}`, { signal }),
+  writtenQuestion: (id: string, question: string, signal?: AbortSignal) => get<WrittenDetail>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}`, { signal }),
+  writtenAsset: async (id: string, path: string, signal?: AbortSignal) => {
+    const result = await request(`/admin/written-bank/batches/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`, undefined, "GET", { signal });
+    const blob = await result.response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (result.snapshot) assertSession(result.snapshot);
+    return blob;
+  },
   runtimeJudging: (state = "all", q = "", offset = 0) => get<RuntimeJudging>(`/admin/runtime/judging?state=${state}&q=${encodeURIComponent(q)}&offset=${offset}`),
   runtimeJobAction: (id: number, action: "retry" | "cancel", job: RuntimeJob) => post(`/admin/runtime/judging/${id}/${action}`, { status: job.status, attempts: job.attempts, manual_retries: job.manual_retries }),
   runtimeJudgeCheck: (language: string) => post<{ ok: boolean; language: string; backend: string; checked_at: string }>(`/admin/runtime/judge-check?language=${language}`),

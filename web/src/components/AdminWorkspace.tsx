@@ -8,14 +8,15 @@ import AccountCsvEditor from "./AccountCsvEditor";
 
 const RuntimeOperations = lazy(() => import("./RuntimeOperations"));
 const ProblemCatalog = lazy(() => import("./ProblemCatalog"));
+const WrittenBank = lazy(() => import("./WrittenBank"));
 class CatalogBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? <ErrorNotice message="管理页面未能加载，请刷新页面重试。" onRetry={() => window.location.reload()} /> : this.props.children; }
 }
-type Tab = "home" | "accounts" | "classes" | "audit" | "problems" | "runtime";
+type Tab = "home" | "accounts" | "classes" | "audit" | "problems" | "written" | "runtime";
 const roles = { student: "学生", teacher: "教练", admin: "管理员" };
-const actions: Record<string, string> = { "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
+const actions: Record<string, string> = { "written.preview": "预览初赛题包", "written.stage": "暂存初赛候选题", "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
 const emptyAccount: AccountInput = { username: "", display_name: "", role: "student", password: "", class_id: null };
 
 export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: () => void; onReview: () => void }) {
@@ -93,11 +94,12 @@ export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: (
 
   return <div className="admin-workspace">
     <div className="page-head"><div><h1>平台管理</h1></div><button className="ghost" onClick={onTeaching}>进入教学工作台</button></div>
-    <nav className="admin-tabs" aria-label="管理功能">{([["home", "管理首页"], ["accounts", "账号管理"], ["classes", "班级管理"], ["problems", "题库管理"], ["runtime", "运行维护"], ["audit", "操作审计"]] as [Tab, string][]).map(([key, label]) => <button key={key} className="ghost" aria-pressed={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }} disabled={busy}>{label}</button>)}{tab !== "problems" && tab !== "runtime" && <button className="ghost" onClick={() => void load()} disabled={blocked}>刷新</button>}</nav>
+    <nav className="admin-tabs" aria-label="管理功能">{([["home", "管理首页"], ["accounts", "账号管理"], ["classes", "班级管理"], ["problems", "题库管理"], ["written", "初赛题库"], ["runtime", "运行维护"], ["audit", "操作审计"]] as [Tab, string][]).map(([key, label]) => <button key={key} className="ghost" aria-pressed={tab === key} onClick={() => { setTab(key); setError(""); setNotice(""); }} disabled={busy}>{label}</button>)}{!["problems", "written", "runtime"].includes(tab) && <button className="ghost" onClick={() => void load()} disabled={blocked}>刷新</button>}</nav>
     {!modalOpen && <ErrorNotice message={error} onRetry={() => void load()} />}
     {notice && <p className="session-notice" role="status">{notice}</p>}
     {loading && <p role="status">正在读取管理记录…</p>}
     {tab === "problems" && <CatalogBoundary><Suspense fallback={<p role="status">正在加载题库管理…</p>}><ProblemCatalog /></Suspense></CatalogBoundary>}
+    {tab === "written" && <CatalogBoundary><Suspense fallback={<p role="status">正在加载初赛题库…</p>}><WrittenBank /></Suspense></CatalogBoundary>}
     {tab === "runtime" && <CatalogBoundary><Suspense fallback={<p role="status">正在加载运行维护…</p>}><RuntimeOperations /></Suspense></CatalogBoundary>}
     {tab === "home" && overview && <div className="admin-home-grid">
       <section className="card home-tasks"><div className="card-head"><h2>待处理事项</h2></div>

@@ -847,3 +847,17 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
   .login-card { padding: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+/* 初赛候选题库沿用桌面工作台的表格和弹窗。 */
+.written-filter { align-items: end; margin: 20px 0; }
+.written-filter label:not(.catalog-check) { display: grid; gap: 6px; }
+.written-filter select { max-width: 360px; }
+.written-excerpt { max-width: 520px; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.written-flags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 24px; margin: 16px 0; }
+.written-flags > div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.written-flags dd { margin: 0; font-variant-numeric: tabular-nums; }
+.written-option { display: flex; align-items: baseline; gap: 12px; }
+.written-option p { margin: 6px 0; }
+.written-asset { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); }
+.written-locator, .written-raw { overflow-wrap: anywhere; white-space: pre-wrap; }
+.written-raw { max-height: 420px; overflow: auto; }

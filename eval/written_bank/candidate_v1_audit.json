@@ -1,0 +1,592 @@
+{
+  "scope": "offline_candidate_audit_not_publication_approval",
+  "manifest_sha256": "5ec920fa2365bd1ec795a7f0b465c1147cd232a62b43a707a16befc8ec847a57",
+  "counts": {
+    "papers": 28,
+    "groups": 111,
+    "questions": 1120,
+    "sources": 13,
+    "knowledge_nodes": 138,
+    "knowledge_leaves": 99,
+    "manifest_files_checked": 61,
+    "eligible_candidate_rows": 1100,
+    "canonical_count_as_supplied": 1075,
+    "candidate_rows_excluding_declared_exact_duplicates": 1080,
+    "answer_status": {
+      "provided_unverified": 905,
+      "official_cross_checked": 167,
+      "conflict": 5,
+      "reference_cross_checked": 43
+    },
+    "review_status": {
+      "needs_review": 1120
+    },
+    "eligible_unknown_scoring_rules": 30,
+    "questions_without_explanation": 1120
+  },
+  "zero_coverage_leaves": [
+    {
+      "id": "KP-03-02-02",
+      "name": "信息使用规范与法律法规"
+    },
+    {
+      "id": "KP-04-01-06",
+      "name": "结构化程序设计与流程图"
+    },
+    {
+      "id": "KP-04-02-02",
+      "name": "二维数组"
+    },
+    {
+      "id": "KP-04-03-02",
+      "name": "作用域与生命周期"
+    },
+    {
+      "id": "KP-04-05-01",
+      "name": "STL 容器与 sort"
+    },
+    {
+      "id": "KP-04-05-02",
+      "name": "文件读写与重定向"
+    },
+    {
+      "id": "KP-05-04-01",
+      "name": "集合与并查集"
+    },
+    {
+      "id": "KP-06-01-01",
+      "name": "算法概念与描述"
+    },
+    {
+      "id": "KP-06-01-09",
+      "name": "倍增"
+    },
+    {
+      "id": "KP-06-03-03",
+      "name": "搜索剪枝与记忆化"
+    },
+    {
+      "id": "KP-06-04-03",
+      "name": "区间 DP"
+    },
+    {
+      "id": "KP-07-05-03",
+      "name": "矩阵与线性代数"
+    },
+    {
+      "id": "KP-08-01-03",
+      "name": "边界与特殊情况分析"
+    },
+    {
+      "id": "KP-08-02-02",
+      "name": "空间复杂度分析"
+    },
+    {
+      "id": "KP-08-03-02",
+      "name": "程序语义与代码作用判断"
+    }
+  ],
+  "issue_counts": {
+    "variant_collapsed_in_canonical_count": 5,
+    "exact_duplicate_type_conflict": 2,
+    "exact_duplicate_options_require_review": 4,
+    "withdrawn_question_requires_review": 1,
+    "shared_material_copies_differ": 49
+  },
+  "errors": 0,
+  "warnings": 61,
+  "issues": [
+    {
+      "code": "variant_collapsed_in_canonical_count",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2013_05",
+        "q_noip-j-2013_09"
+      ]
+    },
+    {
+      "code": "exact_duplicate_type_conflict",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2013_17",
+        "q_noip-j-2013_14"
+      ]
+    },
+    {
+      "code": "exact_duplicate_options_require_review",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2013_17",
+        "q_noip-j-2013_14"
+      ]
+    },
+    {
+      "code": "exact_duplicate_options_require_review",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2016_11",
+        "q_noip-j-2016_16"
+      ]
+    },
+    {
+      "code": "variant_collapsed_in_canonical_count",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2017_03",
+        "q_noip-j-2017_04"
+      ]
+    },
+    {
+      "code": "exact_duplicate_type_conflict",
+      "severity": "warning",
+      "ids": [
+        "q_noip-s-2017_17",
+        "q_noip-j-2017_16"
+      ]
+    },
+    {
+      "code": "exact_duplicate_options_require_review",
+      "severity": "warning",
+      "ids": [
+        "q_csp-s-2019_05",
+        "q_noip-j-2014_14"
+      ]
+    },
+    {
+      "code": "variant_collapsed_in_canonical_count",
+      "severity": "warning",
+      "ids": [
+        "q_csp-s-2020_05",
+        "q_noip-j-2013_05"
+      ]
+    },
+    {
+      "code": "variant_collapsed_in_canonical_count",
+      "severity": "warning",
+      "ids": [
+        "q_csp-s-2020_08",
+        "q_noip-s-2013_11"
+      ]
+    },
+    {
+      "code": "exact_duplicate_options_require_review",
+      "severity": "warning",
+      "ids": [
+        "q_csp-s-2020_14",
+        "q_noip-s-2013_14"
+      ]
+    },
+    {
+      "code": "variant_collapsed_in_canonical_count",
+      "severity": "warning",
+      "ids": [
+        "q_csp-s-2021_26",
+        "q_csp-s-2021_25"
+      ]
+    },
+    {
+      "code": "withdrawn_question_requires_review",
+      "severity": "warning",
+      "ids": [
+        "q_csp-j-2025_33"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2019_01",
+        "q_csp-j-2019_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2019_02",
+        "q_csp-j-2019_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2019_03",
+        "q_csp-j-2019_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2019_01",
+        "q_csp-s-2019_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2019_02",
+        "q_csp-s-2019_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2019_03",
+        "q_csp-s-2019_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2020_01",
+        "q_scp-2020_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2020_02",
+        "q_scp-2020_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2020_03",
+        "q_scp-2020_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2020_05",
+        "q_scp-2020_39"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2020_01",
+        "q_csp-j-2020_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2020_02",
+        "q_csp-j-2020_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2020_03",
+        "q_csp-j-2020_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2020_01",
+        "q_csp-s-2020_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2020_02",
+        "q_csp-s-2020_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2020_03",
+        "q_csp-s-2020_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2021_01",
+        "q_csp-j-2021_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2021_02",
+        "q_csp-j-2021_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2021_03",
+        "q_csp-j-2021_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2021_01",
+        "q_csp-s-2021_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2021_02",
+        "q_csp-s-2021_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2021_03",
+        "q_csp-s-2021_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2021_01",
+        "q_scp-2021_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2021_02",
+        "q_scp-2021_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_scp-2021_03",
+        "q_scp-2021_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2022_01",
+        "q_csp-j-2022_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2022_02",
+        "q_csp-j-2022_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2022_03",
+        "q_csp-j-2022_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2022_01",
+        "q_csp-s-2022_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2022_02",
+        "q_csp-s-2022_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2022_03",
+        "q_csp-s-2022_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2023_01",
+        "q_csp-j-2023_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2023_02",
+        "q_csp-j-2023_21"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2023_03",
+        "q_csp-j-2023_27"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2023_01",
+        "q_csp-s-2023_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2023_02",
+        "q_csp-s-2023_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2023_03",
+        "q_csp-s-2023_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2024_01",
+        "q_csp-j-2024_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2024_02",
+        "q_csp-j-2024_21"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2024_03",
+        "q_csp-j-2024_27"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2024_01",
+        "q_csp-s-2024_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2024_02",
+        "q_csp-s-2024_21"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2024_03",
+        "q_csp-s-2024_27"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2025_01",
+        "q_csp-j-2025_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2025_02",
+        "q_csp-j-2025_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-j-2025_03",
+        "q_csp-j-2025_28"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2025_01",
+        "q_csp-s-2025_16"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2025_02",
+        "q_csp-s-2025_22"
+      ]
+    },
+    {
+      "code": "shared_material_copies_differ",
+      "severity": "warning",
+      "ids": [
+        "grp_csp-s-2025_03",
+        "q_csp-s-2025_28"
+      ]
+    }
+  ],
+  "limitations": [
+    "不核验外部来源真伪或答案语义正确性",
+    "不批准任何题目进入正式判分",
+    "覆盖复算沿用原 canonical 编号，不证明去重语义正确"
+  ]
+}
