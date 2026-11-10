@@ -152,9 +152,8 @@ def scan(src: str, language: str = "cpp17") -> list[Finding]:
                 i += 2; col += 2; continue
             if ch == "'":
                 state = "code"
-        elif state == "block_comment":
-            if ch == "*" and nxt == "/":
-                state = "code"; i += 2; col += 2; continue
+        elif state == "block_comment" and ch == "*" and nxt == "/":
+            state = "code"; i += 2; col += 2; continue
 
         i += 1
         col += 1

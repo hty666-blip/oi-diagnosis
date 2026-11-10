@@ -44,6 +44,7 @@ function CandidateImages({ batchId, paths }: { batchId: string; paths: string[] 
 export default function WrittenBank() {
   const [batches, setBatches] = useState<WrittenBatch[]>([]);
   const [truncated, setTruncated] = useState(false);
+  const [batchesLoading, setBatchesLoading] = useState(true);
   const [page, setPage] = useState<WrittenPage>();
   const [loading, setLoading] = useState(false), [busy, setBusy] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -57,8 +58,10 @@ export default function WrittenBank() {
   const applied = useRef({ q: "", p: "", f: false });
   async function loadBatches() {
     listRequest.current?.abort(); const controller = new AbortController(); listRequest.current = controller;
+    setBatchesLoading(true);
     try { const value = await api.writtenBatches(controller.signal); setBatches(value.items); setTruncated(value.has_more); }
     catch (e) { if (!controller.signal.aborted) setError(messageOf(e)); }
+    finally { if (!controller.signal.aborted) setBatchesLoading(false); }
   }
   useEffect(() => { void loadBatches(); return () => { listRequest.current?.abort(); rowRequest.current?.abort(); detailRequest.current?.abort(); uploadRequest.current?.abort(); }; }, []);
   async function load(id: string, next = 0, q = query, p = paper, f = flagged) {
@@ -105,7 +108,7 @@ export default function WrittenBank() {
     <div className="page-head"><h2>初赛题库</h2><div className="admin-actions"><button className="ghost" disabled={disabled} onClick={() => void loadBatches()}>刷新批次</button><button className="btn-primary" disabled={disabled} onClick={() => { setImporting(true); setError(""); }}>导入 ZIP 题包</button></div></div>
     {error && !importing && <ErrorNotice message={error} />}{notice && <p role="status">{notice}</p>}
     <div className="table-scroll"><table><thead><tr><th>导入时间</th><th>试卷 / 题目</th><th>状态</th><th>操作</th></tr></thead><tbody>{batches.map((b) => <tr key={b.id}><td>{new Date(b.created_at).toLocaleString("zh-CN")}</td><td>{b.summary.papers} 套 / {b.summary.questions} 题</td><td>{b.status === "staged" ? "已暂存 · 待审核" : "待确认预览"}</td><td><button className="ghost" disabled={disabled} onClick={() => { setQuery(""); setPaper(""); setFlagged(false); void load(b.id, 0, "", "", false); }}>查看</button></td></tr>)}</tbody></table></div>
-    {!batches.length && <p className="muted">暂无导入记录。支持包含题目、题组、试卷、知识目录、来源及清单的 ZIP 包。</p>}{truncated && <p className="muted">显示最近 50 个批次。</p>}
+    {batchesLoading && <p role="status">正在读取导入记录…</p>}{!batchesLoading && !batches.length && <p className="muted">暂无导入记录。支持包含题目、题组、试卷、知识目录、来源及清单的 ZIP 包。</p>}{truncated && <p className="muted">显示最近 50 个批次。</p>}
     {page && <section className="admin-section">
       <div className="page-head"><h3>{page.batch.status === "staged" ? "待审核候选题" : "导入预览"}</h3>{page.batch.status === "preview" && <button className="btn-primary" disabled={disabled} onClick={() => void stage()}>确认暂存 {page.batch.summary.questions} 道题</button>}</div>
       <p>{page.batch.summary.questions} 条原始题目 · {page.batch.summary.groups} 个题组 · {page.batch.summary.assets} 张图片 · {page.batch.summary.knowledge_leaves} 个知识点</p>
