@@ -126,22 +126,46 @@ function TaskProblems({ task, onAnswer, onReview }: {
 }
 
 function TaskMatrix({ task }: { task: WrittenAssignmentDetail }) {
+  const [filter, setFilter] = useState<{ index: number; kind: "wrong" | "missing" }>();
+  const visible = filter ? task.rows.filter((row) => {
+    const cell = row.cells[filter.index];
+    return filter.kind === "missing" ? cell == null : cell?.correct === false;
+  }) : task.rows;
   return <>
     <p className="written-task-summary">
       <span>全部交卷 <strong>{task.summary.submitted_all} / {task.summary.students}</strong></span>
       <span>全部答对 <strong>{task.summary.correct_all} / {task.summary.students}</strong></span>
     </p>
-    <details className="written-task-topics"><summary>专项题目</summary>
-      <ol>{task.questions.map((question) => <li key={question.id}>
-        {question.stem} <span className="muted">v{question.revision}{question.is_available ? "" : " · 已下架"}</span>
-      </li>)}</ol>
+    <details className="written-task-topics"><summary>单题学情</summary>
+      <div className="table-scroll"><table>
+        <thead><tr><th scope="col">题目</th><th scope="col">答对</th><th scope="col">答错</th><th scope="col">未交</th></tr></thead>
+        <tbody>{task.questions.map((question, index) => {
+          const cells = task.rows.map((row) => row.cells[index]);
+          const right = cells.filter((cell) => cell?.correct === true).length;
+          const wrong = cells.filter((cell) => cell?.correct === false).length;
+          const missing = cells.length - right - wrong;
+          return <tr key={question.id}>
+            <th scope="row"><div className="written-excerpt">第 {index + 1} 题 · {question.stem}</div>
+              <small className="muted">v{question.revision}{question.is_available ? "" : " · 已下架"}</small></th>
+            <td>{right}</td>
+            <td>{wrong > 0 ? <button className="ghost" type="button" aria-label={`查看第 ${index + 1} 题答错的 ${wrong} 人`}
+              onClick={() => setFilter({ index, kind: "wrong" })}>{wrong} 人</button> : "0"}</td>
+            <td>{missing > 0 ? <button className="ghost" type="button" aria-label={`查看第 ${index + 1} 题未交的 ${missing} 人`}
+              onClick={() => setFilter({ index, kind: "missing" })}>{missing} 人</button> : "0"}</td>
+          </tr>;
+        })}</tbody>
+      </table></div>
     </details>
-    {task.rows.length === 0 ? <p className="muted">当前班级无名单内学生。</p> : <div className="table-scroll"><table>
+    {filter && <div className="written-task-nav">
+      <span role="status">第 {filter.index + 1} 题{filter.kind === "wrong" ? "答错" : "未交"} · {visible.length} 人</span>
+      <button type="button" className="ghost" onClick={() => setFilter(undefined)}>恢复全班名单</button>
+    </div>}
+    {visible.length === 0 ? <p className="muted">{filter ? "当前没有符合条件的学生。" : "当前班级无名单内学生。"}</p> : <div className="table-scroll"><table aria-label="班级逐题学情">
       <thead><tr><th scope="col">学生</th>
         {task.questions.map((question, index) => <th key={question.id} scope="col">第 {index + 1} 题</th>)}
         <th scope="col">已交</th><th scope="col">答对</th>
       </tr></thead>
-      <tbody>{task.rows.map((row) => <tr key={row.student_id}>
+      <tbody>{visible.map((row) => <tr key={row.student_id}>
         <th scope="row">{row.name}</th>
         {row.cells.map((cell, index) => <td key={task.questions[index].id}>
           {cell ? <WrittenScoreBadge correct={cell.correct} /> : <span className="muted">未交卷</span>}

@@ -897,6 +897,7 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-task-detail .card-head p { margin: 0; }
 .written-task-topics { margin-bottom: 16px; }
 .written-task-topics summary { cursor: pointer; }
+.written-task-topics .table-scroll { margin-top: 8px; }
 .written-task-detail tbody th { font-weight: 500; }
 .written-task-editor { display: grid; gap: 16px; }
 .written-task-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
