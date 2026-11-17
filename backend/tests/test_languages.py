@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pytest
 
 from app.agents.diagnostician import diagnose
@@ -23,6 +26,23 @@ def test_language_commands(language, filename, artifact, compiler, runtime):
     assert spec.artifact == artifact
     assert spec.compile_command()[0] == compiler
     assert spec.run_command(512)[0] == runtime
+
+
+def test_python_syntax_check_preserves_source_without_running_or_caching_it(tmp_path):
+    source = tmp_path / "main.py"
+    command = [sys.executable, *language_spec("python3").compile_command()[1:]]
+    valid = "结果 = 1\nraise RuntimeError('this code should not run')\n"
+    source.write_text(valid, encoding="utf-8")
+    check = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+    assert check.returncode == 0, check.stderr
+    assert source.read_text(encoding="utf-8") == valid
+
+    source.write_text("结果 = 1\nif True\n    print(结果)\n", encoding="utf-8")
+    check = subprocess.run(command, cwd=tmp_path, capture_output=True, timeout=10, check=False)
+    assert check.returncode == 1
+    assert b'File "main.py", line 2' in check.stderr
+    assert b"SyntaxError" in check.stderr
+    assert list(tmp_path.iterdir()) == [source]
 
 
 def test_submission_language_is_validated():

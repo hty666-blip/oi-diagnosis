@@ -31,7 +31,15 @@ class LanguageSpec:
                 "/bin/bash", "-lc",
                 f"/usr/bin/javac -encoding UTF-8 {source} && /usr/bin/jar cf main.jar *.class",
             ]
-        return ["/usr/bin/python3", "-m", "py_compile", source]
+        # Python 运行时直接读取源码。只检查语法，避免容器生成宿主无法清理的缓存目录。
+        return [
+            "/usr/bin/python3", "-I", "-B", "-c",
+            "import sys\n"
+            "from pathlib import Path\n"
+            "source = Path(sys.argv[1])\n"
+            "compile(source.read_bytes(), str(source), 'exec')",
+            source,
+        ]
 
     def run_command(self, memory_limit_mb: int) -> list[str]:
         if self.key in ("cpp17", "c11"):
