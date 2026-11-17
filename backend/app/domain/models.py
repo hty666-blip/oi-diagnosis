@@ -186,6 +186,47 @@ class WrittenAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
+class WrittenAssignment(Base):
+    __tablename__ = "written_assignment"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "request_id", name="uq_written_assignment_request"),
+        Index("ix_written_assignment_class", "class_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"))
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    title: Mapped[str] = mapped_column(String(120))
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenAssignmentQuestion(Base):
+    __tablename__ = "written_assignment_question"
+
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[dict] = mapped_column(JSON)
+
+
+class WrittenAssignmentMember(Base):
+    __tablename__ = "written_assignment_member"
+
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class WrittenAssignmentAttempt(Base):
+    __tablename__ = "written_assignment_attempt"
+
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), index=True)
+
+
 class WrittenHelpTurn(Base):
     """一次追问、诊断交接和讲解，按照本人作答保存。"""
 

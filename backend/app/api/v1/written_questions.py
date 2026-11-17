@@ -13,6 +13,7 @@ from app.api.input_types import MAX_OBJECT_ID, ObjectPathId
 from app.core.text_validation import StorageText
 from app.domain.models import (
     User,
+    WrittenAssignmentAttempt,
     WrittenAttempt,
     WrittenCandidate,
     WrittenImportAsset,
@@ -20,31 +21,16 @@ from app.domain.models import (
     WrittenQuestionVersion,
 )
 from app.services.admin_service import management_lock
+from app.services.written_assignments import assignment_version
 from app.services.written_bank_storage import load_bytes, load_snapshot
 from app.services.written_grading import AttemptInput, is_correct
+from app.services.written_review import visible_query
 
 router = APIRouter(prefix="/written/questions", tags=["written-questions"])
 attempts_router = APIRouter(prefix="/written/attempts", tags=["written-attempts"])
 PracticeStudent = Annotated[User, Depends(require_role("student"))]
 QuestionType = Literal["single_choice", "multiple_choice", "true_false", "fill_blank"]
 PAGE_SIZE = 25
-
-
-def visible_query():
-    return (
-        select(WrittenQuestion, WrittenQuestionVersion)
-        .join(
-            WrittenQuestionVersion,
-            (WrittenQuestionVersion.question_id == WrittenQuestion.id)
-            & (WrittenQuestionVersion.revision == WrittenQuestion.revision),
-        )
-        .join(WrittenCandidate, WrittenCandidate.id == WrittenQuestion.candidate_id)
-        .where(
-            WrittenQuestion.is_active.is_(True),
-            WrittenCandidate.review_status == "approved",
-            WrittenQuestionVersion.review_revision == WrittenCandidate.revision,
-        )
-    )
 
 
 def summary(question, version):
@@ -179,13 +165,16 @@ def attempt_summary(attempt: WrittenAttempt, revision: int) -> dict:
     }
 
 
-def attempt_out(attempt: WrittenAttempt, version: WrittenQuestionVersion, data: dict) -> dict:
+def attempt_out(
+    attempt: WrittenAttempt, version: WrittenQuestionVersion, data: dict, assignment_id: int | None
+) -> dict:
     urls = [
         f"/api/v1/written/attempts/{attempt.id}/assets/{i}"
         for i in range(len(data.get("asset_paths", [])))
     ]
     return {
         **attempt_summary(attempt, version.revision),
+        "assignment_id": assignment_id,
         "response": attempt.response,
         "answer": data["answer"],
         "explanation": data["explanation"],
@@ -229,12 +218,13 @@ def submission_conflict(code: str, message: str) -> HTTPException:
 
 
 async def replay_attempt(
-    session, attempt: WrittenAttempt, version: WrittenQuestionVersion, digest: str
+    session, attempt: WrittenAttempt, version: WrittenQuestionVersion, digest: str,
+    assignment_id: int | None,
 ):
     if attempt.request_digest != digest:
         raise submission_conflict("written_request_conflict", "该请求编号已用于另一份作答")
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
-    return {**attempt_out(attempt, version, data), "replayed": True}
+    return {**attempt_out(attempt, version, data, assignment_id), "replayed": True}
 
 
 @attempts_router.post("")
@@ -249,13 +239,12 @@ async def submit_attempt(
     request_id, version_id, digest = str(body.request_id), str(body.version_id), body.digest()
     previous = await receipt(session, user.id, request_id)
     if previous is not None:
-        return await replay_attempt(session, *previous, digest)
+        return await replay_attempt(session, *previous, digest, body.assignment_id)
 
     # 先读取不可变快照，减少持有管理锁的时间。锁内重新确认上架状态与版本。
-    visible = await find_visible(session, body.question_id)
+    version = await submission_version(session, user, body)
     snapshot = None
-    if visible is not None and visible[1].id == version_id:
-        version = visible[1]
+    if version is not None and version.id == version_id:
         snapshot = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
 
     await management_lock(session)
@@ -270,12 +259,11 @@ async def submit_attempt(
     previous = await receipt(session, user.id, request_id)
     if previous is not None:
         await session.commit()
-        return await replay_attempt(session, *previous, digest)
+        return await replay_attempt(session, *previous, digest, body.assignment_id)
 
-    visible = await find_visible(session, body.question_id)
-    if visible is None:
+    version = await submission_version(session, user, body)
+    if version is None:
         raise submission_conflict("written_question_unavailable", "该题尚未发布或已下架")
-    _, version = visible
     if version.id != version_id:
         raise submission_conflict("written_version_changed", "题目版本已更新，请重新打开题目")
     if snapshot is None:
@@ -300,8 +288,20 @@ async def submit_attempt(
         max_score=score,
     )
     session.add(attempt)
+    if body.assignment_id is not None:
+        await session.flush()
+        session.add(WrittenAssignmentAttempt(attempt_id=attempt.id, assignment_id=body.assignment_id))
     await session.commit()
-    return {**attempt_out(attempt, version, snapshot), "replayed": False}
+    return {**attempt_out(attempt, version, snapshot, body.assignment_id), "replayed": False}
+
+
+async def submission_version(session: AsyncSession, user: User, body: AttemptInput):
+    if body.assignment_id is not None:
+        return await assignment_version(
+            session, user, body.assignment_id, body.question_id, submitting=True
+        )
+    row = await find_visible(session, body.question_id)
+    return row[1] if row else None
 
 
 @attempts_router.get("")
@@ -365,7 +365,8 @@ async def read_attempt(
     response.headers["Cache-Control"] = "no-store"
     attempt, version = await owned_attempt(session, user.id, attempt_id)
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
-    return attempt_out(attempt, version, data)
+    link = await session.get(WrittenAssignmentAttempt, attempt_id)
+    return attempt_out(attempt, version, data, link.assignment_id if link else None)
 
 
 @attempts_router.get("/{attempt_id}/assets/{index}")

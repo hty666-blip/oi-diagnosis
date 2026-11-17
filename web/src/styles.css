@@ -885,6 +885,23 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-progress tbody th { font-weight: 500; }
 .written-progress tbody small { display: block; margin-top: 4px; font-weight: 400; }
 .written-progress .btn-primary { width: auto; }
+.written-task-nav, .written-task-summary { display: flex; align-items: center; gap: 16px; margin: 0 0 16px; }
+.written-task-detail .card-head p { margin: 0; }
+.written-task-topics { margin-bottom: 16px; }
+.written-task-topics summary { cursor: pointer; }
+.written-task-detail tbody th { font-weight: 500; }
+.written-task-editor { display: grid; gap: 16px; }
+.written-task-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.written-task-editor fieldset:first-child { display: grid; grid-template-columns: 1.2fr 1fr 1fr; align-items: end; gap: 12px; }
+.written-task-editor label { display: grid; min-width: 0; gap: 6px; }
+.written-task-editor label > :is(input, select) { width: 100%; min-width: 0; }
+.written-task-editor legend { margin-bottom: 8px; }
+.written-task-catalog { max-height: 280px; margin-top: 12px; }
+.written-task-picked { padding-left: 24px; }
+.written-task-picked li { padding: 4px 0; }
+.written-task-picked li > span { display: inline-block; max-width: 75%; vertical-align: middle; }
+.written-task-picked li > button { margin-left: 8px; }
+.written-task-editor .btn-primary { width: auto; }
 .written-practice-paper { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .written-paper-content, .written-paper-answer { min-width: 0; overflow-wrap: anywhere; }
 .written-paper-content figure { margin: 16px 0; }

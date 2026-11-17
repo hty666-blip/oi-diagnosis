@@ -31,6 +31,23 @@ CRITICAL_FLAGS = {
 }
 
 
+def visible_query():
+    return (
+        select(WrittenQuestion, WrittenQuestionVersion)
+        .join(
+            WrittenQuestionVersion,
+            (WrittenQuestionVersion.question_id == WrittenQuestion.id)
+            & (WrittenQuestionVersion.revision == WrittenQuestion.revision),
+        )
+        .join(WrittenCandidate, WrittenCandidate.id == WrittenQuestion.candidate_id)
+        .where(
+            WrittenQuestion.is_active.is_(True),
+            WrittenCandidate.review_status == "approved",
+            WrittenQuestionVersion.review_revision == WrittenCandidate.revision,
+        )
+    )
+
+
 def learning_topic(point_id: str, nodes: dict[str, dict]) -> dict:
     point = nodes[point_id]
     return {

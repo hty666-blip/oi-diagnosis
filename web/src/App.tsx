@@ -25,6 +25,7 @@ import {
 } from "./api";
 
 const WrittenPractice = lazy(() => import("./components/WrittenPractice"));
+const WrittenAssignments = lazy(() => import("./components/WrittenAssignments"));
 type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles" | "password" | "written";
 
 function homeView(user: AuthUser): View {
@@ -116,7 +117,7 @@ export default function App() {
 
   const nav: { key: Exclude<View, "password">; label: string }[] = user.role === "student"
     ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "written", label: "初赛练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
-    : [...(user.role === "admin" ? [{ key: "admin" as const, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
+    : [...(user.role === "admin" ? [{ key: "admin" as const, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "written", label: "初赛任务" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
   const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
 
   return (
@@ -142,6 +143,9 @@ export default function App() {
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "written" && user.role === "student" && <Suspense fallback={<p role="status">正在打开初赛练习…</p>}>
           <WrittenPractice key={user.id} userId={user.id} />
+        </Suspense>}
+        {view === "written" && user.role !== "student" && <Suspense fallback={<p role="status">正在打开初赛任务…</p>}>
+          <WrittenAssignments key={user.id} />
         </Suspense>}
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminWorkspace onTeaching={() => setView("trainings")} onReview={() => setView("coach")} />}

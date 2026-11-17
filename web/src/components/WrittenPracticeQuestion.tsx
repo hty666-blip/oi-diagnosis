@@ -125,14 +125,16 @@ function rejectionNeedsNewVersion(error: unknown) {
   ].includes(error.code ?? "");
 }
 
-function SubmissionForm({ question, userId, onSubmitted, onCheckVersion, imageSource }: {
+function SubmissionForm({ question, userId, assignmentId, closed, onSubmitted, onCheckVersion, imageSource }: {
   question: WrittenPublishedQuestion;
   userId: number;
+  assignmentId?: number;
+  closed?: boolean;
   onSubmitted: (receipt: WrittenAttempt) => void;
   onCheckVersion: () => void;
   imageSource: (path: string) => string | undefined;
 }) {
-  const store = writtenAnswerStore(userId, question.id, question.version_id);
+  const store = writtenAnswerStore(userId, question.id, question.version_id, assignmentId);
   const [draft, setDraft] = useState(() => store.read());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -142,7 +144,7 @@ function SubmissionForm({ question, userId, onSubmitted, onCheckVersion, imageSo
   useEffect(() => () => requestRef.current?.abort(), []);
 
   async function submit() {
-    if (!draft || !hasAnswer(draft.response, question.question_type) || requestRef.current || needsVersion) return;
+    if (!draft || !hasAnswer(draft.response, question.question_type) || requestRef.current || needsVersion || (closed && !pending)) return;
     const request = new AbortController();
     requestRef.current = request;
     setBusy(true);
@@ -151,7 +153,7 @@ function SubmissionForm({ question, userId, onSubmitted, onCheckVersion, imageSo
     try {
       const receipt = await api.submitWrittenAttempt({
         question_id: question.id, version_id: question.version_id,
-        request_id: draft.requestId, response: draft.response,
+        request_id: draft.requestId, response: draft.response, assignment_id: assignmentId,
       }, request.signal);
       if (request.signal.aborted) return;
       store.markDone(draft.requestId);
@@ -171,27 +173,29 @@ function SubmissionForm({ question, userId, onSubmitted, onCheckVersion, imageSo
   }
 
   return <form onSubmit={(event) => { event.preventDefault(); void submit(); }} className="written-answer-form">
-    <fieldset disabled={busy || needsVersion}>
+    <fieldset disabled={busy || needsVersion || closed}>
       <legend>{question.question_type === "single_choice" ? "选择一个答案"
         : question.question_type === "multiple_choice" ? "选择所有正确答案" : "填写作答"}</legend>
       <WrittenAnswers question={question} response={draft?.response ?? null} imageSource={imageSource}
         onAnswer={(response) => { setDraft(store.write(response)); setError(""); }} />
     </fieldset>
     {error && <ErrorNotice message={error} />}
-    {needsVersion && <button type="button" className="ghost" onClick={onCheckVersion}>查看最新题面</button>}
-    {!needsVersion && <button className="btn-primary" type="submit" disabled={busy || !hasAnswer(draft?.response ?? null, question.question_type)}>
+    {needsVersion && <button type="button" className="ghost" onClick={onCheckVersion}>{assignmentId ? "重新读取任务题面" : "查看最新题面"}</button>}
+    {(!closed || pending) && !needsVersion && <button className="btn-primary" type="submit" disabled={busy || !hasAnswer(draft?.response ?? null, question.question_type)}>
       {busy ? "正在提交…" : pending ? "重试提交" : "提交作答"}
     </button>}
   </form>;
 }
 
-function WrittenPaper({ question, receipt, userId, onSubmitted, onCheckVersion, onRetryQuestion }: {
+function WrittenPaper({ question, receipt, userId, assignmentId, closed, onSubmitted, onCheckVersion, onRetryQuestion }: {
   question: WrittenPublishedQuestion;
   receipt?: WrittenAttempt;
   userId: number;
+  assignmentId?: number;
+  closed?: boolean;
   onSubmitted: (receipt: WrittenAttempt) => void;
   onCheckVersion: () => void;
-  onRetryQuestion: () => void;
+  onRetryQuestion?: () => void;
 }) {
   const { files, loading, error, retry } = useWrittenImages(question);
   const imageSource = (path: string) => files.get(path);
@@ -225,11 +229,11 @@ function WrittenPaper({ question, receipt, userId, onSubmitted, onCheckVersion, 
         </dl>
         <h3>解析</h3>
         <Markdown text={receipt.explanation} imageSource={imageSource} />
-        <p className="muted">版本 v{receipt.revision} / {new Date(receipt.submitted_at).toLocaleString("zh-CN")}</p>
-        <button type="button" className="ghost" onClick={onRetryQuestion}>重新作答</button>
+        <p className="muted">{receipt.assignment_id ? "班级任务 · " : ""}版本 v{receipt.revision} / {new Date(receipt.submitted_at).toLocaleString("zh-CN")}</p>
+        {onRetryQuestion && <button type="button" className="ghost" onClick={onRetryQuestion}>{receipt.assignment_id && !assignmentId ? "在题库重做" : "重新作答"}</button>}
       </> : <>
-        <h2>作答</h2>
-        <SubmissionForm key={question.version_id} question={question} userId={userId} imageSource={imageSource}
+        <h2>{closed ? "任务已截止" : "作答"}</h2>
+        <SubmissionForm key={question.version_id} question={question} userId={userId} imageSource={imageSource} assignmentId={assignmentId} closed={closed}
           onSubmitted={onSubmitted} onCheckVersion={onCheckVersion} />
       </>}
     </section>
@@ -244,7 +248,7 @@ function WrittenScoreBadgeDirect({ receipt }: { receipt: WrittenAttempt }) {
   </div>;
 }
 
-type QuestionTarget = { id: number; version?: string };
+type QuestionTarget = { id: number; version?: string; assignmentId?: number; closed?: boolean };
 
 function StaleAnswer({ userId, target, latest, saved, onUseLatest, onSubmitted }: {
   userId: number;
@@ -257,7 +261,7 @@ function StaleAnswer({ userId, target, latest, saved, onUseLatest, onSubmitted }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const requestRef = useRef<AbortController>();
-  const store = writtenAnswerStore(userId, target.id, target.version);
+  const store = writtenAnswerStore(userId, target.id, target.version, target.assignmentId);
   const pending = store.isPending(saved.requestId);
   useEffect(() => () => requestRef.current?.abort(), []);
 
@@ -270,6 +274,7 @@ function StaleAnswer({ userId, target, latest, saved, onUseLatest, onSubmitted }
     try {
       const receipt = await api.submitWrittenAttempt({
         question_id: target.id, version_id: target.version, request_id: saved.requestId, response: saved.response,
+        assignment_id: target.assignmentId,
       }, request.signal);
       if (request.signal.aborted) return;
       store.markDone(saved.requestId);
@@ -317,34 +322,39 @@ export function WrittenOpenQuestion({ userId, target, onVersion, onSubmitted }: 
     setLoading(true);
     setFailure(null);
     setQuestion(undefined);
-    void api.writtenPublishedQuestion(target.id, controller.signal)
+    const load = target.assignmentId === undefined
+      ? api.writtenPublishedQuestion(target.id, controller.signal)
+      : api.writtenAssignmentQuestion(target.assignmentId, target.id, controller.signal);
+    void load
       .then((value) => { if (!controller.signal.aborted) setQuestion(value); })
       .catch((error: unknown) => { if (!controller.signal.aborted) setFailure(error); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [target.id, reload]);
+  }, [target.id, target.assignmentId, reload]);
   const oldVersion = target.version;
   const changed = question && oldVersion !== question.version_id;
   const unavailable = failure instanceof ApiError && failure.status === 404;
-  const oldDraft = oldVersion && (changed || unavailable) ? writtenAnswerStore(userId, target.id, oldVersion).read() : null;
+  const oldDraft = oldVersion && (changed || unavailable)
+    ? writtenAnswerStore(userId, target.id, oldVersion, target.assignmentId).read() : null;
   useEffect(() => {
     if (question && !oldDraft && oldVersion !== question.version_id) onVersion(question.version_id);
   }, [question, oldDraft, oldVersion, onVersion]);
   if (loading) return <p className="card" role="status">正在读取题面…</p>;
   if (oldVersion && oldDraft) return <StaleAnswer
-    key={oldVersion} userId={userId} target={{ id: target.id, version: oldVersion }}
+    key={oldVersion} userId={userId} target={{ ...target, version: oldVersion }}
     latest={question} saved={oldDraft} onUseLatest={onVersion} onSubmitted={onSubmitted} />;
   if (failure) return <ErrorNotice message={messageOf(failure)} onRetry={refresh} />;
   if (!question) return null;
-  return <WrittenPaper key={question.version_id} question={question} userId={userId}
+  return <WrittenPaper key={question.version_id} question={question} userId={userId} assignmentId={target.assignmentId} closed={target.closed}
     onSubmitted={onSubmitted} onCheckVersion={refresh} onRetryQuestion={refresh} />;
 }
 
-export function WrittenOpenAttempt({ userId, id, immediate, onRetryQuestion }: {
+export function WrittenOpenAttempt({ userId, id, immediate, taskContext, onRetryQuestion }: {
   userId: number;
   id: number;
   immediate?: WrittenAttempt;
-  onRetryQuestion: (id: number) => void;
+  taskContext?: number;
+  onRetryQuestion?: (id: number) => void;
 }) {
   const [receipt, setReceipt] = useState(immediate);
   const [error, setError] = useState("");
@@ -360,6 +370,6 @@ export function WrittenOpenAttempt({ userId, id, immediate, onRetryQuestion }: {
   }, [id, immediate, reload]);
   if (error) return <ErrorNotice message={error} onRetry={() => setReload((x) => x + 1)} />;
   if (!receipt) return <p role="status" className="card">正在读取作答记录…</p>;
-  return <WrittenPaper question={receipt.question} receipt={receipt} userId={userId}
-    onSubmitted={() => {}} onCheckVersion={() => {}} onRetryQuestion={() => onRetryQuestion(receipt.question_id)} />;
+  return <WrittenPaper question={receipt.question} receipt={receipt} userId={userId} assignmentId={taskContext}
+    onSubmitted={() => {}} onCheckVersion={() => {}} onRetryQuestion={onRetryQuestion && (() => onRetryQuestion(receipt.question_id))} />;
 }

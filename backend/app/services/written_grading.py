@@ -58,12 +58,13 @@ class AttemptInput(BaseModel):
     question_id: ObjectId
     version_id: UUID
     request_id: UUID
+    assignment_id: ObjectId | None = None
     response: Annotated[
         OptionResponse | BooleanResponse | TextResponse, Field(discriminator="kind")
     ]
 
     def digest(self) -> str:
-        content = self.model_dump(mode="json", exclude={"request_id"})
+        content = self.model_dump(mode="json", exclude={"request_id"}, exclude_none=True)
         serialized = json.dumps(content, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("ascii")).hexdigest()
 

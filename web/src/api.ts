@@ -549,6 +549,32 @@ export interface WrittenPublishedQuestion extends WrittenPublishedSummary {
   assets: string[];
   assets_by_path: Record<string, string>;
 }
+export interface WrittenAssignmentSummary {
+  id: number;
+  class_id: number;
+  class_name: string;
+  title: string;
+  due_at: string;
+  is_closed: boolean;
+}
+export interface WrittenAssignmentDetail extends WrittenAssignmentSummary {
+  questions: (WrittenPublishedSummary & { is_available: boolean })[];
+  rows: {
+    student_id: number;
+    name: string;
+    cells: ({ id: number; correct: boolean; earned_score: number } | null)[];
+    submitted_count: number;
+    correct_count: number;
+  }[];
+  summary: { students: number; submitted_all: number; correct_all: number };
+}
+export interface WrittenAssignmentInput {
+  class_id: number;
+  title: string;
+  due_at: string;
+  request_id: string;
+  questions: { id: number; version_id: string }[];
+}
 export interface WrittenAttemptResult {
   id: number;
   question_id: number;
@@ -566,6 +592,7 @@ export interface WrittenAttemptSummary extends WrittenAttemptResult {
   is_available: boolean;
 }
 export interface WrittenAttempt extends WrittenAttemptResult {
+  assignment_id: number | null;
   response: WrittenResponse;
   answer: WrittenReferenceAnswer;
   explanation: string;
@@ -655,6 +682,14 @@ export const api = {
     return get<{ items: WrittenPublishedSummary[]; has_more: boolean }>(`/written/questions?${params}`, { signal });
   },
   writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
+  writtenAssignments: (signal?: AbortSignal) => get<WrittenAssignmentSummary[]>("/written/assignments", { signal }),
+  writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
+  writtenAssignment: (id: number, signal?: AbortSignal) =>
+    get<WrittenAssignmentDetail>(`/written/assignments/${id}`, { signal }),
+  publishWrittenAssignment: (body: WrittenAssignmentInput, signal?: AbortSignal) =>
+    post<WrittenAssignmentSummary & { replayed: boolean }>("/written/assignments", body, { signal }),
+  writtenAssignmentQuestion: (assignmentId: number, id: number, signal?: AbortSignal) =>
+    get<WrittenPublishedQuestion>(`/written/assignments/${assignmentId}/questions/${id}`, { signal }),
   writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
   writtenProgress: (signal?: AbortSignal) =>
     get<{ items: WrittenProgressRow[]; attempt_limit: number }>("/written/progress", { signal }),
@@ -667,11 +702,11 @@ export const api = {
     if (beforeId !== undefined) params.set("before_id", String(beforeId));
     return get<{ items: WrittenAttemptSummary[]; has_more: boolean; next_before_id: number | null }>(`/written/attempts?${params}`, { signal });
   },
-  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse }, signal?: AbortSignal) =>
+  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse; assignment_id?: number }, signal?: AbortSignal) =>
     post<WrittenAttempt>("/written/attempts", body, { signal }),
   writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
     const path = url.slice(BASE.length);
-    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
+    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|assignments\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
       throw new Error("题图链接无效，请重新打开题目。");
     }
     return getBlob(path, signal);

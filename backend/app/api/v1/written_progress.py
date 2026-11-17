@@ -4,12 +4,12 @@ from fastapi import APIRouter, Response
 from sqlalchemy import case, func, select, tuple_
 
 from app.api.deps import SessionDep
-from app.api.v1.written_questions import PracticeStudent, visible_query
+from app.api.v1.written_questions import PracticeStudent
 from app.domain.models import WrittenAttempt, WrittenCandidate, WrittenImportBatch
 from app.domain.models import WrittenQuestion as Question
 from app.domain.models import WrittenQuestionVersion as Version
 from app.services.written_bank_storage import load_payload, load_snapshot
-from app.services.written_review import learning_topic
+from app.services.written_review import learning_topic, visible_query
 
 router = APIRouter(prefix="/written/progress", tags=["written-progress"])
 RECENT_LIMIT = 100

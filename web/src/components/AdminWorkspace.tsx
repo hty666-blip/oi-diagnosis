@@ -22,7 +22,7 @@ const managementTabs: [Tab, string][] = [
   ["runtime", "运行维护"], ["audit", "操作审计"],
 ];
 const roles = { student: "学生", teacher: "教练", admin: "管理员" };
-const actions: Record<string, string> = { "written.preview": "预览初赛题包", "written.stage": "暂存初赛候选题", "written.knowledge.create": "新建知识条目", "written.knowledge.save": "保存知识条目编辑稿", "written.knowledge.publish": "审核发布知识条目", "written.knowledge.unpublish": "下架知识条目", "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
+const actions: Record<string, string> = { "written.preview": "预览初赛题包", "written.stage": "暂存初赛候选题", "written_assignment.publish": "发布初赛专项", "written.knowledge.create": "新建知识条目", "written.knowledge.save": "保存知识条目编辑稿", "written.knowledge.publish": "审核发布知识条目", "written.knowledge.unpublish": "下架知识条目", "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
 const emptyAccount: AccountInput = { username: "", display_name: "", role: "student", password: "", class_id: null };
 
 export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: () => void; onReview: () => void }) {
