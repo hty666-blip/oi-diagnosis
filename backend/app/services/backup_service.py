@@ -39,6 +39,26 @@ WRITTEN_TABLES = {"written_import_batch", "written_candidate", "written_import_a
 REVIEW_TARGET_REVISION = "p012c638e4fa"
 REVIEW_TABLES = {"written_review_revision", "written_question", "written_question_version"}
 REVIEW_CANDIDATE_DEFAULTS = {"revision": 0, "draft_metadata": None, "reviewed_by": None, "reviewed_at": None}
+ATTEMPT_TARGET_REVISION = "q123d749f50b"
+ATTEMPT_TABLE = "written_attempt"
+BACKUP_COMPATIBILITY_STEPS = (
+    (RECEIPT_TARGET_REVISION, {RECEIPT_TABLE}),
+    (WRITTEN_TARGET_REVISION, WRITTEN_TABLES),
+    (REVIEW_TARGET_REVISION, REVIEW_TABLES),
+    (ATTEMPT_TARGET_REVISION, {ATTEMPT_TABLE}),
+)
+
+
+def added_backup_tables(source_revision: str, target_revision: str) -> set[str]:
+    if source_revision == target_revision:
+        return set()
+    versions = [RECEIPT_SOURCE_REVISION, *(revision for revision, _ in BACKUP_COMPATIBILITY_STEPS)]
+    if source_revision not in versions or target_revision not in versions:
+        raise BackupError("schema_mismatch")
+    source, target = versions.index(source_revision), versions.index(target_revision)
+    if source >= target:
+        raise BackupError("schema_mismatch")
+    return set().union(*(tables for _, tables in BACKUP_COMPATIBILITY_STEPS[source:target]))
 
 
 class BackupError(Exception):
@@ -178,24 +198,8 @@ class BackupIO:
             if not isinstance(payload, dict) or payload.get("format") != "oi-backup-v1":
                 raise BackupError("schema_mismatch")
             source_revision, target_revision = payload.get("revision"), current_revision()
-            compatible = (source_revision == RECEIPT_SOURCE_REVISION
-                          and target_revision == RECEIPT_TARGET_REVISION)
-            written_compatible = (target_revision == WRITTEN_TARGET_REVISION
-                                  and source_revision in {RECEIPT_SOURCE_REVISION, RECEIPT_TARGET_REVISION})
-            review_compatible = (target_revision == REVIEW_TARGET_REVISION
-                                 and source_revision in {RECEIPT_SOURCE_REVISION, RECEIPT_TARGET_REVISION, WRITTEN_TARGET_REVISION})
-            if source_revision != target_revision and not compatible and not written_compatible and not review_compatible:
-                raise BackupError("schema_mismatch")
             current_tables = {t.name for t in tables()}
-            added_tables = set()
-            if compatible or (written_compatible or review_compatible) and source_revision == RECEIPT_SOURCE_REVISION:
-                added_tables.add(RECEIPT_TABLE)
-            if written_compatible:
-                added_tables |= WRITTEN_TABLES
-            if review_compatible:
-                added_tables |= REVIEW_TABLES
-                if source_revision != WRITTEN_TARGET_REVISION:
-                    added_tables |= WRITTEN_TABLES
+            added_tables = added_backup_tables(source_revision, target_revision)
             expected_tables = current_tables - added_tables
             data = payload.get("tables")
             if (not isinstance(data, dict) or set(data) != expected_tables
@@ -205,7 +209,7 @@ class BackupIO:
                 for table in added_tables:
                     data[table] = []
                 payload["revision"] = target_revision
-            if review_compatible and source_revision == WRITTEN_TARGET_REVISION:
+            if REVIEW_TABLES.issubset(added_tables) and source_revision == WRITTEN_TARGET_REVISION:
                 for row in data["written_candidate"]:
                     if not isinstance(row, dict) or any(name in row for name in REVIEW_CANDIDATE_DEFAULTS) or row.get("review_status") != "needs_review":
                         raise BackupError("invalid_archive")

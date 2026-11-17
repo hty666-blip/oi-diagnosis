@@ -180,6 +180,14 @@ async function post<T>(url: string, body?: unknown, options?: RequestOptions): P
   return readJson<T>(await request(url, body, "POST", options));
 }
 
+async function getBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+  const { response, snapshot } = await request(url, undefined, "GET", { signal });
+  const blob = await response.blob();
+  if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+  if (snapshot) assertSession(snapshot);
+  return blob;
+}
+
 export interface Problem {
   pid: string;
   title: string;
@@ -505,7 +513,83 @@ export interface WrittenDetail {
   review: WrittenReviewState | null;
 }
 
+export type WrittenQuestionType = WrittenDraft["question_type"];
+export type WrittenResponse =
+  | { kind: "option" | "options"; option_ids: string[] }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "text"; value: string };
+export type WrittenReferenceAnswer = WrittenResponse
+  | { kind: "text"; accepted: string[]; normalization: "exact" | "trim_outer_whitespace" };
+export type WrittenAttemptView = "history" | "wrong" | "corrected";
+
+export interface WrittenPublishedSummary {
+  id: number;
+  revision: number;
+  version_id: string;
+  stem: string;
+  question_type: WrittenQuestionType;
+  level: "J" | "S";
+  score: number;
+}
+export interface WrittenPublishedQuestion extends WrittenPublishedSummary {
+  shared_stem: string;
+  options: { id: string; text: string }[];
+  assets: string[];
+  assets_by_path: Record<string, string>;
+}
+export interface WrittenAttemptResult {
+  id: number;
+  question_id: number;
+  version_id: string;
+  revision: number;
+  correct: boolean;
+  earned_score: number;
+  max_score: number;
+  submitted_at: string;
+}
+export interface WrittenAttemptSummary extends WrittenAttemptResult {
+  stem: string;
+  question_type: WrittenQuestionType;
+  level: "J" | "S";
+  is_available: boolean;
+}
+export interface WrittenAttempt extends WrittenAttemptResult {
+  response: WrittenResponse;
+  answer: WrittenReferenceAnswer;
+  explanation: string;
+  question: WrittenPublishedQuestion;
+  replayed?: boolean;
+}
+export interface WrittenCatalogFilter {
+  q: string;
+  level: "" | WrittenPublishedSummary["level"];
+  question_type: "" | WrittenQuestionType;
+}
+
 export const api = {
+  writtenCatalog: (offset: number, filters: WrittenCatalogFilter, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ offset: String(offset) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value);
+    }
+    return get<{ items: WrittenPublishedSummary[]; has_more: boolean }>(`/written/questions?${params}`, { signal });
+  },
+  writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
+  writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
+  writtenAttempts: (view: WrittenAttemptView, beforeId?: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ view });
+    if (beforeId !== undefined) params.set("before_id", String(beforeId));
+    return get<{ items: WrittenAttemptSummary[]; has_more: boolean; next_before_id: number | null }>(`/written/attempts?${params}`, { signal });
+  },
+  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse }, signal?: AbortSignal) =>
+    post<WrittenAttempt>("/written/attempts", body, { signal }),
+  writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
+    const path = url.slice(BASE.length);
+    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
+      throw new Error("题图链接无效，请重新打开题目。");
+    }
+    return getBlob(path, signal);
+  },
   writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
   writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
   writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
@@ -515,13 +599,8 @@ export const api = {
   writtenReviewHistory: (id: string, question: string, before?: number, signal?: AbortSignal) => get<{ items: { revision: number; actor_id: number; action: string; note: string; created_at: string }[]; has_more: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history${before == null ? "" : `?before=${before}`}`, { signal }),
   writtenHistoricalReview: (id: string, question: string, revision: number, signal?: AbortSignal) => get<{ revision: number; action: string; actor_id: number; note: string; snapshot: { draft: WrittenDraft } }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history/${revision}`, { signal }),
   writtenPublicationState: (id: number, expected_version: number, is_active: boolean) => post<WrittenPublication>(`/admin/written-bank/published/${id}/state`, { expected_version, is_active }),
-  writtenAsset: async (id: string, path: string, signal?: AbortSignal) => {
-    const result = await request(`/admin/written-bank/batches/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`, undefined, "GET", { signal });
-    const blob = await result.response.blob();
-    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
-    if (result.snapshot) assertSession(result.snapshot);
-    return blob;
-  },
+  writtenAsset: (id: string, path: string, signal?: AbortSignal) =>
+    getBlob(`/admin/written-bank/batches/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`, signal),
   runtimeJudging: (state = "all", q = "", offset = 0) => get<RuntimeJudging>(`/admin/runtime/judging?state=${state}&q=${encodeURIComponent(q)}&offset=${offset}`),
   runtimeJobAction: (id: number, action: "retry" | "cancel", job: RuntimeJob) => post(`/admin/runtime/judging/${id}/${action}`, { status: job.status, attempts: job.attempts, manual_retries: job.manual_retries }),
   runtimeJudgeCheck: (language: string) => post<{ ok: boolean; language: string; backend: string; checked_at: string }>(`/admin/runtime/judge-check?language=${language}`),

@@ -25,16 +25,26 @@ function math(source: string, key: string, displayMode = false): ReactNode {
   );
 }
 
-function inline(text: string, key: string): ReactNode[] {
+type ImageSource = (path: string) => string | undefined;
+
+function inline(text: string, key: string, imageSource?: ImageSource): ReactNode[] {
   const out: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`|\$(?!\$)[^$\n]+\$)/g;
+  const re = imageSource
+    ? /(!\[[^\]\n]*\]\(assets\/[^)\n]+\)|\*\*[^*]+\*\*|`[^`]+`|\$(?!\$)[^$\n]+\$)/g
+    : /(\*\*[^*]+\*\*|`[^`]+`|\$(?!\$)[^$\n]+\$)/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
     const tok = m[0];
-    if (tok.startsWith("**")) out.push(<strong key={`${key}-b${i}`}>{tok.slice(2, -2)}</strong>);
+    const image = imageSource && /^!\[([^\]\n]*)\]\((assets\/[^)\n]+)\)$/.exec(tok);
+    if (image) {
+      const src = imageSource?.(image[2]);
+      out.push(src
+        ? <img key={`${key}-i${i}`} className="written-asset" src={src} alt={image[1] || "题图"} />
+        : <span key={`${key}-i${i}`} className="muted">{image[1] || "题图"}</span>);
+    } else if (tok.startsWith("**")) out.push(<strong key={`${key}-b${i}`}>{tok.slice(2, -2)}</strong>);
     else if (tok.startsWith("`")) {
       out.push(<code key={`${key}-c${i}`} className="inline-code">{tok.slice(1, -1)}</code>);
     } else {
@@ -47,7 +57,7 @@ function inline(text: string, key: string): ReactNode[] {
   return out;
 }
 
-export default function Markdown({ text }: { text: string }) {
+export default function Markdown({ text, imageSource }: { text: string; imageSource?: ImageSource }) {
   const lines = (text || "").split("\n");
   const blocks: ReactNode[] = [];
   let para: string[] = [];
@@ -58,7 +68,7 @@ export default function Markdown({ text }: { text: string }) {
 
   const flushPara = () => {
     if (para.length) {
-      blocks.push(<p key={`p${key++}`}>{inline(para.join(" "), `p${key}`)}</p>);
+      blocks.push(<p key={`p${key++}`}>{inline(para.join(" "), `p${key}`, imageSource)}</p>);
       para = [];
     }
   };
@@ -67,7 +77,7 @@ export default function Markdown({ text }: { text: string }) {
       blocks.push(
         <ul key={`ul${key++}`}>
           {list.map((it, idx) => (
-            <li key={idx}>{inline(it, `li${key}-${idx}`)}</li>
+            <li key={idx}>{inline(it, `li${key}-${idx}`, imageSource)}</li>
           ))}
         </ul>
       );
@@ -143,7 +153,7 @@ export default function Markdown({ text }: { text: string }) {
       flushPara();
       flushList();
       const lvl = h[1].length;
-      const content = inline(h[2], `h${key}`);
+      const content = inline(h[2], `h${key}`, imageSource);
       if (lvl <= 2) blocks.push(<h3 key={`h${key++}`}>{content}</h3>);
       else blocks.push(<h4 key={`h${key++}`}>{content}</h4>);
       continue;

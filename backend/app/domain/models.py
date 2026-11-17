@@ -15,7 +15,9 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Double,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -157,6 +159,30 @@ class WrittenQuestionVersion(Base):
     review_revision: Mapped[int] = mapped_column(Integer)
     snapshot_metadata: Mapped[dict] = mapped_column(JSON)
     actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenAttempt(Base):
+    """学生签收的规则评分，绑定提交当时的题面与审核答案。"""
+
+    __tablename__ = "written_attempt"
+    __table_args__ = (
+        UniqueConstraint("student_id", "request_id", name="uq_written_attempt_request"),
+        Index("ix_written_attempt_student_order", "student_id", "id"),
+        Index("ix_written_attempt_student_question", "student_id", "question_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"))
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON)
+    question_summary: Mapped[dict] = mapped_column(JSON)
+    correct: Mapped[bool] = mapped_column(Boolean)
+    earned_score: Mapped[float] = mapped_column(Double)
+    max_score: Mapped[float] = mapped_column(Double)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 

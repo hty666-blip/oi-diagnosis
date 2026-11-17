@@ -19,6 +19,8 @@ from app.domain.models import HintMessageReceipt, HintSession, HintTurn, Problem
 from app.infra.db import configure_database_engine
 from app.services import backup_service
 from app.services.backup_service import (
+    ATTEMPT_TABLE,
+    ATTEMPT_TARGET_REVISION,
     MAGIC,
     RECEIPT_SOURCE_REVISION,
     RECEIPT_TABLE,
@@ -176,6 +178,78 @@ def test_old_candidate_backup_cannot_forge_review_state(decoder, monkeypatch, ch
         io.read(path, sha)
 
 
+def test_review_archive_gains_empty_attempts_without_rewriting_published_content(decoder, monkeypatch):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE})
+    monkeypatch.setattr(backup_service, "current_revision", lambda: ATTEMPT_TARGET_REVISION)
+    data = {name: [] for name in names - {ATTEMPT_TABLE}}
+    data["written_candidate"] = [
+        {"review_status": "approved", "revision": 3, "draft_metadata": {"digest": "saved-review"}}
+    ]
+    data["written_question_version"] = [{"id": "saved-version", "revision": 2}]
+    sha = archive_payload(
+        io, path, {"format": "oi-backup-v1", "revision": REVIEW_TARGET_REVISION, "tables": data}
+    )
+    restored = io.read(path, sha)
+    assert restored["source_revision"] == REVIEW_TARGET_REVISION
+    assert restored["revision"] == ATTEMPT_TARGET_REVISION
+    assert restored["tables"] == {**data, ATTEMPT_TABLE: []}
+
+    for wrong in [
+        {**data, ATTEMPT_TABLE: []},
+        {k: rows for k, rows in data.items() if k != "written_question_version"},
+    ]:
+        sha = archive_payload(
+            io, path, {"format": "oi-backup-v1", "revision": REVIEW_TARGET_REVISION, "tables": wrong}
+        )
+        with pytest.raises(BackupError, match="invalid_archive"):
+            io.read(path, sha)
+
+
+def test_current_archive_retains_pinned_attempts_and_rejects_future_revision(decoder, monkeypatch):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE})
+    monkeypatch.setattr(backup_service, "current_revision", lambda: ATTEMPT_TARGET_REVISION)
+    data = {name: [] for name in names}
+    data[ATTEMPT_TABLE] = [
+        {
+            "id": 5,
+            "student_id": 7,
+            "question_id": 9,
+            "version_id": "saved-version",
+            "request_id": "saved-request",
+            "response": {"kind": "text", "value": " 1 "},
+            "max_score": 2.5,
+            "earned_score": 0,
+            "correct": False,
+        }
+    ]
+    sha = archive_payload(
+        io, path, {"format": "oi-backup-v1", "revision": ATTEMPT_TARGET_REVISION, "tables": data}
+    )
+    assert io.read(path, sha)["tables"] == data
+    monkeypatch.setattr(backup_service, "current_revision", lambda: "future-head")
+    with pytest.raises(BackupError, match="schema_mismatch"):
+        io.read(path, sha)
+
+
+def test_pre_review_archive_still_restores_as_unreviewed_after_attempt_migration(decoder, monkeypatch):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE})
+    monkeypatch.setattr(backup_service, "current_revision", lambda: ATTEMPT_TARGET_REVISION)
+    data = {name: [] for name in names - REVIEW_TABLES - {ATTEMPT_TABLE}}
+    candidate = {"review_status": "needs_review", "record": {"id": "candidate-from-o"}}
+    data["written_candidate"] = [candidate]
+    sha = archive_payload(
+        io, path, {"format": "oi-backup-v1", "revision": WRITTEN_TARGET_REVISION, "tables": data}
+    )
+    restored = io.read(path, sha)
+    assert restored["source_revision"] == WRITTEN_TARGET_REVISION
+    assert restored["revision"] == ATTEMPT_TARGET_REVISION
+    assert restored["tables"]["written_candidate"] == [{**candidate, **REVIEW_CANDIDATE_DEFAULTS}]
+    assert all(restored["tables"][table] == [] for table in {*REVIEW_TABLES, ATTEMPT_TABLE})
+
+
 @pytest.fixture
 async def replay_restore_target(monkeypatch):
     url = make_url(os.environ["TEST_DATABASE_URL"])
@@ -237,7 +311,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES | REVIEW_TABLES:
+    for table in WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE}:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -249,7 +323,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == REVIEW_TARGET_REVISION
+    assert restored["restored_revision"] == ATTEMPT_TARGET_REVISION
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

@@ -30,6 +30,39 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { "Content-Type": "application/json" },
 });
 
+test("笔试交卷重试携带同一版本和原始填空文本", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, body: JSON.parse(options.body), token: options.headers.Authorization });
+    if (calls.length === 1) throw new TypeError("network interrupted");
+    return json({ id: 12, replayed: true });
+  };
+  const answer = {
+    question_id: 8, version_id: "a1234567-1234-1234-1234-123456789abc",
+    request_id: "b1234567-1234-1234-1234-123456789abc",
+    response: { kind: "text", value: " 8 " },
+  };
+  await assert.rejects(api.submitWrittenAttempt(answer));
+  assert.equal((await api.submitWrittenAttempt(answer)).id, 12);
+  assert.deepEqual(calls, Array(2).fill({
+    url: "/api/v1/written/attempts", body: answer, token: "Bearer local-test-token",
+  }));
+});
+
+test("笔试题图只允许受保护的题面与本人作答路径，切换账号拒绝迟到结果", async () => {
+  let finish;
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, blob: () => new Promise((resolve) => { finish = resolve; }),
+  });
+  assert.throws(() => api.writtenPublishedAsset("https://example.test/images/1"), /题图链接无效/);
+  assert.throws(() => api.writtenPublishedAsset("/api/v1/admin/written-bank/batches/test/asset"), /题图链接无效/);
+  const pending = api.writtenPublishedAsset("/api/v1/written/attempts/12/assets/0");
+  await new Promise((resolve) => setImmediate(resolve));
+  setSession("new-token", secondUser);
+  finish(new Blob(["synthetic"]));
+  await assert.rejects(pending, /登录已失效/);
+});
+
 test("笔试 ZIP 保留二进制并携带当前登录，暂存仅引用固定批次", async () => {
   const calls = [];
   const zip = new Blob([new Uint8Array([80, 75, 3, 4])]);

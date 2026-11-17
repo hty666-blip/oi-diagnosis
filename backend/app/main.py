@@ -77,6 +77,7 @@ app.include_router(operations.router, prefix="/api/v1")
 app.include_router(trainings.router, prefix="/api/v1")
 app.include_router(students.router, prefix="/api/v1")
 app.include_router(written_questions.router, prefix="/api/v1")
+app.include_router(written_questions.attempts_router, prefix="/api/v1")
 
 
 @app.exception_handler(SandboxError)

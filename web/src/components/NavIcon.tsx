@@ -1,5 +1,6 @@
-type Name = "trainings" | "submit" | "my" | "profiles" | "coach" | "admin";
+type Name = "trainings" | "submit" | "my" | "profiles" | "coach" | "admin" | "written";
 const paths: Record<Name, string> = {
+  written: "M5 4h14v16H5z M8 8l1 1 2-2 M13 8h3 M8 12l1 1 2-2 M13 12h3 M8 16h8",
   trainings: "M4 4h16v16H4z M4 9h16 M9 9v11",
   submit: "m9 7-5 5 5 5 M15 7l5 5-5 5",
   my: "M5 4h14v16H5z M8 8h8 M8 12h8 M8 16h5",

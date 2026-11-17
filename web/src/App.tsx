@@ -2,7 +2,7 @@ import { sameSource, shouldVerifySubmission, verificationRecovery, verifyWithRef
 import { indentedNewline, shouldSendMessage } from "./editor-input";
 import { emptyQuestionDraft, questionDraftStore } from "./question-draft";
 import { sendMessageWithHistory, type ChatMessage } from "./tutor-message";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import Login from "./Login";
 import TrainingWorkspace, { type TrainingPractice } from "./components/TrainingWorkspace";
 import StudentProfiles from "./components/StudentProfiles";
@@ -16,6 +16,7 @@ import SubmissionLineage from "./components/SubmissionLineage";
 import NavIcon from "./components/NavIcon";
 import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import JudgingQueuePanel from "./components/JudgingQueuePanel";
+import { rememberWrittenOpen, wasWrittenOpen } from "./written-practice";
 import {
   api, ApiError, cachedUser, checkSessionStorage, clearSession, messageOf, readLocal, removeLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
@@ -23,7 +24,14 @@ import {
   type SessionReply, type SubmissionLanguage, type SubmissionResult,
 } from "./api";
 
-type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles" | "password";
+const WrittenPractice = lazy(() => import("./components/WrittenPractice"));
+type View = "submit" | "my" | "coach" | "admin" | "trainings" | "profiles" | "password" | "written";
+
+function homeView(user: AuthUser): View {
+  if (user.role === "admin") return "admin";
+  if (user.role === "student" && wasWrittenOpen(user.id)) return "written";
+  return "trainings";
+}
 const LANGUAGES: { value: SubmissionLanguage; label: string }[] = [
   { value: "cpp17", label: "C++17" },
   { value: "c11", label: "C11" },
@@ -81,7 +89,7 @@ export default function App() {
       if (!active) return;
       // 请求已核对会话快照；验证身份不重新写共享存储，避免旧标签页覆盖新登录。
       setUser(current);
-      setView(current.role === "admin" ? "admin" : "trainings");
+      setView(homeView(current));
     }).catch((error: unknown) => {
       if (!active || (error instanceof Error && error.name === "AbortError")) return;
       clearSession(); setUser(null); setSessionNotice(messageOf(error));
@@ -89,20 +97,26 @@ export default function App() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (!checkingSession && user?.role === "student" && view !== "password") {
+      rememberWrittenOpen(user.id, view === "written");
+    }
+  }, [checkingSession, user, view]);
+
   if (checkingSession) return <div className="session-notice" role="status">正在验证登录状态…</div>;
 
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
     setSessionNotice("");
     setRestore(null);
-    setPractice(null); setTrainingTarget(undefined); setView(next.role === "admin" ? "admin" : "trainings");
+    setPractice(null); setTrainingTarget(undefined); setView(homeView(next));
   }} />{sessionNotice && <div className="session-notice" role="status">{sessionNotice}</div>}</>;
 
   if (user.must_change_password || view === "password") return <PasswordSettings required={!!user.must_change_password} onChanged={(next) => { setUser(next); setView(next.role === "admin" ? "admin" : "trainings"); }} onCancel={() => { if (user.must_change_password) { clearSession(); setUser(null); } else setView(user.role === "admin" ? "admin" : "trainings"); }} />;
 
-  const nav: { key: View; label: string }[] = user.role === "student"
-    ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
-    : [...(user.role === "admin" ? [{ key: "admin" as View, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
+  const nav: { key: Exclude<View, "password">; label: string }[] = user.role === "student"
+    ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "written", label: "初赛练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
+    : [...(user.role === "admin" ? [{ key: "admin" as const, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
   const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
 
   return (
@@ -114,7 +128,7 @@ export default function App() {
       </header>
       <aside className="sidebar">
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}><NavIcon name={item.key as "trainings" | "submit" | "my" | "profiles" | "coach" | "admin"} />{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}><NavIcon name={item.key} />{item.label}</button>)}
         </nav>
         <div className="sidebar-foot">
           <button className="ghost" onClick={() => setView("password")}>修改密码</button>
@@ -126,6 +140,9 @@ export default function App() {
         {view === "trainings" && <TrainingWorkspace user={user} initialTrainingId={trainingTarget} onPractice={openPractice} />}
         {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
+        {view === "written" && user.role === "student" && <Suspense fallback={<p role="status">正在打开初赛练习…</p>}>
+          <WrittenPractice key={user.id} userId={user.id} />
+        </Suspense>}
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminWorkspace onTeaching={() => setView("trainings")} onReview={() => setView("coach")} />}
       </main>
