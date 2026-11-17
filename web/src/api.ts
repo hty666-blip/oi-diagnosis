@@ -522,6 +522,18 @@ export type WrittenReferenceAnswer = WrittenResponse
   | { kind: "text"; accepted: string[]; normalization: "exact" | "trim_outer_whitespace" };
 export type WrittenAttemptView = "history" | "wrong" | "corrected";
 
+export interface WrittenProgressRow {
+  batch_id: string;
+  level: "J" | "S";
+  point: { id: string; name: string; prerequisites: string[] };
+  status: "practiced" | "needs_review" | "reviewed";
+  attempt_count: number;
+  latest_attempt_id: number;
+  last_error_id: number | null;
+  review_attempt_id: number | null;
+  next_question: { id: number; version_id: string } | null;
+}
+
 export interface WrittenPublishedSummary {
   id: number;
   revision: number;
@@ -644,6 +656,8 @@ export const api = {
   },
   writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
   writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
+  writtenProgress: (signal?: AbortSignal) =>
+    get<{ items: WrittenProgressRow[]; attempt_limit: number }>("/written/progress", { signal }),
   writtenHelpHistory: (id: number, before?: number, signal?: AbortSignal) =>
     get<WrittenHelpHistory>(`/written/attempts/${id}/help${before ? `?before_id=${before}` : ""}`, { signal }),
   askWrittenHelp: (id: number, body: { request_id: string; message: string; after_id: number | null }, signal?: AbortSignal) =>

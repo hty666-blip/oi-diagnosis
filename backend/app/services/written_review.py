@@ -31,6 +31,15 @@ CRITICAL_FLAGS = {
 }
 
 
+def learning_topic(point_id: str, nodes: dict[str, dict]) -> dict:
+    point = nodes[point_id]
+    return {
+        "id": point_id,
+        "name": point["name"][:160],
+        "prerequisites": [nodes[ref]["name"][:160] for ref in point.get("prerequisites", [])[:5]],
+    }
+
+
 class OptionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9_-]+$")
@@ -321,6 +330,8 @@ async def apply_review(session, batch, candidate, user, request: ReviewInput):
         }
         version_id = str(uuid4())
         metadata = save_payload(session, batch.id, snapshot, f"version:{version_id}")
+        nodes = {node["id"]: node for node in payload["knowledge_points"]["nodes"]}
+        metadata["learning_topic"] = learning_topic(draft["primary_knowledge_point_id"], nodes)
         session.add(
             WrittenQuestionVersion(
                 id=version_id,

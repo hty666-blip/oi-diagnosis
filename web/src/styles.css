@@ -880,6 +880,11 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-practice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .written-practice-list > .written-practice-actions { justify-content: end; margin-top: 16px; }
 .written-empty { padding: 12px 0; }
+.written-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.written-progress-heading h2 { margin: 0; }
+.written-progress tbody th { font-weight: 500; }
+.written-progress tbody small { display: block; margin-top: 4px; font-weight: 400; }
+.written-progress .btn-primary { width: auto; }
 .written-practice-paper { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
 .written-paper-content, .written-paper-answer { min-width: 0; overflow-wrap: anywhere; }
 .written-paper-content figure { margin: 16px 0; }

@@ -7,10 +7,11 @@ import { readWrittenPosition, rememberWrittenPosition, type WrittenList, type Wr
 import { ErrorNotice } from "./RecordUI";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
 import { StudentKnowledge } from "./WrittenKnowledge";
+import { WrittenProgress } from "./WrittenProgress";
 
 const emptyFilter: WrittenCatalogFilter = { q: "", level: "", question_type: "" };
-const listLabels: Record<WrittenList, string> = { bank: "题库", knowledge: "知识库", history: "作答记录", wrong: "待订正", corrected: "已订正" };
-const emptyMessages: Record<Exclude<WrittenList, "knowledge">, string> = {
+const listLabels: Record<WrittenList, string> = { bank: "题库", knowledge: "知识库", progress: "学习路线", history: "作答记录", wrong: "待订正", corrected: "已订正" };
+const emptyMessages: Record<"bank" | WrittenAttemptView, string> = {
   bank: "暂无已发布题目。题目审核发布后会出现在这里。",
   history: "暂无作答记录。打开题库选一道题开始练习。",
   wrong: "暂无待订正的题目。",
@@ -34,26 +35,27 @@ export default function WrittenPractice({ userId }: { userId: number }) {
   const [reload, setReload] = useState(0);
   const beforeId = cursors[cursors.length - 1];
   const inDetail = target !== null;
+  const isList = list !== "knowledge" && list !== "progress";
   const inBook = list === "wrong" || list === "corrected";
 
   useEffect(() => { rememberWrittenPosition(userId, position); }, [userId, position]);
 
   useEffect(() => {
-    if (inDetail || list === "knowledge") return;
+    if (inDetail || list === "knowledge" || list === "progress") return;
     const request = new AbortController();
     setLoading(true);
     setError("");
     setHasNext(false);
     setNextCursor(null);
-    async function load() {
+    async function load(view: "bank" | WrittenAttemptView) {
       try {
-        if (list === "bank") {
+        if (view === "bank") {
           const result = await api.writtenCatalog(offset, applied, request.signal);
           if (request.signal.aborted) return;
           setCatalog(result.items);
           setHasNext(result.has_more);
-        } else if (list !== "knowledge") {
-          const result = await api.writtenAttempts(list, beforeId, request.signal);
+        } else {
+          const result = await api.writtenAttempts(view, beforeId, request.signal);
           if (request.signal.aborted) return;
           setAttempts(result.items);
           setHasNext(result.has_more);
@@ -65,7 +67,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
         if (!request.signal.aborted) setLoading(false);
       }
     }
-    void load();
+    void load(list);
     return () => request.abort();
   }, [list, inDetail, offset, applied, beforeId, reload]);
 
@@ -96,6 +98,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     <nav className="admin-tabs" aria-label="初赛练习">
       <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
       <button className="ghost" type="button" aria-pressed={list === "knowledge"} onClick={() => showList("knowledge")}>知识库</button>
+      <button className="ghost" type="button" aria-pressed={list === "progress"} onClick={() => showList("progress")}>学习路线</button>
       <button className="ghost" type="button" aria-pressed={list === "history"} onClick={() => showList("history")}>作答记录</button>
       <button className="ghost" type="button" aria-pressed={inBook} onClick={() => showList(inBook ? list : "wrong")}>错题本</button>
     </nav>
@@ -104,7 +107,8 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
       onRetryQuestion={(id) => open({ kind: "question", id })} />}
     {list === "knowledge" && <StudentKnowledge />}
-    {!target && list !== "knowledge" && <div className="card written-practice-list">
+    {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}
+    {!target && isList && <div className="card written-practice-list">
       {list === "bank" && <form className="admin-actions written-practice-filters" onSubmit={(event) => {
         event.preventDefault();
         setOffset(0);
