@@ -856,6 +856,10 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-flags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 24px; margin: 16px 0; }
 .written-flags > div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .written-flags dd { margin: 0; font-variant-numeric: tabular-nums; }
+.written-coverage-controls { align-items: end; }
+.written-coverage-controls label { display: grid; gap: 6px; }
+.written-coverage-point { font-weight: 500; }
+.written-coverage-point small { display: block; margin-top: 4px; font-weight: 400; }
 .written-option { display: flex; align-items: baseline; gap: 12px; }
 .written-option p { margin: 6px 0; }
 .written-asset { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); }

@@ -533,6 +533,16 @@ export interface WrittenProgressRow {
   review_attempt_id: number | null;
   next_question: { id: number; version_id: string } | null;
 }
+export interface WrittenCoverageRow {
+  id: string;
+  name: string;
+  pending_j: number;
+  pending_s: number;
+  pending_unclassified: number;
+  published_j: number;
+  published_s: number;
+  article_revision: number | null;
+}
 
 export interface WrittenPublishedSummary {
   id: number;
@@ -714,7 +724,10 @@ export const api = {
   writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
   writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
   writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
-  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all") => get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}`, { signal }),
+  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all", pointId = "") =>
+    get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}${pointId ? `&point_id=${encodeURIComponent(pointId)}` : ""}`, { signal }),
+  writtenCoverage: (id: string, signal?: AbortSignal) =>
+    get<{ items: WrittenCoverageRow[]; unmapped_pending: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/coverage`, { signal }),
   writtenQuestion: (id: string, question: string, signal?: AbortSignal) => get<WrittenDetail>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}`, { signal }),
   writtenReview: (id: string, question: string, body: WrittenReviewInput) => post<WrittenDetail & { replayed: boolean; applied_revision: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/review`, body),
   writtenReviewHistory: (id: string, question: string, before?: number, signal?: AbortSignal) => get<{ items: { revision: number; actor_id: number; action: string; note: string; created_at: string }[]; has_more: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history${before == null ? "" : `?before=${before}`}`, { signal }),

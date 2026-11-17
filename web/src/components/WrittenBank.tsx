@@ -4,6 +4,7 @@ import Markdown from "../Markdown";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 import WrittenQuestionReview, { WrittenReviewHistory } from "./WrittenQuestionReview";
+import WrittenCoverage, { type WrittenCoveragePoint } from "./WrittenCoverage";
 
 const types: Record<string, string> = { single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空" };
 const flags: Record<string, string> = {
@@ -53,12 +54,14 @@ export default function WrittenBank() {
   const [query, setQuery] = useState(""), [paper, setPaper] = useState(""), [flagged, setFlagged] = useState(false);
   const [offset, setOffset] = useState(0);
   const [reviewStatus, setReviewStatus] = useState("all");
+  const [coverage, setCoverage] = useState(false);
+  const [topic, setTopic] = useState<WrittenCoveragePoint | null>(null);
   const [detailTab, setDetailTab] = useState<"preview" | "review" | "history">("preview"), [reviewBusy, setReviewBusy] = useState(false);
   const [detail, setDetail] = useState<WrittenDetail>(), [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const listRequest = useRef<AbortController>(), rowRequest = useRef<AbortController>(), detailRequest = useRef<AbortController>();
   const uploadRequest = useRef<AbortController>(), lock = useRef(false);
-  const applied = useRef({ q: "", p: "", f: false, s: "all" });
+  const applied = useRef({ q: "", p: "", f: false, s: "all", point: null as WrittenCoveragePoint | null });
   async function loadBatches() {
     listRequest.current?.abort(); const controller = new AbortController(); listRequest.current = controller;
     setBatchesLoading(true);
@@ -67,10 +70,14 @@ export default function WrittenBank() {
     finally { if (!controller.signal.aborted) setBatchesLoading(false); }
   }
   useEffect(() => { void loadBatches(); return () => { listRequest.current?.abort(); rowRequest.current?.abort(); detailRequest.current?.abort(); uploadRequest.current?.abort(); }; }, []);
-  async function load(id: string, next = 0, q = query, p = paper, f = flagged, s = reviewStatus) {
+  async function load(id: string, next = 0, q = query, p = paper, f = flagged, s = reviewStatus, point = topic) {
     rowRequest.current?.abort(); const controller = new AbortController(); rowRequest.current = controller;
     setLoading(true); setError("");
-    try { const value = await api.writtenQuestions(id, next, q, p, f, controller.signal, s); setPage(value); setOffset(next); applied.current = { q, p, f, s }; }
+    try {
+      const value = await api.writtenQuestions(id, next, q, p, f, controller.signal, s, point?.id);
+      if (controller.signal.aborted) return;
+      setPage(value); setOffset(next); applied.current = { q, p, f, s, point };
+    }
     catch (e) { if (!controller.signal.aborted) setError(messageOf(e)); }
     finally { if (!controller.signal.aborted) setLoading(false); }
   }
@@ -80,9 +87,9 @@ export default function WrittenBank() {
     const controller = new AbortController(); uploadRequest.current = controller;
     try {
       const value = await api.writtenPreview(file, controller.signal);
-      setImporting(false); setFile(undefined); setQuery(""); setPaper(""); setFlagged(false); setReviewStatus("all");
+      setImporting(false); setFile(undefined); setQuery(""); setPaper(""); setFlagged(false); setReviewStatus("all"); setTopic(null);
       setNotice(value.replayed ? "已恢复这份题包的导入记录。" : "预览已保存，请核对内容后暂存。预览保留 24 小时。");
-      await loadBatches(); await load(value.id, 0, "", "", false, "all");
+      await loadBatches(); await load(value.id, 0, "", "", false, "all", null);
     } catch (e) { if (!controller.signal.aborted) setError(messageOf(e)); }
     finally { lock.current = false; if (!controller.signal.aborted) setBusy(false); }
   }
@@ -112,16 +119,20 @@ export default function WrittenBank() {
   const statusLabel = (status: string) => ({ needs_review: "待审核", approved: "审核通过", withdrawn: "已撤下" } as Record<string, string>)[status] ?? status;
   function reviewSaved(next: WrittenDetail) {
     setDetail(next);
-    if (page) void load(page.batch.id, offset, applied.current.q, applied.current.p, applied.current.f, applied.current.s);
+    if (page) void load(page.batch.id, offset, applied.current.q, applied.current.p, applied.current.f, applied.current.s, applied.current.point);
     void loadBatches();
   }
   return <section className="card written-bank">
     <div className="page-head"><h2>初赛题库</h2><div className="admin-actions"><button className="ghost" disabled={disabled} onClick={() => void loadBatches()}>刷新批次</button><button className="btn-primary" disabled={disabled} onClick={() => { setImporting(true); setError(""); }}>导入 ZIP 题包</button></div></div>
     {error && !importing && <ErrorNotice message={error} />}{notice && <p role="status">{notice}</p>}
-    <div className="table-scroll"><table><thead><tr><th>导入时间</th><th>试卷 / 题目</th><th>状态</th><th>操作</th></tr></thead><tbody>{batches.map((b) => <tr key={b.id}><td>{new Date(b.created_at).toLocaleString("zh-CN")}</td><td>{b.summary.papers} 套 / {b.summary.questions} 题</td><td>{b.status === "staged" ? `已暂存 · 已发布 ${b.summary.published_count} 题` : "待确认预览"}</td><td><button className="ghost" disabled={disabled} onClick={() => { setQuery(""); setPaper(""); setFlagged(false); setReviewStatus("all"); void load(b.id, 0, "", "", false, "all"); }}>查看</button></td></tr>)}</tbody></table></div>
+    <div className="table-scroll"><table><thead><tr><th>导入时间</th><th>试卷 / 题目</th><th>状态</th><th>操作</th></tr></thead><tbody>{batches.map((b) => <tr key={b.id}><td>{new Date(b.created_at).toLocaleString("zh-CN")}</td><td>{b.summary.papers} 套 / {b.summary.questions} 题</td><td>{b.status === "staged" ? `已暂存 · 已发布 ${b.summary.published_count} 题` : "待确认预览"}</td><td><button className="ghost" disabled={disabled} onClick={() => { setQuery(""); setPaper(""); setFlagged(false); setReviewStatus("all"); setTopic(null); void load(b.id, 0, "", "", false, "all", null); }}>查看</button></td></tr>)}</tbody></table></div>
     {batchesLoading && <p role="status">正在读取导入记录…</p>}{!batchesLoading && !batches.length && <p className="muted">暂无导入记录。支持包含题目、题组、试卷、知识目录、来源及清单的 ZIP 包。</p>}{truncated && <p className="muted">显示最近 50 个批次。</p>}
     {page && <section className="admin-section">
-      <div className="page-head"><h3>{page.batch.status === "staged" ? "待审核候选题" : "导入预览"}</h3>{page.batch.status === "preview" && <button className="btn-primary" disabled={disabled} onClick={() => void stage()}>确认暂存 {page.batch.summary.questions} 道题</button>}</div>
+      <div className="page-head"><h3>{page.batch.status === "staged" ? "候选题" : "导入预览"}</h3>
+        {page.batch.status === "preview"
+          ? <button className="btn-primary" disabled={disabled} onClick={() => void stage()}>确认暂存 {page.batch.summary.questions} 道题</button>
+          : <button type="button" className="ghost" disabled={disabled} onClick={() => setCoverage(true)}>知识点覆盖</button>}
+      </div>
       <p>{page.batch.summary.questions} 条原始题目 · {page.batch.summary.groups} 个题组 · {page.batch.summary.assets} 张图片 · {page.batch.summary.knowledge_leaves} 个知识点</p>
       <p className="muted">原始记录独立保留。审核通过 {page.batch.summary.approved_count ?? 0} 题，已发布 {page.batch.summary.published_count} 题，已撤下 {page.batch.summary.withdrawn_count ?? 0} 题。</p>
       <details><summary>复核事项</summary><dl className="written-flags">{Object.entries(page.batch.summary.flags).map(([key, count]) => <div key={key}><dt>{label(key)}</dt><dd>{count}</dd></div>)}</dl></details>
@@ -131,11 +142,21 @@ export default function WrittenBank() {
         <label>审核状态<select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value)} disabled={disabled}><option value="all">全部状态</option><option value="needs_review">待审核</option><option value="approved">审核通过</option><option value="withdrawn">已撤下</option></select></label>
         <label className="catalog-check"><input type="checkbox" checked={flagged} onChange={(e) => setFlagged(e.target.checked)} disabled={disabled} />仅看有复核标记的题</label><button className="ghost" disabled={disabled}>查询</button>
       </form>
+      {topic && <div className="admin-actions">
+        <span>原始主知识点 · {topic.name}</span>
+        <button type="button" className="ghost" disabled={disabled} onClick={() => {
+          setTopic(null); void load(page.batch.id, 0, query, paper, flagged, reviewStatus, null);
+        }}>清除知识点筛选</button>
+      </div>}
       {loading && <p role="status">正在加载候选题…</p>}
       <div className="table-scroll"><table><thead><tr><th>编号 / 题干</th><th>级别 / 题型</th><th>状态 / 来源标记</th><th>操作</th></tr></thead><tbody>{page.items.map((q) => <tr key={q.external_id}><td><div className="muted">{q.external_id}</div><div className="written-excerpt">{q.stem}</div></td><td>{q.level ?? "未分组"} · {types[q.question_type] ?? q.question_type}</td><td>{statusLabel(q.review_status)}<div className="muted">{q.issues.map(label).join("、")}</div></td><td><button className="ghost" disabled={disabled} onClick={() => void openQuestion(q.external_id)}>核对题目</button></td></tr>)}</tbody></table></div>
       {!page.items.length && <p>没有符合条件的题目。</p>}
-      <div className="admin-actions"><span>共 {page.total} 条，当前 {page.items.length ? offset + 1 : 0}–{offset + page.items.length}</span><button className="ghost" disabled={disabled || offset === 0} onClick={() => void load(page.batch.id, Math.max(0, offset - 25), applied.current.q, applied.current.p, applied.current.f, applied.current.s)}>上一页</button><button className="ghost" disabled={disabled || !page.has_more} onClick={() => void load(page.batch.id, offset + 25, applied.current.q, applied.current.p, applied.current.f, applied.current.s)}>下一页</button></div>
+      <div className="admin-actions"><span>共 {page.total} 条，当前 {page.items.length ? offset + 1 : 0}–{offset + page.items.length}</span><button className="ghost" disabled={disabled || offset === 0} onClick={() => void load(page.batch.id, Math.max(0, offset - 25), applied.current.q, applied.current.p, applied.current.f, applied.current.s, applied.current.point)}>上一页</button><button className="ghost" disabled={disabled || !page.has_more} onClick={() => void load(page.batch.id, offset + 25, applied.current.q, applied.current.p, applied.current.f, applied.current.s, applied.current.point)}>下一页</button></div>
     </section>}
+    {page && coverage && <WrittenCoverage batchId={page.batch.id} onClose={() => setCoverage(false)} onPick={(point) => {
+      setCoverage(false); setQuery(""); setPaper(""); setFlagged(false); setReviewStatus("needs_review"); setTopic(point);
+      void load(page.batch.id, 0, "", "", false, "needs_review", point);
+    }} />}
     {importing && <Modal title="导入初赛题包" busy={busy} error={error} onClose={() => { setImporting(false); setFile(undefined); setError(""); }}>
       <label className="admin-form">ZIP 题包<input type="file" accept=".zip,application/zip" disabled={busy} onChange={(e) => { const next = e.target.files?.[0]; setFile(undefined); setError(""); if (next && next.size > 16 * 1024 * 1024) setError("ZIP 题包不得超过 16 MB。"); else setFile(next); }} /></label>
       <p className="muted">先校验清单、图片和题组关系，再保存预览。审核状态与来源记录原样保留。</p>

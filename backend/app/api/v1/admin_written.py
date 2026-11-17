@@ -29,6 +29,7 @@ from app.services.written_bank_storage import (
     save_bytes,
     save_payload,
 )
+from app.services.written_coverage import batch_coverage, source_point
 from app.services.written_review import (
     ReviewInput,
     apply_review,
@@ -233,6 +234,7 @@ async def questions(
     paper_id: str = Query("", max_length=80),
     flagged: bool = False,
     state: str = Query("all", pattern="^(all|needs_review|approved|withdrawn)$"),
+    point_id: str = Query("", max_length=80, pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,79})?$"),
 ):
     batch = await get_batch(session, user, batch_id)
     # 有界快照使预览和暂存页面口径相同；正文分页输出，避免整包返回给浏览器。
@@ -250,6 +252,8 @@ async def questions(
             where.append(func.json_length(WrittenCandidate.issues) > 0)
         if state != "all":
             where.append(WrittenCandidate.review_status == state)
+        if point_id:
+            where.append(source_point == point_id)
         total = await session.scalar(
             select(func.count()).select_from(WrittenCandidate).where(*where)
         )
@@ -291,6 +295,7 @@ async def questions(
         if (not q or q.casefold() in (r["stem"] + r["id"]).casefold())
         and (not paper_id or r["paper_id"] == paper_id)
         and (not flagged or bool(reviews[r["id"]]["issues"]))
+        and (not point_id or r.get("primary_knowledge_point_id") == point_id)
     ]
     return {
         "batch": batch_out(batch),
@@ -299,6 +304,16 @@ async def questions(
         "has_more": len(filtered) > offset + 25,
         "papers": [{"id": p["id"], "title": p.get("title", p["id"])} for p in payload["papers"]],
     }
+
+
+@router.get("/batches/{batch_id}/coverage")
+async def knowledge_coverage(batch_id: UUID, response: Response, session: SessionDep, user: AdminUser):
+    response.headers["Cache-Control"] = "no-store"
+    batch = await get_batch(session, user, batch_id)
+    if batch.status != "staged":
+        raise HTTPException(409, "请先暂存题包，再查看知识点覆盖")
+    payload = await load_payload(session, batch)
+    return await batch_coverage(session, batch.id, payload["knowledge_points"]["nodes"])
 
 
 @router.get("/batches/{batch_id}/questions/{question_id}")
