@@ -11,7 +11,7 @@ import { ErrorNotice } from "./RecordUI";
 const starter = "请讲一下我这道题为什么答错。";
 const storage = { getItem: readLocal, setItem: writeLocal, removeItem: removeLocal };
 const references: Record<WrittenHelpReference, string> = {
-  attempt: "本次作答", review: "审核答案与解析", knowledge: "知识卡",
+  attempt: "本次作答", review: "审核答案与解析", knowledge: "知识卡", prior_practice: "同知识点作答",
 };
 const reasons: Record<string, string> = {
   model_disabled: "平台 AI 已关闭", model_unconfigured: "平台 AI 尚未配置",
@@ -42,6 +42,12 @@ function DiscussionTurn({ turn }: { turn: WrittenHelpTurn }) {
             <p>{tutor.references.map((key) => references[key]).join("、")}</p>
           </dd></div>
         </dl>
+        {Boolean(turn.prior_practice?.length) && <section className="written-help-knowledge">
+          <h3>此前同知识点作答</h3>
+          <ul>{turn.prior_practice?.map((item) => <li key={item.attempt_id}>
+            题目 #{item.question_id} · v{item.revision} · {item.correct ? "答对" : "答错"}
+          </li>)}</ul>
+        </section>}
         {turn.knowledge && <section className="written-help-knowledge">
           <h3>{turn.knowledge.title} <small>v{turn.knowledge.revision}</small></h3>
           <Markdown text={turn.knowledge.body} />

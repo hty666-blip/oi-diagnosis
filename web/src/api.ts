@@ -609,7 +609,7 @@ export interface WrittenAttempt extends WrittenAttemptResult {
   question: WrittenPublishedQuestion;
   replayed?: boolean;
 }
-export type WrittenHelpReference = "attempt" | "review" | "knowledge";
+export type WrittenHelpReference = "attempt" | "review" | "knowledge" | "prior_practice";
 interface WrittenHelpSource {
   source: "model" | "reviewed";
   references: WrittenHelpReference[];
@@ -624,6 +624,13 @@ export interface WrittenHelpTurn {
   diagnosis: WrittenHelpSource & { hypothesis: string | null; focus: string };
   tutor: WrittenHelpSource & { reply: string };
   knowledge: { id: string; entry_id?: number; revision: number; title: string; body: string; source?: string; excerpt?: boolean } | null;
+  prior_practice?: {
+    attempt_id: number;
+    question_id: number;
+    revision: number;
+    question_type: WrittenQuestionType;
+    correct: boolean;
+  }[];
   replayed?: boolean;
 }
 export interface WrittenHelpHistory {

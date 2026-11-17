@@ -10,10 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from test_written_attempts import attempt, publish, single, submit
 from test_written_bank_import import make_records, make_zip, preview
-from test_written_review import approval, detail, review
+from test_written_progress import publish as publish_candidate
+from test_written_review import approval, detail, review, staged
 
 from app.api.v1 import written_help
-from app.domain.models import User, WrittenHelpTurn
+from app.domain.models import User, WrittenHelpTurn, WrittenQuestionVersion
 from app.gateway.llm import LLMClient
 from app.infra.db import get_session
 from app.main import app
@@ -29,6 +30,62 @@ async def wrong_attempt(ctx, question=None):
 
 def request_body(message="请讲一下我这道题为什么答错。", after_id=None):
     return {"request_id": str(uuid4()), "after_id": after_id, "message": message}
+
+
+async def test_both_agents_receive_only_earlier_same_topic_practice(api_context, monkeypatch):
+    ctx = api_context
+    records = make_records()
+    first = records["questions.jsonl"][0]
+    records["questions.jsonl"].append({**first, "id": "other-level", "level": "S"})
+    root = await staged(ctx, records)
+    earlier = await publish_candidate(ctx, root, "q1")
+    current = await publish_candidate(ctx, root, "q2")
+    other_level = await publish_candidate(ctx, root, "other-level")
+    records["questions.jsonl"][0]["stem"] += "另一个题包"
+    other_batch = await publish_candidate(ctx, await staged(ctx, records), "q1")
+    version = await ctx.session.get(WrittenQuestionVersion, earlier["version_id"])
+    version.snapshot_metadata = {k: v for k, v in version.snapshot_metadata.items() if k != "learning_topic"}
+    await ctx.session.flush()
+
+    result = await submit(ctx, attempt(earlier, single("B")))
+    expected = [{
+        "attempt_id": result.json()["id"], "question_id": earlier["id"],
+        "revision": earlier["revision"], "question_type": "single_choice", "correct": False,
+    }]
+    for question, learner in ((earlier, ctx.users.peer), (other_level, None), (other_batch, None)):
+        assert (await submit(ctx, attempt(question, single("A")), learner)).status_code == 200
+    url = await wrong_attempt(ctx, current)
+    assert (await submit(ctx, attempt(earlier, single("A")))).status_code == 200
+    packets = []
+
+    def completion(request):
+        packet = json.loads(json.loads(request.content)["messages"][1]["content"])
+        packets.append(packet)
+        response = (
+            {"reply": "此前这道同类题答错了。我们从本题的条件开始看。", "references": ["prior_practice"]}
+            if "diagnosis" in packet else
+            {"focus": "联结本人的前一次同类题练习", "references": ["prior_practice", "attempt"]}
+        )
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(response)}}]})
+
+    async def client(*args, **kwargs):
+        return LLMClient(base_url="https://mock.test", api_key="mock-only", model="mock",
+                         transport=httpx.MockTransport(completion))
+
+    monkeypatch.setattr(written_help, "runtime_client", client)
+    body = request_body("我以前做过这类题吗？")
+    response = await ctx.client.post(url, headers=ctx.headers(), json=body)
+    assert response.status_code == 200, response.text
+    assert len(packets) == 2
+    assert all(packet["prior_practice"] == expected for packet in packets)
+    assert packets[1]["diagnosis"]["references"] == ["prior_practice", "attempt"]
+    saved = response.json()
+    assert saved["prior_practice"] == expected
+    assert saved["tutor"]["source"] == "model"
+    replay = await ctx.client.post(url, headers=ctx.headers(), json=body)
+    assert replay.json()["prior_practice"] == expected and len(packets) == 2
+    history = await ctx.client.get(url, headers=ctx.headers())
+    assert history.json()["items"][0]["prior_practice"] == expected
 
 
 async def test_distinct_model_roles_pass_real_diagnosis_and_replay_without_duplicate_calls(

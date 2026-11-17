@@ -17,6 +17,7 @@ from app.domain.models import User, WrittenAttempt, WrittenHelpTurn
 from app.gateway.llm import LLMClient
 from app.services.runtime_ai import observe_call, runtime_client
 from app.services.written_bank_storage import load_snapshot
+from app.services.written_history import earlier_practice
 from app.services.written_knowledge import help_knowledge
 
 router = APIRouter(prefix="/written/attempts", tags=["written-help"])
@@ -173,6 +174,7 @@ async def ask(
     await session.commit()
     snapshot = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
     knowledge, managed = await help_knowledge(session, version.batch_id, snapshot)
+    practice = await earlier_practice(session, attempt, version.batch_id, snapshot)
     evidence = WrittenEvidence.from_snapshot(
         snapshot,
         attempt.response,
@@ -180,6 +182,7 @@ async def ask(
         attempt.max_score,
         knowledge=knowledge,
         use_demo_card=not managed,
+        prior_practice=practice,
     )
     client = await runtime_client(session, factory=lambda **kwargs: LLMClient(timeout=12, **kwargs))
     await session.commit()
