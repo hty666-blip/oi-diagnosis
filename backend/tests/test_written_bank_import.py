@@ -152,6 +152,31 @@ def make_zip(records=None, *, extra=None, invalid_hash=False):
     return buffer.getvalue()
 
 
+async def test_answer_source_filter_keeps_preview_and_staged_review_status_separate(api_context):
+    ctx = api_context
+    records = make_records()
+    records["questions.jsonl"][0]["answer_status"] = "official_cross_checked"
+    batch = await preview(ctx, make_zip(records))
+    root = f"/api/v1/admin/written-bank/batches/{batch['id']}"
+    headers = ctx.headers(ctx.users.admin)
+
+    async def filtered(source, state="all"):
+        response = await ctx.client.get(
+            root + "/questions", params={"answer_status": source, "state": state},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["items"]
+
+    [official] = await filtered("official_cross_checked")
+    assert official["external_id"] == "q1" and official["review_status"] == "needs_review"
+    assert not await filtered("official_cross_checked", "approved")
+    assert (await ctx.client.post(root + "/stage", headers=headers)).status_code == 200
+    [conflict] = await filtered("conflict", "needs_review")
+    assert conflict["external_id"] == "q2" and "answer_conflict" in conflict["issues"]
+    assert not await filtered("reference_cross_checked")
+
+
 def test_package_preserves_raw_data_and_separates_variants():
     records = make_records()
     payload, summary, assets = package.parse_package(make_zip(records))

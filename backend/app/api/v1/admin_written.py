@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -39,6 +40,7 @@ from app.services.written_review import (
 )
 
 router = APIRouter(prefix="/admin/written-bank", tags=["admin-written-bank"])
+AnswerSourceStatus = Literal["official_cross_checked", "reference_cross_checked", "conflict", "provided_unverified"]
 
 
 def batch_out(batch, stats=None):
@@ -235,6 +237,7 @@ async def questions(
     flagged: bool = False,
     state: str = Query("all", pattern="^(all|needs_review|approved|withdrawn)$"),
     point_id: str = Query("", max_length=80, pattern=r"^(?:[A-Za-z0-9][A-Za-z0-9_.-]{0,79})?$"),
+    answer_status: AnswerSourceStatus | None = None,
 ):
     batch = await get_batch(session, user, batch_id)
     # 有界快照使预览和暂存页面口径相同；正文分页输出，避免整包返回给浏览器。
@@ -254,6 +257,8 @@ async def questions(
             where.append(WrittenCandidate.review_status == state)
         if point_id:
             where.append(source_point == point_id)
+        if answer_status:
+            where.append(WrittenCandidate.record["answer_status"].as_string() == answer_status)
         total = await session.scalar(
             select(func.count()).select_from(WrittenCandidate).where(*where)
         )
@@ -292,10 +297,12 @@ async def questions(
     filtered = [
         r
         for r in records
-        if (not q or q.casefold() in (r["stem"] + r["id"]).casefold())
+        if state in {"all", "needs_review"}
+        and (not q or q.casefold() in (r["stem"] + r["id"]).casefold())
         and (not paper_id or r["paper_id"] == paper_id)
         and (not flagged or bool(reviews[r["id"]]["issues"]))
         and (not point_id or r.get("primary_knowledge_point_id") == point_id)
+        and (not answer_status or r.get("answer_status") == answer_status)
     ]
     return {
         "batch": batch_out(batch),

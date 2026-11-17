@@ -731,8 +731,11 @@ export const api = {
   writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
   writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
   writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
-  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all", pointId = "") =>
-    get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}${pointId ? `&point_id=${encodeURIComponent(pointId)}` : ""}`, { signal }),
+  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all", source?: { pointId?: string; answerStatus?: string }) => {
+    const point = source?.pointId ? `&point_id=${encodeURIComponent(source.pointId)}` : "";
+    const answer = source?.answerStatus ? `&answer_status=${encodeURIComponent(source.answerStatus)}` : "";
+    return get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}${point}${answer}`, { signal });
+  },
   writtenCoverage: (id: string, signal?: AbortSignal) =>
     get<{ items: WrittenCoverageRow[]; unmapped_pending: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/coverage`, { signal }),
   writtenQuestion: (id: string, question: string, signal?: AbortSignal) => get<WrittenDetail>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}`, { signal }),
