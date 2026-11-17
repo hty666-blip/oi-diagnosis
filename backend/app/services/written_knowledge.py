@@ -1,10 +1,20 @@
 """仅按同一题包及知识点匹配当前审核版本。"""
 
+from fastapi import HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
-from app.domain.models import WrittenKnowledgeEntry, WrittenKnowledgeVersion
+from app.domain.models import (
+    WrittenKnowledgeEntry,
+    WrittenKnowledgeVersion,
+    WrittenQuestion,
+    WrittenQuestionVersion,
+)
+from app.services.written_bank_storage import snapshot_primary_point
+from app.services.written_review import visible_query
+
+PRACTICE_LIMIT = 6
 
 
 def published_query():
@@ -33,6 +43,31 @@ def public_article(entry: WrittenKnowledgeEntry, version: WrittenKnowledgeVersio
         "source": version.source,
         "published_at": version.created_at,
     }
+
+
+async def related_practice(session, entry):
+    topic = WrittenQuestionVersion.snapshot_metadata["learning_topic"]["id"].as_string()
+    catalog = (
+        visible_query().where(WrittenQuestionVersion.batch_id == entry.batch_id)
+        .order_by(WrittenQuestion.id)
+    )
+    matches = list((await session.execute(
+        catalog.where(topic == entry.point_id).limit(PRACTICE_LIMIT)
+    )).all())
+    if len(matches) < PRACTICE_LIMIT:
+        legacy = await session.execute(catalog.where(topic.is_(None)).limit(100))
+        for question, version in legacy:
+            try:
+                point = await snapshot_primary_point(session, entry.batch_id, version.snapshot_metadata)
+            except HTTPException as failure:
+                if failure.status_code != 409:
+                    raise
+                continue
+            if point == entry.point_id:
+                matches.append((question, version))
+                if len(matches) == PRACTICE_LIMIT:
+                    break
+    return matches
 
 
 async def help_knowledge(session: AsyncSession, batch_id: str, snapshot: dict):

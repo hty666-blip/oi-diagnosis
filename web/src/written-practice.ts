@@ -27,8 +27,8 @@ export function rememberWrittenOpen(userId: number, open: boolean) {
 export function readWrittenPosition(userId: number): WrittenPosition {
   try {
     const value = JSON.parse(sessionStorage.getItem(positionKey(userId)) ?? "null");
-    if (value?.list === "knowledge" || value?.list === "assignments") return { list: value.list, target: null };
-    if (value && ["bank", "progress", "history", "wrong", "corrected"].includes(value.list)) {
+    if (value?.list === "assignments") return { list: "assignments", target: null };
+    if (value && ["bank", "knowledge", "progress", "history", "wrong", "corrected"].includes(value.list)) {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {
         if (target.kind === "attempt") return { list: value.list, target: { kind: "attempt", id: target.id } };

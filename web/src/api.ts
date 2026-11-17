@@ -651,7 +651,9 @@ export interface KnowledgeSummary {
   revision: number;
   published_at: string;
 }
-export interface PublishedKnowledge extends KnowledgeSummary, KnowledgeArticle {}
+export interface PublishedKnowledge extends KnowledgeSummary, KnowledgeArticle {
+  related_questions?: WrittenPublishedSummary[];
+}
 export interface AdminKnowledgeSummary {
   id: number;
   batch_id: string;

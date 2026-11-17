@@ -860,6 +860,10 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-coverage-controls label { display: grid; gap: 6px; }
 .written-coverage-point { font-weight: 500; }
 .written-coverage-point small { display: block; margin-top: 4px; font-weight: 400; }
+.knowledge-practice { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 12px; }
+.knowledge-practice ul { list-style: none; padding: 0; margin: 0; }
+.knowledge-practice li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.knowledge-practice li > button { flex: 0 0 auto; }
 .written-option { display: flex; align-items: baseline; gap: 12px; }
 .written-option p { margin: 6px 0; }
 .written-asset { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); }

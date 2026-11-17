@@ -10,7 +10,7 @@ from app.domain.models import (
     WrittenQuestion,
     WrittenQuestionVersion,
 )
-from app.services.written_bank_storage import load_snapshot
+from app.services.written_bank_storage import snapshot_primary_point
 from app.services.written_knowledge import published_query
 from app.services.written_review import visible_query
 
@@ -43,11 +43,7 @@ async def batch_coverage(session, batch_id, nodes):
         ).where(WrittenQuestionVersion.batch_id == batch_id)
     )
     for metadata, level in rows:
-        if topic := metadata.get("learning_topic"):
-            point = topic["id"]
-        else:
-            snapshot = await load_snapshot(session, batch_id, metadata)
-            point = snapshot["primary_knowledge_point_id"]
+        point = await snapshot_primary_point(session, batch_id, metadata)
         published[(point, level)] += 1
 
     articles = dict((await session.execute(

@@ -73,3 +73,10 @@ async def load_snapshot(session, batch_id: str, metadata: dict) -> dict:
         return json.loads(raw)
     except (ValueError, zlib.error) as exc:
         raise HTTPException(409, "候选快照无法恢复，请重新导入") from exc
+
+
+async def snapshot_primary_point(session, batch_id: str, metadata: dict) -> str | None:
+    if topic := metadata.get("learning_topic"):
+        return topic["id"]
+    snapshot = await load_snapshot(session, batch_id, metadata)
+    return snapshot.get("primary_knowledge_point_id")

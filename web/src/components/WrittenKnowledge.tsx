@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, messageOf, type AdminKnowledge, type AdminKnowledgeSummary,
-  type KnowledgeArticle, type KnowledgeSummary, type PublishedKnowledge, type WrittenBatch,
+  type KnowledgeArticle, type KnowledgeSummary, type PublishedKnowledge, type WrittenBatch, type WrittenPublishedSummary,
 } from "../api";
 import Markdown from "../Markdown";
 import Modal from "./Modal";
@@ -11,16 +11,19 @@ const pageSize = 25;
 const emptyArticle: KnowledgeArticle = { title: "", body: "", source: "" };
 type KnowledgeRow = KnowledgeSummary | AdminKnowledgeSummary;
 type DirectoryResult = { items: KnowledgeRow[]; has_more: boolean };
+type OpenPractice = (question: WrittenPublishedSummary) => void;
 
-export function StudentKnowledge() {
-  return <KnowledgeDirectory admin={false} />;
+export function StudentKnowledge({ active, onPractice }: { active: boolean; onPractice: OpenPractice }) {
+  return <div hidden={!active}><KnowledgeDirectory admin={false} active={active} onPractice={onPractice} /></div>;
 }
 
 export default function AdminWrittenKnowledge() {
   return <KnowledgeDirectory admin />;
 }
 
-function KnowledgeDirectory({ admin }: { admin: boolean }) {
+function KnowledgeDirectory({ admin, active = true, onPractice }: {
+  admin: boolean; active?: boolean; onPractice?: OpenPractice;
+}) {
   const [page, setPage] = useState<DirectoryResult>({ items: [], has_more: false });
   const [query, setQuery] = useState("");
   const [q, setQ] = useState("");
@@ -72,10 +75,10 @@ function KnowledgeDirectory({ admin }: { admin: boolean }) {
       <button type="button" className="ghost" disabled={loading || offset === 0} onClick={() => setOffset(offset - pageSize)}>上一页</button>
       <button type="button" className="ghost" disabled={loading || !page.has_more || !!error} onClick={() => setOffset(offset + pageSize)}>下一页</button>
     </div>}
-    {selected !== null && (admin
+    {active && selected !== null && (admin
       ? <KnowledgeEditor entryId={selected === "new" ? undefined : selected} onClose={() => setSelected(null)}
         onChanged={() => setReload((value) => value + 1)} />
-      : typeof selected === "number" && <KnowledgeReader id={selected} onClose={() => setSelected(null)} />)}
+      : typeof selected === "number" && <KnowledgeReader id={selected} onClose={() => setSelected(null)} onPractice={onPractice} />)}
   </section>;
 }
 
@@ -88,7 +91,9 @@ function ArticleText({ article }: { article: PublishedKnowledge }) {
   </article>;
 }
 
-function KnowledgeReader({ id, onClose }: { id: number; onClose: () => void }) {
+function KnowledgeReader({ id, onClose, onPractice }: {
+  id: number; onClose: () => void; onPractice?: OpenPractice;
+}) {
   const [article, setArticle] = useState<PublishedKnowledge>();
   const [error, setError] = useState("");
   useEffect(() => {
@@ -99,7 +104,19 @@ function KnowledgeReader({ id, onClose }: { id: number; onClose: () => void }) {
     return () => request.abort();
   }, [id]);
   return <Modal title="阅读知识条目" wide onClose={onClose} error={error}>
-    {article ? <ArticleText article={article} /> : !error && <p role="status">正在读取条目…</p>}
+    {article ? <>
+      <ArticleText article={article} />
+      {onPractice && <section className="knowledge-practice">
+        <h3>同知识点练习</h3>
+        {article.related_questions?.length ? <ul>
+          {article.related_questions.map((question) => <li key={question.id}>
+            <div><div className="written-excerpt">{question.stem}</div><small className="muted">CSP-{question.level} · {question.score} 分</small></div>
+            <button className="ghost" type="button" onClick={() => onPractice(question)}
+              aria-label={`练习题目 #${question.id}`}>开始作答</button>
+          </li>)}
+        </ul> : <p className="muted">该知识点暂无已上架的练习。</p>}
+      </section>}
+    </> : !error && <p role="status">正在读取条目…</p>}
   </Modal>;
 }
 

@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 
 from app.domain.models import WrittenAttempt, WrittenQuestionVersion
-from app.services.written_bank_storage import load_snapshot
+from app.services.written_bank_storage import snapshot_primary_point
 
 
 async def earlier_practice(session, attempt, batch_id, snapshot):
@@ -35,15 +35,14 @@ async def earlier_practice(session, attempt, batch_id, snapshot):
     for ident, question_id, revision, correct, question_type, metadata in await session.execute(stmt):
         if question_id in found:
             continue
-        if not metadata.get("learning_topic"):
-            try:
-                prior = await load_snapshot(session, batch_id, metadata)
-            except HTTPException as failure:
-                if failure.status_code != 409:
-                    raise
-                continue
-            if prior.get("primary_knowledge_point_id") != primary:
-                continue
+        try:
+            point = await snapshot_primary_point(session, batch_id, metadata)
+        except HTTPException as failure:
+            if failure.status_code != 409:
+                raise
+            continue
+        if point != primary:
+            continue
         found[question_id] = {
             "attempt_id": ident,
             "question_id": question_id,

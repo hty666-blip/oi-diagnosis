@@ -108,7 +108,8 @@ export default function WrittenPractice({ userId }: { userId: number }) {
       onVersion={(version) => setPosition({ list, target: { ...target, version } })} onSubmitted={showResult} />}
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
       onRetryQuestion={(id) => open({ kind: "question", id })} />}
-    {list === "knowledge" && <StudentKnowledge />}
+    {list === "knowledge" && <StudentKnowledge active={!target}
+      onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "assignments" && <WrittenAssignments studentId={userId} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}
     {!target && isList && <div className="card written-practice-list">

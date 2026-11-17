@@ -10,11 +10,12 @@ from sqlalchemy.orm import defer
 
 from app.api.deps import AdminUser, CurrentUser, SessionDep
 from app.api.input_types import ObjectPathId
+from app.api.v1.written_questions import summary
 from app.core.text_validation import StorageText
 from app.domain.models import WrittenImportBatch, WrittenKnowledgeEntry, WrittenKnowledgeVersion
 from app.services.admin_service import admin_write, audit
 from app.services.written_bank_storage import load_payload
-from app.services.written_knowledge import public_article, published_query
+from app.services.written_knowledge import public_article, published_query, related_practice
 
 admin_router = APIRouter(prefix="/admin/written-knowledge", tags=["admin-written-knowledge"])
 router = APIRouter(prefix="/written/knowledge", tags=["written-knowledge"])
@@ -303,4 +304,9 @@ async def read(entry_id: ObjectPathId, session: SessionDep, user: CurrentUser, r
     if row is None:
         raise HTTPException(404, "条目尚未发布或已下架")
     response.headers["Cache-Control"] = "no-store"
-    return public_article(*row)
+    entry, version = row
+    questions = await related_practice(session, entry)
+    return {
+        **public_article(entry, version),
+        "related_questions": [summary(question, revision) for question, revision in questions],
+    }

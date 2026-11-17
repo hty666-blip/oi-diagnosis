@@ -3,7 +3,10 @@
 from test_written_attempts import publish
 from test_written_bank_import import make_records
 from test_written_help import request_body, wrong_attempt
+from test_written_progress import publish as publish_candidate
 from test_written_review import staged
+
+from app.domain.models import WrittenQuestionVersion
 
 ADMIN = "/api/v1/admin/written-knowledge"
 PUBLIC = "/api/v1/written/knowledge"
@@ -123,3 +126,42 @@ async def test_help_cites_same_batch_and_preserves_edition_after_unpublish(api_c
     assert after["knowledge"] is None
     history = (await ctx.client.get(url, headers=ctx.headers())).json()["items"]
     assert history[1]["knowledge"] == citation["knowledge"]
+
+
+async def test_article_practice_stays_in_batch_and_follows_current_reviewed_topic(api_context):
+    ctx = api_context
+    records = make_records()
+    records["knowledge_points.json"]["nodes"].append(
+        {"id": "TIME", "name": "时间复杂度", "is_leaf": True}
+    )
+    root = await staged(ctx, records)
+    entry = await create_entry(ctx, root.split("/")[-1])
+    assert (await edit(ctx, entry, "publish", ARTICLE)).status_code == 200
+    first = await publish_candidate(ctx, root, "q1")
+    version = await ctx.session.get(WrittenQuestionVersion, first["version_id"])
+    version.snapshot_metadata = {k: v for k, v in version.snapshot_metadata.items() if k != "learning_topic"}
+    await ctx.session.flush()
+    records["questions.jsonl"][0]["stem"] += "其他批次"
+    await publish_candidate(ctx, await staged(ctx, records), "q1")
+
+    async def linked():
+        response = await ctx.client.get(f"{PUBLIC}/{entry['id']}", headers=ctx.headers())
+        assert response.status_code == 200, response.text
+        assert response.headers["cache-control"] == "no-store"
+        return response.json()["related_questions"]
+
+    [one] = await linked()
+    assert one["id"] == first["id"] and one["version_id"] == first["version_id"]
+    assert "answer" not in one and "explanation" not in one
+    await publish_candidate(ctx, root, "q1", primary_knowledge_point_id="TIME")
+    assert not await linked()
+    next_question = await publish_candidate(ctx, root, "q2")
+    [one] = await linked()
+    assert one["id"] == next_question["id"]
+    state = await ctx.client.post(
+        f"/api/v1/admin/written-bank/published/{one['id']}/state",
+        json={"expected_version": next_question["catalog_version"], "is_active": False},
+        headers=ctx.headers(ctx.users.admin),
+    )
+    assert state.status_code == 200, state.text
+    assert not await linked()
