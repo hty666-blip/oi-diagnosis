@@ -9,9 +9,10 @@ import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenType
 import { StudentKnowledge } from "./WrittenKnowledge";
 import { WrittenProgress } from "./WrittenProgress";
 import WrittenAssignments from "./WrittenAssignments";
+import WrittenPapers from "./WrittenPapers";
 
 const emptyFilter: WrittenCatalogFilter = { q: "", level: "", question_type: "" };
-const listLabels: Record<WrittenList, string> = { bank: "题库", assignments: "班级任务", knowledge: "知识库", progress: "学习路线", history: "作答记录", wrong: "待订正", corrected: "已订正" };
+const listLabels: Record<WrittenList, string> = { bank: "题库", papers: "试卷", assignments: "班级任务", knowledge: "知识库", progress: "学习路线", history: "作答记录", wrong: "待订正", corrected: "已订正" };
 const emptyMessages: Record<"bank" | WrittenAttemptView, string> = {
   bank: "暂无已发布题目。题目审核发布后会出现在这里。",
   history: "暂无作答记录。打开题库选一道题开始练习。",
@@ -36,7 +37,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
   const [reload, setReload] = useState(0);
   const beforeId = cursors[cursors.length - 1];
   const inDetail = target !== null;
-  const isList = list !== "knowledge" && list !== "progress" && list !== "assignments";
+  const isList = list !== "papers" && list !== "knowledge" && list !== "progress" && list !== "assignments";
   const inBook = list === "wrong" || list === "corrected";
 
   useEffect(() => { rememberWrittenPosition(userId, position); }, [userId, position]);
@@ -98,6 +99,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
       <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
+      <button className="ghost" type="button" aria-pressed={list === "papers"} onClick={() => showList("papers")}>试卷</button>
       <button className="ghost" type="button" aria-pressed={list === "assignments"} onClick={() => showList("assignments")}>班级任务</button>
       <button className="ghost" type="button" aria-pressed={list === "knowledge"} onClick={() => showList("knowledge")}>知识库</button>
       <button className="ghost" type="button" aria-pressed={list === "progress"} onClick={() => showList("progress")}>学习路线</button>
@@ -109,6 +111,8 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
       onRetryQuestion={(id) => open({ kind: "question", id })} />}
     {list === "knowledge" && <StudentKnowledge active={!target}
+      onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
+    {list === "papers" && <WrittenPapers active={!target}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "assignments" && <WrittenAssignments studentId={userId} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}

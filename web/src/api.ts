@@ -553,6 +553,21 @@ export interface WrittenPublishedSummary {
   level: "J" | "S";
   score: number;
 }
+export interface WrittenPaperSummary {
+  batch_id: string;
+  id: string;
+  title: string;
+  level: "J" | "S" | null;
+  year: number | null;
+  source_kind: "official_paper" | "simulation" | "original_demo" | null;
+  published_count: number;
+  candidate_count: number;
+}
+export interface WrittenPaperQuestions {
+  paper: WrittenPaperSummary;
+  items: (WrittenPublishedSummary & { number: string })[];
+  has_more: boolean;
+}
 export interface WrittenPublishedQuestion extends WrittenPublishedSummary {
   shared_stem: string;
   options: { id: string; text: string }[];
@@ -701,6 +716,10 @@ export const api = {
     return get<{ items: WrittenPublishedSummary[]; has_more: boolean }>(`/written/questions?${params}`, { signal });
   },
   writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
+  writtenPapers: (offset: number, signal?: AbortSignal) =>
+    get<{ items: WrittenPaperSummary[]; has_more: boolean }>(`/written/papers?offset=${offset}`, { signal }),
+  writtenPaperQuestions: (batch: string, paper: string, offset: number, signal?: AbortSignal) =>
+    get<WrittenPaperQuestions>(`/written/papers/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}?offset=${offset}`, { signal }),
   writtenAssignments: (signal?: AbortSignal) => get<WrittenAssignmentSummary[]>("/written/assignments", { signal }),
   writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
   writtenAssignment: (id: number, signal?: AbortSignal) =>
