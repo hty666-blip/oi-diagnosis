@@ -49,6 +49,24 @@ test("笔试交卷重试携带同一版本和原始填空文本", async () => {
   }));
 });
 
+test("笔试追问重放保留所属作答和上轮编号", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    calls.push({ url, body });
+    return json({ id: 17 });
+  };
+  const request = { request_id: "b1234567-1234-1234-1234-123456789abc", after_id: 5, message: "还是不会\n能举个例子吗？" };
+  await api.askWrittenHelp(8, request);
+  await api.askWrittenHelp(8, request);
+  await api.writtenHelpHistory(8, 5);
+  assert.deepEqual(calls, [
+    { url: "/api/v1/written/attempts/8/help", body: request },
+    { url: "/api/v1/written/attempts/8/help", body: request },
+    { url: "/api/v1/written/attempts/8/help?before_id=5", body: undefined },
+  ]);
+});
+
 test("笔试题图只允许受保护的题面与本人作答路径，切换账号拒绝迟到结果", async () => {
   let finish;
   globalThis.fetch = async () => ({

@@ -560,6 +560,28 @@ export interface WrittenAttempt extends WrittenAttemptResult {
   question: WrittenPublishedQuestion;
   replayed?: boolean;
 }
+export type WrittenHelpReference = "attempt" | "review" | "knowledge";
+interface WrittenHelpSource {
+  source: "model" | "reviewed";
+  references: WrittenHelpReference[];
+  reason: string;
+}
+export interface WrittenHelpTurn {
+  id: number;
+  request_id: string;
+  question: string;
+  created_at: string;
+  comparison: string;
+  diagnosis: WrittenHelpSource & { hypothesis: string | null; focus: string };
+  tutor: WrittenHelpSource & { reply: string };
+  knowledge: { id: string; revision: number; title: string; body: string } | null;
+  replayed?: boolean;
+}
+export interface WrittenHelpHistory {
+  items: WrittenHelpTurn[];
+  before_id: number | null;
+  pending: { request_id: string; message: string; retry_at: string } | null;
+}
 export interface WrittenCatalogFilter {
   q: string;
   level: "" | WrittenPublishedSummary["level"];
@@ -576,6 +598,10 @@ export const api = {
   },
   writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
   writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
+  writtenHelpHistory: (id: number, before?: number, signal?: AbortSignal) =>
+    get<WrittenHelpHistory>(`/written/attempts/${id}/help${before ? `?before_id=${before}` : ""}`, { signal }),
+  askWrittenHelp: (id: number, body: { request_id: string; message: string; after_id: number | null }, signal?: AbortSignal) =>
+    post<WrittenHelpTurn>(`/written/attempts/${id}/help`, body, { signal }),
   writtenAttempts: (view: WrittenAttemptView, beforeId?: number, signal?: AbortSignal) => {
     const params = new URLSearchParams({ view });
     if (beforeId !== undefined) params.set("before_id", String(beforeId));

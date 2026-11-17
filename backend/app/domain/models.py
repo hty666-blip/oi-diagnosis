@@ -186,6 +186,25 @@ class WrittenAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
+class WrittenHelpTurn(Base):
+    """一次追问、诊断交接和讲解，按照本人作答保存。"""
+
+    __tablename__ = "written_help_turn"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "request_id", name="uq_written_help_request"),
+        Index("ix_written_help_order", "attempt_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"))
+    request_id: Mapped[str] = mapped_column(String(36))
+    question: Mapped[str] = mapped_column(Text)
+    claim_token: Mapped[str] = mapped_column(String(36))
+    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
+    result: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
 class WrittenImportAsset(Base):
     __tablename__ = "written_import_asset"
     __table_args__ = (UniqueConstraint("batch_id", "path", name="uq_written_asset"),)

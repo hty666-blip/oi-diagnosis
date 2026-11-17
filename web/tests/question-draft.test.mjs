@@ -27,6 +27,19 @@ test("切换学生或提交不会读取他人的问题，切回原记录仍可�
   assert.equal(b.store(1, 5).read().content, "另一份代码的问题");
 });
 
+test("同一个学生和相同编号的编程提交与笔试追问各自恢复", () => {
+  const b = browser();
+  const code = b.store(1, 4);
+  const written = questionDraftStore(b.storage, 1, 4, () => uuid(2), "written");
+  const first = code.write("这行怎么运行？");
+  const second = written.write("二叉树的层怎么数？");
+  assert.deepEqual(code.read(), first);
+  assert.deepEqual(written.read(), second);
+  written.acknowledge(second.id);
+  assert.equal(written.read().content, "");
+  assert.deepEqual(code.read(), first);
+});
+
 test("只有发送成功确认才清理当前问题，不影响其他记录", () => {
   const b = browser(), store = b.store();
   const sent = store.write("已发送的问题");

@@ -6,6 +6,7 @@ import {
 import Markdown from "../Markdown";
 import { writtenAnswerStore, type WrittenAnswerDraft } from "../written-practice";
 import { ErrorNotice } from "./RecordUI";
+import WrittenHelp from "./WrittenHelp";
 
 export const writtenTypeLabel: Record<WrittenQuestionType, string> = {
   single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空",
@@ -232,6 +233,7 @@ function WrittenPaper({ question, receipt, userId, onSubmitted, onCheckVersion, 
           onSubmitted={onSubmitted} onCheckVersion={onCheckVersion} />
       </>}
     </section>
+    {receipt && !receipt.correct && <WrittenHelp key={receipt.id} userId={userId} attemptId={receipt.id} />}
   </div>;
 }
 

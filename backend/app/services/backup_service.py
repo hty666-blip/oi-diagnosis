@@ -41,11 +41,14 @@ REVIEW_TABLES = {"written_review_revision", "written_question", "written_questio
 REVIEW_CANDIDATE_DEFAULTS = {"revision": 0, "draft_metadata": None, "reviewed_by": None, "reviewed_at": None}
 ATTEMPT_TARGET_REVISION = "q123d749f50b"
 ATTEMPT_TABLE = "written_attempt"
+HELP_TARGET_REVISION = "r234e85a061c"
+HELP_TABLE = "written_help_turn"
 BACKUP_COMPATIBILITY_STEPS = (
     (RECEIPT_TARGET_REVISION, {RECEIPT_TABLE}),
     (WRITTEN_TARGET_REVISION, WRITTEN_TABLES),
     (REVIEW_TARGET_REVISION, REVIEW_TABLES),
     (ATTEMPT_TARGET_REVISION, {ATTEMPT_TABLE}),
+    (HELP_TARGET_REVISION, {HELP_TABLE}),
 )
 
 

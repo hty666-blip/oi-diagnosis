@@ -21,6 +21,8 @@ from app.services import backup_service
 from app.services.backup_service import (
     ATTEMPT_TABLE,
     ATTEMPT_TARGET_REVISION,
+    HELP_TABLE,
+    HELP_TARGET_REVISION,
     MAGIC,
     RECEIPT_SOURCE_REVISION,
     RECEIPT_TABLE,
@@ -233,6 +235,19 @@ def test_current_archive_retains_pinned_attempts_and_rejects_future_revision(dec
         io.read(path, sha)
 
 
+def test_attempt_archive_gains_empty_help_history_and_preserves_scores(decoder, monkeypatch):
+    io, path, names = decoder
+    names.update(WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE, HELP_TABLE})
+    monkeypatch.setattr(backup_service, "current_revision", lambda: HELP_TARGET_REVISION)
+    data = {name: [] for name in names - {HELP_TABLE}}
+    data[ATTEMPT_TABLE] = [{"id": 5, "correct": False, "earned_score": 0, "max_score": 2}]
+    sha = archive_payload(io, path, {"format": "oi-backup-v1", "revision": ATTEMPT_TARGET_REVISION, "tables": data})
+    restored = io.read(path, sha)
+    assert restored["source_revision"] == ATTEMPT_TARGET_REVISION
+    assert restored["revision"] == HELP_TARGET_REVISION
+    assert restored["tables"] == {**data, HELP_TABLE: []}
+
+
 def test_pre_review_archive_still_restores_as_unreviewed_after_attempt_migration(decoder, monkeypatch):
     io, path, names = decoder
     names.update(WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE})
@@ -311,7 +326,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE}:
+    for table in WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -323,7 +338,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == ATTEMPT_TARGET_REVISION
+    assert restored["restored_revision"] == HELP_TARGET_REVISION
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

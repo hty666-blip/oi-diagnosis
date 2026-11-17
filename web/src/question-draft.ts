@@ -12,9 +12,10 @@ function canonicalId(value: string): string {
 }
 
 export function questionDraftStore(storage: DraftStorage, userId: number, submissionId: number,
-  newId: () => string = () => crypto.randomUUID()) {
-  const key = `oi-question-draft:${userId}:${submissionId}`;
-  const acknowledgedKey = (id: string) => `oi-question-draft-ack:${userId}:${submissionId}:${id}`;
+  newId: () => string = () => crypto.randomUUID(), scope: "code" | "written" = "code") {
+  const prefix = scope === "written" ? "oi-written-question-draft" : "oi-question-draft";
+  const key = `${prefix}:${userId}:${submissionId}`;
+  const acknowledgedKey = (id: string) => `${prefix}-ack:${userId}:${submissionId}:${id}`;
   function write(content: string): QuestionDraft {
     const draft = { id: canonicalId(newId()), content };
     try { storage.setItem(key, JSON.stringify(draft)); } catch { /* 禁用存储时仍能编辑与发送。 */ }

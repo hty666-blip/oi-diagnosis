@@ -25,6 +25,7 @@ from app.api.v1 import (
     system,
     trainings,
     tutor,
+    written_help,
     written_questions,
 )
 from app.capabilities.sandbox import SandboxError
@@ -78,6 +79,7 @@ app.include_router(trainings.router, prefix="/api/v1")
 app.include_router(students.router, prefix="/api/v1")
 app.include_router(written_questions.router, prefix="/api/v1")
 app.include_router(written_questions.attempts_router, prefix="/api/v1")
+app.include_router(written_help.router, prefix="/api/v1")
 
 
 @app.exception_handler(SandboxError)
