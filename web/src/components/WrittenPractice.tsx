@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import {
-  api, messageOf, type WrittenAttempt, type WrittenAttemptSummary,
+  api, messageOf, type WrittenAttempt, type WrittenAttemptSummary, type WrittenAttemptView,
   type WrittenCatalogFilter, type WrittenPublishedSummary,
 } from "../api";
 import { readWrittenPosition, rememberWrittenPosition, type WrittenList, type WrittenTarget } from "../written-practice";
 import { ErrorNotice } from "./RecordUI";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
+import { StudentKnowledge } from "./WrittenKnowledge";
 
 const emptyFilter: WrittenCatalogFilter = { q: "", level: "", question_type: "" };
-const listLabels: Record<WrittenList, string> = { bank: "题库", history: "作答记录", wrong: "待订正", corrected: "已订正" };
-const emptyMessages: Record<WrittenList, string> = {
+const listLabels: Record<WrittenList, string> = { bank: "题库", knowledge: "知识库", history: "作答记录", wrong: "待订正", corrected: "已订正" };
+const emptyMessages: Record<Exclude<WrittenList, "knowledge">, string> = {
   bank: "暂无已发布题目。题目审核发布后会出现在这里。",
   history: "暂无作答记录。打开题库选一道题开始练习。",
   wrong: "暂无待订正的题目。",
@@ -38,7 +39,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
   useEffect(() => { rememberWrittenPosition(userId, position); }, [userId, position]);
 
   useEffect(() => {
-    if (inDetail) return;
+    if (inDetail || list === "knowledge") return;
     const request = new AbortController();
     setLoading(true);
     setError("");
@@ -51,7 +52,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
           if (request.signal.aborted) return;
           setCatalog(result.items);
           setHasNext(result.has_more);
-        } else {
+        } else if (list !== "knowledge") {
           const result = await api.writtenAttempts(list, beforeId, request.signal);
           if (request.signal.aborted) return;
           setAttempts(result.items);
@@ -94,6 +95,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
       <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
+      <button className="ghost" type="button" aria-pressed={list === "knowledge"} onClick={() => showList("knowledge")}>知识库</button>
       <button className="ghost" type="button" aria-pressed={list === "history"} onClick={() => showList("history")}>作答记录</button>
       <button className="ghost" type="button" aria-pressed={inBook} onClick={() => showList(inBook ? list : "wrong")}>错题本</button>
     </nav>
@@ -101,7 +103,8 @@ export default function WrittenPractice({ userId }: { userId: number }) {
       onVersion={(version) => setPosition({ list, target: { ...target, version } })} onSubmitted={showResult} />}
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
       onRetryQuestion={(id) => open({ kind: "question", id })} />}
-    {!target && <div className="card written-practice-list">
+    {list === "knowledge" && <StudentKnowledge />}
+    {!target && list !== "knowledge" && <div className="card written-practice-list">
       {list === "bank" && <form className="admin-actions written-practice-filters" onSubmit={(event) => {
         event.preventDefault();
         setOffset(0);
@@ -163,7 +166,7 @@ function CatalogRows({ rows, filtered, onOpen, onRefresh }: {
 
 function AttemptRows({ rows, list, onOpen, onRetry, onBank }: {
   rows: WrittenAttemptSummary[];
-  list: Exclude<WrittenList, "bank">;
+  list: WrittenAttemptView;
   onOpen: (id: number) => void;
   onRetry: (id: number) => void;
   onBank: () => void;

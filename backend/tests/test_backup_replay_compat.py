@@ -23,6 +23,8 @@ from app.services.backup_service import (
     ATTEMPT_TARGET_REVISION,
     HELP_TABLE,
     HELP_TARGET_REVISION,
+    KNOWLEDGE_TABLES,
+    KNOWLEDGE_TARGET_REVISION,
     MAGIC,
     RECEIPT_SOURCE_REVISION,
     RECEIPT_TABLE,
@@ -326,7 +328,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES | REVIEW_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
+    for table in WRITTEN_TABLES | REVIEW_TABLES | KNOWLEDGE_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -338,7 +340,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == HELP_TARGET_REVISION
+    assert restored["restored_revision"] == KNOWLEDGE_TARGET_REVISION
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

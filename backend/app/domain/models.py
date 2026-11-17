@@ -205,6 +205,42 @@ class WrittenHelpTurn(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
+class WrittenKnowledgeEntry(Base):
+    """同一批次的叶子知识点只有一条编辑稿和一个当前公开版本。"""
+
+    __tablename__ = "written_knowledge_entry"
+    __table_args__ = (UniqueConstraint("batch_id", "point_id", name="uq_written_knowledge_point"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    point_id: Mapped[str] = mapped_column(String(80))
+    point_name: Mapped[str] = mapped_column(String(160))
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(500))
+    edit_version: Mapped[int] = mapped_column(Integer, default=1)
+    published_revision: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+
+
+class WrittenKnowledgeVersion(Base):
+    __tablename__ = "written_knowledge_version"
+    __table_args__ = (
+        UniqueConstraint("entry_id", "revision", name="uq_written_knowledge_revision"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("written_knowledge_entry.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(500))
+    review_note: Mapped[str] = mapped_column(String(400))
+    reviewer_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
 class WrittenImportAsset(Base):
     __tablename__ = "written_import_asset"
     __table_args__ = (UniqueConstraint("batch_id", "path", name="uq_written_asset"),)

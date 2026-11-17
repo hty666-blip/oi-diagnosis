@@ -574,13 +574,41 @@ export interface WrittenHelpTurn {
   comparison: string;
   diagnosis: WrittenHelpSource & { hypothesis: string | null; focus: string };
   tutor: WrittenHelpSource & { reply: string };
-  knowledge: { id: string; revision: number; title: string; body: string } | null;
+  knowledge: { id: string; entry_id?: number; revision: number; title: string; body: string; source?: string; excerpt?: boolean } | null;
   replayed?: boolean;
 }
 export interface WrittenHelpHistory {
   items: WrittenHelpTurn[];
   before_id: number | null;
   pending: { request_id: string; message: string; retry_at: string } | null;
+}
+export interface KnowledgeArticle {
+  title: string;
+  body: string;
+  source: string;
+}
+export interface KnowledgeSummary {
+  id: number;
+  point_id: string;
+  point_name: string;
+  title: string;
+  revision: number;
+  published_at: string;
+}
+export interface PublishedKnowledge extends KnowledgeSummary, KnowledgeArticle {}
+export interface AdminKnowledgeSummary {
+  id: number;
+  batch_id: string;
+  point_id: string;
+  point_name: string;
+  title: string;
+  edit_version: number;
+  published_revision: number;
+  is_active: boolean;
+}
+export interface AdminKnowledge extends AdminKnowledgeSummary {
+  article: KnowledgeArticle;
+  editions: { revision: number; title: string; published_at: string }[];
 }
 export interface WrittenCatalogFilter {
   q: string;
@@ -589,6 +617,24 @@ export interface WrittenCatalogFilter {
 }
 
 export const api = {
+  writtenKnowledge: (q: string, offset: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ q, offset: String(offset) });
+    return get<{ items: KnowledgeSummary[]; has_more: boolean }>(`/written/knowledge?${params}`, { signal });
+  },
+  writtenKnowledgeArticle: (id: number, signal?: AbortSignal) => get<PublishedKnowledge>(`/written/knowledge/${id}`, { signal }),
+  adminWrittenKnowledge: (q: string, offset: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ q, offset: String(offset) });
+    return get<{ items: AdminKnowledgeSummary[]; has_more: boolean }>(`/admin/written-knowledge?${params}`, { signal });
+  },
+  writtenKnowledgeTopics: (batchId: string, signal?: AbortSignal) =>
+    get<{ items: { id: string; name: string }[] }>(`/admin/written-knowledge/topics?batch_id=${encodeURIComponent(batchId)}`, { signal }),
+  adminKnowledgeArticle: (id: number, signal?: AbortSignal) => get<AdminKnowledge>(`/admin/written-knowledge/${id}`, { signal }),
+  adminKnowledgeEdition: (id: number, revision: number, signal?: AbortSignal) =>
+    get<PublishedKnowledge & { review_note: string }>(`/admin/written-knowledge/${id}/versions/${revision}`, { signal }),
+  createKnowledgeArticle: (body: { batch_id: string; point_id: string; article: KnowledgeArticle }) =>
+    post<AdminKnowledge>("/admin/written-knowledge", body),
+  editKnowledgeArticle: (id: number, body: { expected_version: number; action: "save" | "publish" | "unpublish"; article?: KnowledgeArticle; review_note?: string }) =>
+    post<AdminKnowledge>(`/admin/written-knowledge/${id}`, body),
   writtenCatalog: (offset: number, filters: WrittenCatalogFilter, signal?: AbortSignal) => {
     const params = new URLSearchParams({ offset: String(offset) });
     for (const [key, value] of Object.entries(filters)) {

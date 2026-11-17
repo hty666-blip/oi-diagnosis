@@ -1,7 +1,7 @@
 import { readLocal, removeLocal, writeLocal, type WrittenAttemptView, type WrittenResponse } from "./api";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export type WrittenList = "bank" | WrittenAttemptView;
+export type WrittenList = "bank" | "knowledge" | WrittenAttemptView;
 export type WrittenTarget =
   | { kind: "question"; id: number; version?: string }
   | { kind: "attempt"; id: number };
@@ -27,6 +27,7 @@ export function rememberWrittenOpen(userId: number, open: boolean) {
 export function readWrittenPosition(userId: number): WrittenPosition {
   try {
     const value = JSON.parse(sessionStorage.getItem(positionKey(userId)) ?? "null");
+    if (value?.list === "knowledge") return { list: "knowledge", target: null };
     if (value && ["bank", "history", "wrong", "corrected"].includes(value.list)) {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {

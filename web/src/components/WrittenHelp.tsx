@@ -44,7 +44,9 @@ function DiscussionTurn({ turn }: { turn: WrittenHelpTurn }) {
         </dl>
         {turn.knowledge && <section className="written-help-knowledge">
           <h3>{turn.knowledge.title} <small>v{turn.knowledge.revision}</small></h3>
-          <p>{turn.knowledge.body}</p>
+          <Markdown text={turn.knowledge.body} />
+          {turn.knowledge.excerpt && <p className="muted">本次引用正文节选。</p>}
+          {turn.knowledge.source && <p className="muted">来源　{turn.knowledge.source}</p>}
         </section>}
       </details>
     </div>

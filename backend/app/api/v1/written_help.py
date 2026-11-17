@@ -17,6 +17,7 @@ from app.domain.models import User, WrittenAttempt, WrittenHelpTurn
 from app.gateway.llm import LLMClient
 from app.services.runtime_ai import observe_call, runtime_client
 from app.services.written_bank_storage import load_snapshot
+from app.services.written_knowledge import help_knowledge
 
 router = APIRouter(prefix="/written/attempts", tags=["written-help"])
 PAGE_SIZE = 12
@@ -171,8 +172,14 @@ async def ask(
     # 预约已落库。先释放作答行锁，再读取材料并调用模型。
     await session.commit()
     snapshot = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
+    knowledge, managed = await help_knowledge(session, version.batch_id, snapshot)
     evidence = WrittenEvidence.from_snapshot(
-        snapshot, attempt.response, attempt.earned_score, attempt.max_score
+        snapshot,
+        attempt.response,
+        attempt.earned_score,
+        attempt.max_score,
+        knowledge=knowledge,
+        use_demo_card=not managed,
     )
     client = await runtime_client(session, factory=lambda **kwargs: LLMClient(timeout=12, **kwargs))
     await session.commit()
