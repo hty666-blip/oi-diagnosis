@@ -27,6 +27,7 @@ from app.services.written_exam_review import (
     class_exam_questions,
     class_exam_results,
     exam_retry_version,
+    pending_exam_students,
     review_items,
     study_topics,
 )
@@ -150,6 +151,17 @@ async def class_results(
 async def class_question_results(class_id: ObjectPathId, exam_id: ObjectPathId, session: SessionDep, user: TeacherUser):
     await require_results_class(session, user, class_id)
     return await class_exam_questions(session, class_id, exam_id)
+
+
+@router.get("/classes/{class_id}/results/{exam_id}/pending-students")
+async def class_pending_students(
+    class_id: ObjectPathId, exam_id: ObjectPathId, session: SessionDep, user: TeacherUser,
+    version_ids: Annotated[list[UUID], Query(min_length=1, max_length=10)],
+):
+    await require_results_class(session, user, class_id)
+    if len(set(version_ids)) != len(version_ids):
+        raise HTTPException(422, "选题版本不能重复")
+    return {"student_ids": await pending_exam_students(session, class_id, exam_id, [str(ident) for ident in version_ids])}
 
 
 @router.post("/start/{batch_id}/{paper_id}")

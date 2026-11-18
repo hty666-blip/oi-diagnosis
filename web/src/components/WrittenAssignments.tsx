@@ -216,7 +216,8 @@ function TaskMatrix({ task, onReview }: { task: WrittenAssignmentDetail; onRevie
 function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onClose: () => void; onPublished: (id: number) => void }) {
   const [groups, setGroups] = useState<{ id: number; name: string }[]>();
   const [classId, setClassId] = useState(seed ? String(seed.classId) : "");
-  const [studentIds, setStudentIds] = useState<number[] | null>(null);
+  const [studentIds, setStudentIds] = useState<number[] | null>(seed?.studentIds ?? null);
+  const [audienceReady, setAudienceReady] = useState(false);
   const [title, setTitle] = useState(seed?.title ?? "");
   const [deadline, setDeadline] = useState(() => {
     const date = new Date();
@@ -235,7 +236,7 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
   const lastRequest = useRef<{ draft: string; id: string }>();
   const write = useRef<AbortController>();
   const validClass = groups?.some((group) => String(group.id) === classId);
-  const validAudience = studentIds === null || studentIds.length > 0;
+  const validAudience = studentIds === null || (audienceReady && studentIds.length > 0);
 
   useEffect(() => () => write.current?.abort(), []);
   useEffect(() => {
@@ -289,6 +290,7 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
         <label>专项名称<input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
         <label>班级<select required disabled={seed !== undefined} value={classId} onChange={(event) => {
           setClassId(event.target.value);
+          setAudienceReady(false);
           if (studentIds !== null) setStudentIds([]);
         }}>
           <option value="">{groups ? "选择班级" : "正在读取班级…"}</option>
@@ -299,7 +301,7 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
       {groups && seed && !validClass && <p className="muted">原班级已不可布置专项，请返回模拟学情。</p>}
       {!seed && groups?.length === 0 && <p className="muted">当前没有可布置任务的班级。</p>}
       <TaskAudience key={classId} classId={validClass ? Number(classId) : undefined} studentIds={studentIds}
-        busy={busy} onChange={setStudentIds} />
+        busy={busy} onChange={setStudentIds} onReady={setAudienceReady} />
       <fieldset disabled={busy}>
         <legend>选题</legend>
         <div className="written-practice-actions">
@@ -340,16 +342,18 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
   </Modal>;
 }
 
-function TaskAudience({ classId, studentIds, busy, onChange }: {
+function TaskAudience({ classId, studentIds, busy, onChange, onReady }: {
   classId?: number;
   studentIds: number[] | null;
   busy: boolean;
   onChange: (value: number[] | null) => void;
+  onReady: (ready: boolean) => void;
 }) {
   const [students, setStudents] = useState<{ id: number; name: string; username: string }[]>();
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const targeted = studentIds !== null;
+  const rosterChanged = students && targeted && studentIds.some((id) => !students.some((student) => student.id === id));
 
   useEffect(() => {
     if (classId === undefined || !targeted) return;
@@ -360,6 +364,7 @@ function TaskAudience({ classId, studentIds, busy, onChange }: {
     );
     return () => request.abort();
   }, [classId, targeted, reload]);
+  useEffect(() => { onReady(students !== undefined && !rosterChanged); }, [students, rosterChanged, onReady]);
 
   function refresh() {
     setStudents(undefined);
@@ -378,6 +383,7 @@ function TaskAudience({ classId, studentIds, busy, onChange }: {
       : !students ? <p role="status">正在读取班级名单…</p>
       : !students.length ? <p className="muted">当前班级暂无启用的学生。</p>
       : <>
+        {rosterChanged && <p role="status">所选学生已不在当前名单，请刷新名单重新选择。</p>}
         <div className="training-audience written-task-student-list" role="group" aria-label="指定学生名单">
           {students.map((student) => {
             const chosen = studentIds.includes(student.id);

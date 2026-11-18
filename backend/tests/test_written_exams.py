@@ -375,6 +375,16 @@ async def test_coach_can_drill_into_paper_results_for_each_frozen_version(api_co
     assert [row["practice_question"] for row in data["items"][:2]] == [None, None]
     pick = data["items"][-1]["practice_question"]
     assert pick["id"] == second["id"] and pick["version_id"] == second["version_id"]
+    preview = f"{EXAMS}/classes/{group.id}/results/{exam}/pending-students"
+    version_query = {"version_ids": second["version_id"]}
+    pending = await ctx.client.get(preview, headers=coach, params=version_query)
+    assert pending.status_code == 200 and pending.json() == {"student_ids": [ctx.users.student.id]}
+    assert pending.headers["cache-control"] == "no-store"
+    assert (await ctx.client.get(preview, headers=ctx.headers(), params=version_query)).status_code == 403
+    assert (await ctx.client.get(preview, headers=coach, params={"version_ids": first["version_id"]})).status_code == 409
+    assert (await ctx.client.get(preview, headers=coach, params={"version_ids": [second["version_id"]] * 2})).status_code == 422
+    only_corrected = await ctx.client.get(preview, headers=coach, params={"version_ids": newer["version_id"]})
+    assert only_corrected.status_code == 200 and only_corrected.json() == {"student_ids": []}
     bundle = await send(ctx, task_body(group, pick))
     assert bundle.status_code == 200, bundle.text
     practice = await ctx.client.get(f"{ASSIGNMENTS}/{bundle.json()['id']}", headers=ctx.headers(ctx.users.peer))
@@ -387,4 +397,5 @@ async def test_coach_can_drill_into_paper_results_for_each_frozen_version(api_co
     assert hidden.status_code == 200, hidden.text
     withdrawn = (await ctx.client.get(path, headers=coach)).json()["items"][-1]
     assert withdrawn == {**data["items"][-1], "practice_question": None}
+    assert (await ctx.client.get(preview, headers=coach, params=version_query)).status_code == 409
     assert (await send(ctx, task_body(group, pick))).status_code == 409

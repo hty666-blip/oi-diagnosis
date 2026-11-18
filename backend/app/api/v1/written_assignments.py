@@ -23,6 +23,7 @@ from app.domain.models import (
 )
 from app.services.admin_service import audit, training_write
 from app.services.written_assignments import (
+    WRITTEN_AUDIENCE_LIMIT,
     accessible_assignment,
     active_students,
     assignment_detail,
@@ -50,7 +51,7 @@ class AssignmentInput(BaseModel):
     title: StorageText = Field(min_length=1, max_length=120)
     due_at: AwareDatetime
     questions: list[AssignmentQuestionInput] = Field(min_length=1, max_length=10)
-    student_ids: list[ObjectId] | None = Field(default=None, min_length=1, max_length=200)
+    student_ids: list[ObjectId] | None = Field(default=None, min_length=1, max_length=WRITTEN_AUDIENCE_LIMIT)
 
 
 @router.get("/classes")

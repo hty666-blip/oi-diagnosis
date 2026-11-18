@@ -18,7 +18,7 @@ from app.domain.models import (
     WrittenQuestion,
     WrittenQuestionVersion,
 )
-from app.services.written_assignments import active_students
+from app.services.written_assignments import WRITTEN_AUDIENCE_LIMIT, active_students
 from app.services.written_bank_storage import load_snapshot
 from app.services.written_knowledge import published_query
 from app.services.written_learning import (
@@ -109,7 +109,7 @@ async def class_exam_results(session, class_id: int, before_id: int | None):
     return {"items": items, "next_before_id": page[-1].id if len(rows) > CLASS_RESULT_LIMIT else None}
 
 
-async def class_exam_questions(session, class_id: int, exam_id: int):
+async def class_exam_cohort(session, class_id: int, exam_id: int):
     scope = submitted_class_exams(class_id)
     reference = await session.scalar(scope.where(WrittenExam.id == exam_id))
     if reference is None:
@@ -117,13 +117,27 @@ async def class_exam_questions(session, class_id: int, exam_id: int):
     cohort = scope.with_only_columns(WrittenExam.id).where(
         WrittenExam.batch_id == reference.batch_id, WrittenExam.paper_id == reference.paper_id,
     )
-    submitted_count = await session.scalar(select(func.count()).select_from(cohort.subquery()))
+    return reference, cohort
 
-    retakes = (
+
+def latest_exam_retakes(cohort):
+    return (
         select(WrittenExamAttempt.exam_id, WrittenAttempt.question_id, WrittenAttempt.version_id, WrittenAttempt.correct)
         .join(WrittenAttempt, WrittenAttempt.id == WrittenExamAttempt.attempt_id)
         .where(WrittenAttempt.id.in_(latest_exam_attempt_ids(cohort))).subquery()
     )
+
+
+def matches_exam_item(retakes):
+    item = WrittenExamItem
+    return ((retakes.c.exam_id == item.exam_id) & (retakes.c.question_id == item.question_id)
+            & (retakes.c.version_id == item.version_id))
+
+
+async def class_exam_questions(session, class_id: int, exam_id: int):
+    reference, cohort = await class_exam_cohort(session, class_id, exam_id)
+    submitted_count = await session.scalar(select(func.count()).select_from(cohort.subquery()))
+    retakes = latest_exam_retakes(cohort)
     item = WrittenExamItem
     version = WrittenQuestionVersion
     full_score = item.earned_score == item.max_score
@@ -140,8 +154,7 @@ async def class_exam_questions(session, class_id: int, exam_id: int):
             func.sum(case((missed_score & retakes.c.correct.is_(True), 1), else_=0)).label("corrected_count"),
         ).select_from(item)
         .join(version, version.id == item.version_id)
-        .outerjoin(retakes, (retakes.c.exam_id == item.exam_id) & (retakes.c.question_id == item.question_id)
-                   & (retakes.c.version_id == item.version_id))
+        .outerjoin(retakes, matches_exam_item(retakes))
         .where(item.exam_id.in_(cohort)).group_by(*group)
         .order_by(func.min(item.position), item.question_id, version.revision.desc())
     )
@@ -158,6 +171,28 @@ async def class_exam_questions(session, class_id: int, exam_id: int):
     for row in items:
         row["practice_question"] = available.get((row["question_id"], row["version_id"]))
     return {"title": reference.title, "submitted_count": submitted_count, "items": items}
+
+
+async def pending_exam_students(session, class_id: int, exam_id: int, version_ids: list[str]) -> list[int]:
+    _, cohort = await class_exam_cohort(session, class_id, exam_id)
+    item = WrittenExamItem
+    within_paper = select(item.version_id).where(item.exam_id.in_(cohort), item.version_id.in_(version_ids))
+    checked = await session.scalars(visible_query().with_only_columns(WrittenQuestionVersion.id).where(
+        WrittenQuestionVersion.id.in_(within_paper),
+    ))
+    if set(checked) != set(version_ids):
+        raise HTTPException(409, "选题已改版、下架或不在本卷，请重新打开学情选题")
+    retakes = latest_exam_retakes(cohort)
+    student_ids = list(await session.scalars(
+        select(WrittenExam.student_id).join(item, item.exam_id == WrittenExam.id)
+        .outerjoin(retakes, matches_exam_item(retakes))
+        .where(WrittenExam.id.in_(cohort), item.version_id.in_(version_ids),
+               item.earned_score < item.max_score, retakes.c.correct.is_not(True))
+        .distinct().order_by(WrittenExam.student_id).limit(WRITTEN_AUDIENCE_LIMIT + 1)
+    ))
+    if len(student_ids) > WRITTEN_AUDIENCE_LIMIT:
+        raise HTTPException(409, f"待补练学生超过 {WRITTEN_AUDIENCE_LIMIT} 人，请取消预选后手动选择名单")
+    return student_ids
 
 
 async def review_items(session, student_id: int, exam_id: int) -> list[dict]:

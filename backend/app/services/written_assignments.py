@@ -19,6 +19,8 @@ from app.domain.models import (
 )
 from app.services.written_review import visible_query
 
+WRITTEN_AUDIENCE_LIMIT = 200
+
 
 def active_students(class_id):
     return select(User).where(

@@ -828,6 +828,10 @@ export const api = {
     get<WrittenClassExamResults>(`/written/exams/classes/${classId}/results${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
   writtenClassExamQuestions: (classId: number, examId: number, signal?: AbortSignal) =>
     get<WrittenClassExamQuestions>(`/written/exams/classes/${classId}/results/${examId}/questions`, { signal }),
+  writtenExamPendingStudents: (classId: number, examId: number, versionIds: string[], signal?: AbortSignal) => {
+    const query = new URLSearchParams(versionIds.map((version) => ["version_ids", version]));
+    return get<{ student_ids: number[] }>(`/written/exams/classes/${classId}/results/${examId}/pending-students?${query}`, { signal });
+  },
   startWrittenExam: (batch: string, paper: string, signal?: AbortSignal) =>
     post<WrittenExam>(`/written/exams/start/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}`, undefined, { signal }),
   writtenExam: (id: number, signal?: AbortSignal) => get<WrittenExam>(`/written/exams/${id}`, { signal }),

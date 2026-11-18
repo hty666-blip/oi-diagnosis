@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, messageOf, type WrittenClassExamQuestions, type WrittenClassExamResults, type WrittenPublishedSummary } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
@@ -7,6 +7,7 @@ export interface ExamFollowup {
   classId: number;
   title: string;
   questions: WrittenPublishedSummary[];
+  studentIds?: number[];
 }
 
 export default function WrittenExamResults({ onFollowup }: { onFollowup: (draft: ExamFollowup) => void }) {
@@ -108,8 +109,12 @@ function ClassExamQuestions({ classId, examId, onClose, onFollowup }: {
 }) {
   const [report, setReport] = useState<WrittenClassExamQuestions>();
   const [selected, setSelected] = useState<string[]>([]);
+  const [preselect, setPreselect] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const preview = useRef<AbortController>();
 
   useEffect(() => {
     const request = new AbortController();
@@ -119,8 +124,31 @@ function ClassExamQuestions({ classId, examId, onClose, onFollowup }: {
     );
     return () => request.abort();
   }, [classId, examId, reload]);
+  useEffect(() => () => preview.current?.abort(), []);
 
   const chosen = report?.items.flatMap((row) => row.practice_question && selected.includes(row.version_id) ? [row.practice_question] : []) ?? [];
+  async function createFollowup() {
+    if (!chosen.length || preview.current) return;
+    const draft = { classId, title: "模拟错题补练", questions: chosen };
+    if (!preselect) { onFollowup(draft); return; }
+
+    const request = new AbortController();
+    preview.current = request;
+    setPreparing(true);
+    setPreviewError("");
+    try {
+      const { student_ids: studentIds } = await api.writtenExamPendingStudents(classId, examId,
+        chosen.map((question) => question.version_id), request.signal);
+      if (request.signal.aborted) return;
+      if (studentIds.length) onFollowup({ ...draft, studentIds });
+      else setPreviewError("当前所选题已没有待补练学生。可重新选题或取消预选。");
+    } catch (failure) {
+      if (!request.signal.aborted) setPreviewError(messageOf(failure));
+    } finally {
+      if (!request.signal.aborted) { preview.current = undefined; setPreparing(false); }
+    }
+  }
+
   return <Modal title="模拟卷单题学情" onClose={onClose} wide>
     {error ? <ErrorNotice message={error} onRetry={() => { setError(""); setReload((value) => value + 1); }} />
       : !report ? <p role="status">正在读取单题学情…</p>
@@ -134,17 +162,22 @@ function ClassExamQuestions({ classId, examId, onClose, onFollowup }: {
             <th scope="row">第 {row.number} 题</th><td>v{row.revision}</td><td>{row.answer_count}</td>
             <td>{row.correct_count}</td><td>{row.wrong_count}</td><td>{row.blank_count}</td><td>{row.corrected_count}</td>
             <td>{row.practice_question ? <input type="checkbox" aria-label={`选入第 ${row.number} 题 v${row.revision}`}
-              checked={selected.includes(row.version_id)} disabled={chosen.length >= 10 && !selected.includes(row.version_id)}
+              checked={selected.includes(row.version_id)} disabled={preparing || (chosen.length >= 10 && !selected.includes(row.version_id))}
               onChange={(event) => {
                 const checked = event.currentTarget.checked;
+                setPreviewError("");
                 setSelected((values) => checked ? [...values, row.version_id] : values.filter((id) => id !== row.version_id));
               }} />
               : <span className="muted">{row.wrong_count + row.blank_count > row.corrected_count ? "原版不可用" : "无需补练"}</span>}</td>
           </tr>)}</tbody>
         </table></div> : <p className="muted">暂无可统计的作答。</p>}
+        {previewError && <ErrorNotice message={previewError} />}
         {report.items.some((row) => row.practice_question) && <div className="admin-actions">
-          <button className="btn-primary" type="button" disabled={chosen.length === 0}
-            onClick={() => onFollowup({ classId, title: "模拟错题补练", questions: chosen })}>用所选题创建专项</button>
+          <label className="written-practice-actions"><input type="checkbox" checked={preselect} disabled={preparing}
+            onChange={(event) => { setPreselect(event.currentTarget.checked); setPreviewError(""); }} />预选仍需补练的学生</label>
+          <button className="btn-primary" type="button" disabled={!chosen.length || preparing} onClick={() => void createFollowup()}>
+            {preparing ? "正在核对名单…" : "用所选题创建专项"}
+          </button>
           <span className="muted">已选 {chosen.length} / 10</span>
         </div>}
       </>}
