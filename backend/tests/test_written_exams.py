@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, select
+from test_written_assignments import groups
 from test_written_attempts import attempt, single
 from test_written_bank_import import make_records
 from test_written_progress import publish
@@ -11,6 +12,7 @@ from test_written_review import staged
 
 from app.api.v1 import written_exams
 from app.domain.models import WrittenAttempt
+from app.services import written_exam_review
 
 EXAMS = "/api/v1/written/exams"
 
@@ -150,3 +152,83 @@ async def test_review_links_only_student_retries_to_submitted_missed_versions(ap
     assert (await ctx.client.get(first_question, headers=headers)).status_code == 409
     assert (await submit({**body, "request_id": str(uuid4())})).status_code == 409
     assert (await submit(body)).json()["id"] == wrong["id"]
+
+
+async def test_coach_mock_results_follow_current_class_and_linked_retries(api_context, monkeypatch):
+    ctx = api_context
+    group, other_group = await groups(ctx)
+    records = make_records()
+    records["papers.jsonl"][0].update(duration_minutes=10, total_score=4)
+    for question in records["questions.jsonl"]:
+        question["score"] = 2
+    root = await staged(ctx, records)
+    first = await publish(ctx, root, "q1")
+    second = await publish(ctx, root, "q2")
+    start = f"{EXAMS}/start/{root.split('/')[-1]}/paper1"
+    urls = {group.id: f"{EXAMS}/classes/{group.id}/results", other_group.id: f"{EXAMS}/classes/{other_group.id}/results"}
+    coach = ctx.headers(ctx.users.teacher)
+    headers = ctx.headers()
+
+    async def begin(user):
+        result = await ctx.client.post(start, headers=ctx.headers(user))
+        assert result.status_code == 200, result.text
+        return result.json()["id"]
+
+    exam_id = await begin(ctx.users.student)
+    peer_exam_id = await begin(ctx.users.peer)
+    other_exam_id = await begin(ctx.users.other)
+    assert (await ctx.client.get(urls[group.id], headers=headers)).status_code == 403
+    assert (await ctx.client.get(urls[other_group.id], headers=coach)).status_code == 404
+    assert (await ctx.client.get(urls[group.id], headers=coach)).json()["items"] == []
+    assert (await ctx.client.post(f"{EXAMS}/{other_exam_id}/submit", headers=ctx.headers(ctx.users.other))).status_code == 200
+
+    saved = await ctx.client.put(f"{EXAMS}/{exam_id}/questions/{first['id']}", headers=headers, json={
+        "expected_revision": 0, "response": single("A"),
+    })
+    assert saved.status_code == 200, saved.text
+    submitted = await ctx.client.post(f"{EXAMS}/{exam_id}/submit", headers=headers)
+    assert submitted.status_code == 200, submitted.text
+    expected = {
+        "id": exam_id, "student_name": ctx.users.student.display_name, "title": submitted.json()["title"],
+        "submitted_at": submitted.json()["submitted_at"], "earned_score": 2, "max_score": 4,
+        "missed_count": 1, "corrected_count": 0,
+    }
+    response = await ctx.client.get(urls[group.id], headers=coach)
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"items": [expected], "next_before_id": None}
+
+    async def retry(choice, *, linked):
+        body = attempt(second, single(choice))
+        if linked:
+            body["exam_id"] = exam_id
+        result = await ctx.client.post("/api/v1/written/attempts", json=body, headers=headers)
+        assert result.status_code == 200, result.text
+        return result.json()["correct"]
+
+    assert await retry("A", linked=False) is True
+    assert (await ctx.client.get(urls[group.id], headers=coach)).json()["items"] == [expected]
+    assert await retry("A", linked=True) is True
+    assert (await ctx.client.get(urls[group.id], headers=coach)).json()["items"] == [
+        {**expected, "corrected_count": 1}
+    ]
+    assert await retry("B", linked=True) is False
+    assert (await ctx.client.get(urls[group.id], headers=coach)).json()["items"] == [expected]
+
+    assert (await ctx.client.post(f"{EXAMS}/{peer_exam_id}/submit", headers=ctx.headers(ctx.users.peer))).status_code == 200
+    monkeypatch.setattr(written_exam_review, "CLASS_RESULT_LIMIT", 1)
+    page = (await ctx.client.get(urls[group.id], headers=coach)).json()
+    assert [item["id"] for item in page["items"]] == [peer_exam_id]
+    assert page["next_before_id"] == peer_exam_id
+    page = (await ctx.client.get(urls[group.id], headers=coach, params={"before_id": peer_exam_id})).json()
+    assert page == {"items": [expected], "next_before_id": None}
+
+    ctx.users.student.class_id = other_group.id
+    ctx.users.peer.enabled = False
+    await ctx.session.flush()
+    assert (await ctx.client.get(urls[group.id], headers=coach)).json()["items"] == []
+    admin = ctx.headers(ctx.users.admin)
+    result = await ctx.client.get(urls[other_group.id], headers=admin, params={"before_id": other_exam_id})
+    assert result.json()["items"] == [expected]
+    other_group.archived = True
+    await ctx.session.flush()
+    assert (await ctx.client.get(urls[other_group.id], headers=admin)).status_code == 404

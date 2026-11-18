@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, messageOf, type WrittenAssignmentDetail, type WrittenAssignmentSummary, type WrittenAttempt, type WrittenPublishedSummary } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
+import WrittenExamResults from "./WrittenExamResults";
 import WrittenShortReview from "./WrittenShortReview";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
 
@@ -12,6 +13,7 @@ const deadlineText = (value: string) => new Date(value).toLocaleString("zh-CN");
 
 export default function WrittenAssignments({ studentId }: { studentId?: number }) {
   const student = studentId !== undefined;
+  const [showExams, setShowExams] = useState(false);
   const [tasks, setTasks] = useState<WrittenAssignmentSummary[]>();
   const [selected, setSelected] = useState<number>();
   const [detail, setDetail] = useState<WrittenAssignmentDetail>();
@@ -24,6 +26,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
   const refresh = () => setReload((value) => value + 1);
 
   useEffect(() => {
+    if (showExams) return;
     const request = new AbortController();
     setError("");
     const loading = selected === undefined
@@ -31,7 +34,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
       : api.writtenAssignment(selected, request.signal).then((value) => { if (!request.signal.aborted) setDetail(value); });
     void loading.catch((failure) => { if (!request.signal.aborted) setError(messageOf(failure)); });
     return () => request.abort();
-  }, [selected, reload]);
+  }, [showExams, selected, reload]);
 
   function open(id?: number) {
     setDetail(undefined);
@@ -50,11 +53,21 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
     refresh();
   }
 
-  return <section>
-    {!student && <header className="page-head">
+  const teacherNavigation = !student && <>
+    <header className="page-head">
       <h1>初赛任务</h1>
-      <button type="button" className="btn-primary" onClick={() => setPublishing(true)}>发布专项</button>
-    </header>}
+      {!showExams && <button type="button" className="btn-primary" onClick={() => setPublishing(true)}>发布专项</button>}
+    </header>
+    <nav className="admin-tabs" aria-label="初赛任务">
+      <button type="button" className="ghost" aria-pressed={!showExams} onClick={() => setShowExams(false)}>班级专项</button>
+      <button type="button" className="ghost" aria-pressed={showExams} onClick={() => setShowExams(true)}>模拟学情</button>
+    </nav>
+  </>;
+
+  if (showExams) return <section>{teacherNavigation}<WrittenExamResults /></section>;
+
+  return <section>
+    {teacherNavigation}
     {selected !== undefined && <div className="written-task-nav">
       <button type="button" className="ghost" onClick={target ? backToTask : () => open()}>
         {target ? "返回专项" : "返回任务列表"}

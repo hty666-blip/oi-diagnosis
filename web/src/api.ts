@@ -636,6 +636,19 @@ export interface WrittenExamReviewItem {
   available: boolean;
   latest_attempt: { id: number; correct: boolean } | null;
 }
+export interface WrittenClassExamResults {
+  items: {
+    id: number;
+    student_name: string;
+    title: string;
+    submitted_at: string;
+    earned_score: number;
+    max_score: number;
+    missed_count: number;
+    corrected_count: number;
+  }[];
+  next_before_id: number | null;
+}
 export interface WrittenAssignmentSummary {
   id: number;
   class_id: number;
@@ -786,6 +799,8 @@ export const api = {
     get<WrittenPaperQuestions>(`/written/papers/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}?offset=${offset}`, { signal }),
   writtenExams: (beforeId?: number, signal?: AbortSignal) =>
     get<{ items: WrittenExamSummary[]; next_before_id: number | null }>(`/written/exams${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
+  writtenClassExamResults: (classId: number, beforeId?: number, signal?: AbortSignal) =>
+    get<WrittenClassExamResults>(`/written/exams/classes/${classId}/results${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
   startWrittenExam: (batch: string, paper: string, signal?: AbortSignal) =>
     post<WrittenExam>(`/written/exams/start/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}`, undefined, { signal }),
   writtenExam: (id: number, signal?: AbortSignal) => get<WrittenExam>(`/written/exams/${id}`, { signal }),

@@ -1,16 +1,23 @@
 """控制错题复练的归属、题目版本及已保存的进度。"""
 
+from collections import defaultdict
+from math import fsum
+
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
 from app.domain.models import (
+    User,
     WrittenAttempt,
     WrittenExam,
     WrittenExamAttempt,
     WrittenExamItem,
     WrittenQuestion,
 )
+from app.services.written_assignments import active_students
 from app.services.written_review import visible_query
+
+CLASS_RESULT_LIMIT = 25
 
 
 async def reviewed_exam(session, student_id: int, exam_id: int):
@@ -30,6 +37,59 @@ def missed(exam_id: int):
     )
 
 
+def latest_exam_attempt_ids(exam_ids: list[int]):
+    return (
+        select(func.max(WrittenAttempt.id))
+        .join(WrittenExamAttempt, WrittenExamAttempt.attempt_id == WrittenAttempt.id)
+        .join(WrittenExam, WrittenExam.id == WrittenExamAttempt.exam_id)
+        .where(WrittenExam.id.in_(exam_ids), WrittenAttempt.student_id == WrittenExam.student_id)
+        .group_by(WrittenExam.id, WrittenAttempt.question_id, WrittenAttempt.version_id)
+    )
+
+
+async def class_exam_results(session, class_id: int, before_id: int | None):
+    students = active_students(class_id).with_only_columns(User.id)
+    query = (
+        select(WrittenExam.id, WrittenExam.title, WrittenExam.submitted_at, User.display_name, User.username)
+        .join(User, User.id == WrittenExam.student_id)
+        .where(WrittenExam.student_id.in_(students), WrittenExam.submitted_at.is_not(None))
+    )
+    if before_id is not None:
+        query = query.where(WrittenExam.id < before_id)
+    rows = (await session.execute(query.order_by(WrittenExam.id.desc()).limit(CLASS_RESULT_LIMIT + 1))).all()
+    page = rows[:CLASS_RESULT_LIMIT]
+    if not page:
+        return {"items": [], "next_before_id": None}
+
+    exam_ids = [row.id for row in page]
+    cards = defaultdict(list)
+    for item in await session.execute(select(
+        WrittenExamItem.exam_id, WrittenExamItem.question_id, WrittenExamItem.version_id,
+        WrittenExamItem.earned_score, WrittenExamItem.max_score,
+    ).where(WrittenExamItem.exam_id.in_(exam_ids))):
+        cards[item.exam_id].append(item)
+    last_correct = await session.execute(
+        select(WrittenExamAttempt.exam_id, WrittenAttempt.question_id, WrittenAttempt.version_id)
+        .join(WrittenAttempt, WrittenAttempt.id == WrittenExamAttempt.attempt_id)
+        .where(WrittenAttempt.id.in_(latest_exam_attempt_ids(exam_ids)), WrittenAttempt.correct.is_(True))
+    )
+    corrected = {(exam_id, question_id, version_id) for exam_id, question_id, version_id in last_correct}
+
+    items = []
+    for row in page:
+        card = cards[row.id]
+        missed_items = [item for item in card if item.earned_score < item.max_score]
+        items.append({
+            "id": row.id, "student_name": row.display_name or row.username, "title": row.title,
+            "submitted_at": row.submitted_at,
+            "earned_score": fsum(item.earned_score for item in card),
+            "max_score": fsum(item.max_score for item in card),
+            "missed_count": len(missed_items),
+            "corrected_count": sum((row.id, item.question_id, item.version_id) in corrected for item in missed_items),
+        })
+    return {"items": items, "next_before_id": page[-1].id if len(rows) > CLASS_RESULT_LIMIT else None}
+
+
 async def review_items(session, student_id: int, exam_id: int) -> list[dict]:
     await reviewed_exam(session, student_id, exam_id)
     items = (await session.scalars(missed(exam_id).order_by(WrittenExamItem.position))).all()
@@ -39,17 +99,11 @@ async def review_items(session, student_id: int, exam_id: int) -> list[dict]:
         WrittenQuestion.id.in_([item.question_id for item in items]),
     ))).all()
     current = {question.id: version.id for question, version in visible}
-    latest = (
-        select(func.max(WrittenAttempt.id))
-        .join(WrittenExamAttempt, WrittenExamAttempt.attempt_id == WrittenAttempt.id)
-        .where(WrittenExamAttempt.exam_id == exam_id, WrittenAttempt.student_id == student_id)
-        .group_by(WrittenAttempt.question_id, WrittenAttempt.version_id)
-    )
     history = {
         (question, version): {"id": ident, "correct": correct}
         for question, version, ident, correct in await session.execute(
             select(WrittenAttempt.question_id, WrittenAttempt.version_id, WrittenAttempt.id, WrittenAttempt.correct)
-            .where(WrittenAttempt.id.in_(latest))
+            .where(WrittenAttempt.id.in_(latest_exam_attempt_ids([exam_id])))
         )
     }
     return [{

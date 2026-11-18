@@ -9,14 +9,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.api.deps import SessionDep
+from app.api.deps import SessionDep, TeacherUser
 from app.api.input_types import MAX_OBJECT_ID, ObjectPathId
 from app.api.v1.written_papers import PaperId, paper_contents
 from app.api.v1.written_questions import PracticeStudent, question_out, read_image
-from app.domain.models import User, WrittenExam, WrittenExamItem, WrittenQuestionVersion
+from app.domain.models import (
+    SchoolClass,
+    User,
+    WrittenExam,
+    WrittenExamItem,
+    WrittenQuestionVersion,
+)
 from app.services.admin_service import management_lock
+from app.services.written_assignments import managed_classes
 from app.services.written_bank_storage import load_snapshot
-from app.services.written_exam_review import exam_retry_version, review_items
+from app.services.written_exam_review import class_exam_results, exam_retry_version, review_items
 from app.services.written_grading import BooleanResponse, OptionResponse, TextResponse, is_correct
 
 
@@ -114,6 +121,19 @@ async def history(
     rows = (await session.scalars(query.order_by(WrittenExam.id.desc()).limit(26))).all()
     instant = now()
     return {"items": [exam_out(exam, instant) for exam in rows[:25]], "next_before_id": rows[24].id if len(rows) > 25 else None}
+
+
+@router.get("/classes/{class_id}/results")
+async def class_results(
+    class_id: ObjectPathId, session: SessionDep, user: TeacherUser,
+    before_id: Annotated[int | None, Query(gt=0, le=MAX_OBJECT_ID)] = None,
+):
+    group = await session.scalar(managed_classes(user).with_only_columns(SchoolClass.id).where(
+        SchoolClass.id == class_id, SchoolClass.archived.is_(False),
+    ))
+    if group is None:
+        raise HTTPException(404, "班级不存在或无权查看")
+    return await class_exam_results(session, class_id, before_id)
 
 
 @router.post("/start/{batch_id}/{paper_id}")
