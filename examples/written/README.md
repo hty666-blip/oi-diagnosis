@@ -16,6 +16,8 @@
 
 这两组题是本项目原创演示练习，级别用于演示筛选。仓库中的这份包只包含自编题和解析。
 
+简答可用独立的[原创简答包](oi-written-short-demo.zip)，按相同流程审核后由教练发布班级任务。修改[简答源稿](short_demo.json)后运行 `python tools/build_written_demo.py --source examples/written/short_demo.json --output examples/written/oi-written-short-demo.zip` 重建。逐项给分演示见[简答验收](../../docs/初赛简答复核验收.md)。
+
 ## 验收
 
 独立 MySQL 逐题走通暂存、审核、发布和作答，16 道题均按审核答案获得 2 分。前缀和的两道子题都能读取共用代码。

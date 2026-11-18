@@ -9,7 +9,7 @@ import { ErrorNotice } from "./RecordUI";
 import WrittenHelp from "./WrittenHelp";
 
 export const writtenTypeLabel: Record<WrittenQuestionType, string> = {
-  single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空",
+  single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空", short_answer: "简答",
 };
 
 function paperImages(question: WrittenPublishedQuestion) {
@@ -50,6 +50,7 @@ export function useWrittenImages(question: WrittenPublishedQuestion) {
 }
 
 export function answerText(answer: WrittenReferenceAnswer) {
+  if (answer.kind === "rubric") return answer.reference;
   if ("option_ids" in answer) return answer.option_ids.join("、");
   if ("accepted" in answer) return answer.accepted.map((value) => JSON.stringify(value)).join(" 或 ");
   if ("value" in answer) return typeof answer.value === "boolean"
@@ -58,7 +59,8 @@ export function answerText(answer: WrittenReferenceAnswer) {
   return "";
 }
 
-function ScoreBadge({ correct }: { correct: boolean }) {
+function ScoreBadge({ correct }: { correct: boolean | null }) {
+  if (correct === null) return <span className="badge route">待复核</span>;
   return <span className={`badge ${correct ? "ok" : "bad"}`}>{correct ? "答对" : "答错"}</span>;
 }
 
@@ -72,9 +74,9 @@ export function WrittenAnswers({ question, response, onAnswer, imageSource }: {
 }) {
   const checked = response && "option_ids" in response ? response.option_ids : [];
   const multiple = question.question_type === "multiple_choice";
-  if (question.question_type === "fill_blank") return <label className="written-answer-input">
+  if (question.question_type === "fill_blank" || question.question_type === "short_answer") return <label className="written-answer-input">
     答案
-    <textarea rows={3} maxLength={4000} value={response?.kind === "text" ? response.value : ""}
+    <textarea rows={question.question_type === "short_answer" ? 8 : 3} maxLength={4000} value={response?.kind === "text" ? response.value : ""}
       onChange={(event) => onAnswer({ kind: "text", value: event.target.value })} />
   </label>;
   if (question.question_type === "true_false") return <div className="written-choice-list">
@@ -114,7 +116,7 @@ export function WrittenAnswers({ question, response, onAnswer, imageSource }: {
 export function hasAnswer(response: WrittenResponse | null, type: WrittenQuestionType) {
   if (!response) return false;
   if (type === "true_false") return response.kind === "boolean";
-  if (type === "fill_blank") return response.kind === "text" && Boolean(response.value.trim());
+  if (type === "fill_blank" || type === "short_answer") return response.kind === "text" && Boolean(response.value.trim());
   if (type === "single_choice") return response.kind === "option" && response.option_ids.length === 1;
   return response.kind === "options" && response.option_ids.length > 0;
 }
@@ -180,6 +182,7 @@ function SubmissionForm({ question, userId, assignmentId, closed, onSubmitted, o
         onAnswer={(response) => { setDraft(store.write(response)); setError(""); }} />
     </fieldset>
     {error && <ErrorNotice message={error} />}
+    {question.question_type === "short_answer" && !closed && <p className="muted">本专项每道简答只交一次，提交后由教师评分。</p>}
     {needsVersion && <button type="button" className="ghost" onClick={onCheckVersion}>{assignmentId ? "重新读取任务题面" : "查看最新题面"}</button>}
     {(!closed || pending) && !needsVersion && <button className="btn-primary" type="submit" disabled={busy || !hasAnswer(draft?.response ?? null, question.question_type)}>
       {busy ? "正在提交…" : pending ? "重试提交" : "提交作答"}
@@ -224,27 +227,32 @@ function WrittenPaper({ question, receipt, userId, assignmentId, closed, onSubmi
       {receipt ? <>
         <div className="card-head"><h2>作答结果</h2><WrittenScoreBadgeDirect receipt={receipt} /></div>
         <dl className="written-result-fields">
-          <div><dt>我的答案</dt><dd>{answerText(receipt.response)}</dd></div>
-          <div><dt>参考答案</dt><dd>{answerText(receipt.answer)}</dd></div>
+          <div><dt>我的答案</dt><dd style={{ whiteSpace: "pre-wrap" }}>{question.question_type === "short_answer" && receipt.response.kind === "text" ? receipt.response.value : answerText(receipt.response)}</dd></div>
+          {receipt.answer && <div><dt>参考答案</dt><dd>{answerText(receipt.answer)}</dd></div>}
         </dl>
-        <h3>解析</h3>
-        <Markdown text={receipt.explanation} imageSource={imageSource} />
+        {receipt.teacher_grade && receipt.answer?.kind === "rubric" && <section>
+          <h3>教师反馈</h3>
+          <p style={{ whiteSpace: "pre-wrap" }}>{receipt.teacher_grade.feedback}</p>
+          <ol>{receipt.answer.rubric.map((item, i) => <li key={i}>{item.criterion} · {receipt.teacher_grade!.points[i]} / {item.points} 分</li>)}</ol>
+        </section>}
+        {receipt.explanation && <><h3>解析</h3><Markdown text={receipt.explanation} imageSource={imageSource} /></>}
         <p className="muted">{receipt.assignment_id ? "班级任务 · " : ""}版本 v{receipt.revision} / {new Date(receipt.submitted_at).toLocaleString("zh-CN")}</p>
-        {onRetryQuestion && <button type="button" className="ghost" onClick={onRetryQuestion}>{receipt.assignment_id && !assignmentId ? "在题库重做" : "重新作答"}</button>}
+        {onRetryQuestion && question.question_type !== "short_answer" && <button type="button" className="ghost" onClick={onRetryQuestion}>{receipt.assignment_id && !assignmentId ? "在题库重做" : "重新作答"}</button>}
       </> : <>
         <h2>{closed ? "任务已截止" : "作答"}</h2>
-        <SubmissionForm key={question.version_id} question={question} userId={userId} imageSource={imageSource} assignmentId={assignmentId} closed={closed}
-          onSubmitted={onSubmitted} onCheckVersion={onCheckVersion} />
+        {question.question_type === "short_answer" && !assignmentId ? <p>简答题请从教师布置的班级任务提交。</p>
+          : <SubmissionForm key={question.version_id} question={question} userId={userId} imageSource={imageSource} assignmentId={assignmentId} closed={closed}
+            onSubmitted={onSubmitted} onCheckVersion={onCheckVersion} />}
       </>}
     </section>
-    {receipt && !receipt.correct && <WrittenHelp key={receipt.id} userId={userId} attemptId={receipt.id} />}
+    {receipt?.correct === false && question.question_type !== "short_answer" && <WrittenHelp key={receipt.id} userId={userId} attemptId={receipt.id} />}
   </div>;
 }
 
 function WrittenScoreBadgeDirect({ receipt }: { receipt: WrittenAttempt }) {
   return <div className="written-result-score">
-    <ScoreBadge correct={receipt.correct} />
-    <strong>{receipt.earned_score} / {receipt.max_score} 分</strong>
+    {receipt.teacher_grade ? <span className="badge route">已复核</span> : <ScoreBadge correct={receipt.correct} />}
+    {receipt.earned_score !== null && <strong>{receipt.earned_score} / {receipt.max_score} 分</strong>}
   </div>;
 }
 

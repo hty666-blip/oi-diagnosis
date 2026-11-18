@@ -17,8 +17,8 @@ def json_bytes(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def build_archive() -> bytes:
-    data = json.loads(SOURCE.read_text(encoding="utf-8"))
+def build_archive(source: Path = SOURCE) -> bytes:
+    data = json.loads(source.read_text(encoding="utf-8"))
     papers = [
         {**paper, "source_ids": [SOURCE_ID]} for paper in data["papers"]
     ]
@@ -28,12 +28,14 @@ def build_archive() -> bytes:
             **question,
             "stem": "【自编】" + question["stem"],
             "paper_id": paper_ids[question["level"]],
-            "score": 2,
-            "scoring_rule": "exact_text" if question["question_type"] == "fill_blank" else "all_or_nothing",
+            "score": question.get("score", 2),
+            "scoring_rule": {
+                "fill_blank": "exact_text", "short_answer": "teacher_rubric",
+            }.get(question["question_type"], "all_or_nothing"),
             "source_ids": [SOURCE_ID],
             "answer_source_id": SOURCE_ID,
             "source_kind": "original_demo",
-            "source_locator": f"examples/written/demo_bank.json · {question['id']}",
+            "source_locator": f"examples/written/{source.name} · {question['id']}",
             "answer_status": "provided_unverified",
             "review_status": "needs_review",
         }
@@ -68,13 +70,14 @@ def build_archive() -> bytes:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--output", type=Path, default=ROOT / "data/private/oi-written-demo.zip")
     arguments = parser.parse_args()
 
     sys.path.insert(0, str(ROOT / "backend"))
     from app.services.written_bank_package import parse_package
 
-    content = build_archive()
+    content = build_archive(arguments.source)
     _, summary, _ = parse_package(content)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_bytes(content)

@@ -117,6 +117,7 @@ async def paper_contents(session, batch: str, paper_id: str):
     recorded = metadata["source_recorded_score"]
     metadata["mock_available"] = (
         0 < len(ordered) == len(original) <= 120 and metadata["duration_minutes"] is not None
+        and all(item["question_type"] != "short_answer" for item in ordered)
         and total is not None and isclose(total, metadata["published_score"], abs_tol=1e-8)
         and (recorded is None or isclose(total, recorded, abs_tol=1e-8))
     )

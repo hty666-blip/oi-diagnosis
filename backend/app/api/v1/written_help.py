@@ -51,6 +51,8 @@ def completed_turn(row: WrittenHelpTurn) -> dict:
 
 async def checked_attempt(session: AsyncSession, student_id: int, attempt_id: int):
     attempt, version = await owned_attempt(session, student_id, attempt_id)
+    if attempt.question_summary["question_type"] == "short_answer":
+        raise HTTPException(409, "简答题请查看班级任务中的教师反馈")
     if attempt.correct:
         raise HTTPException(409, "请从答错的作答记录打开错题答疑")
     return attempt, version

@@ -26,6 +26,7 @@ async def earlier_practice(session, attempt, batch_id, snapshot):
             WrittenAttempt.question_id != attempt.question_id,
             WrittenQuestionVersion.batch_id == batch_id,
             WrittenAttempt.question_summary["level"].as_string() == snapshot["level"],
+            WrittenAttempt.correct.is_not(None),
             or_(topic == primary, topic.is_(None)),
         )
         .order_by(WrittenAttempt.id.desc())

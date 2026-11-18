@@ -342,8 +342,11 @@ def parse_package(content: bytes) -> tuple[dict, dict, dict[str, tuple[bytes, st
                 or any(not isinstance(v, str) or not v.strip() for v in accepted)
             ):
                 raise PackageError("填空题答案格式无效")
+        elif kind == "short_answer":
+            if answer.get("kind") != "rubric":
+                raise PackageError("简答题须使用评分要点结构")
         else:
-            raise PackageError("本批仅支持单选、多选、判断和填空候选题")
+            raise PackageError("未知初赛候选题题型")
         check_assets(q)
         reviews[q["id"]] = question_review(q, nodes)
     payload["reviews"] = reviews

@@ -1,0 +1,26 @@
+{
+  "knowledge_points": {
+    "nodes": [{"id": "DEMO-TREE", "name": "二叉树层数与节点数", "is_leaf": true}]
+  },
+  "papers": [
+    {"id": "demo-j-short", "title": "自编简答专项演示", "level": "J", "source_kind": "original_demo", "total_score": 4}
+  ],
+  "question_groups": [],
+  "questions": [
+    {
+      "id": "demo-short-tree-level", "level": "J", "question_type": "short_answer",
+      "stem": "二叉树的根在第 1 层。请说明为什么第 5 层最多有 16 个节点。",
+      "primary_knowledge_point_id": "DEMO-TREE",
+      "score": 4,
+      "answer": {
+        "kind": "rubric",
+        "reference": "每个节点至多有两个子节点，下一层的节点数至多为上一层的两倍。从根节点的 1 个起算，第 1 至 5 层的上限分别是 1、2、4、8、16。",
+        "rubric": [
+          {"criterion": "指出每个节点最多有两个子节点，因此下一层最多翻倍", "points": 2},
+          {"criterion": "从根推导第 5 层上限为 16，如列出 1、2、4、8、16", "points": 2}
+        ]
+      },
+      "explanation": "根为 1 个节点，其后的每层最多翻倍，所以第 5 层有四次翻倍，最多为 16。层数从 1 开始，指数对应向下走过的四条边。"
+    }
+  ]
+}

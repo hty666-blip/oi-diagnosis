@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, messageOf, type WrittenAssignmentDetail, type WrittenAssignmentSummary, type WrittenAttempt, type WrittenPublishedSummary } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
+import WrittenShortReview from "./WrittenShortReview";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 type TaskQuestion = WrittenAssignmentDetail["questions"][number];
@@ -17,6 +18,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
   const [target, setTarget] = useState<OpenTask>();
   const [receipt, setReceipt] = useState<WrittenAttempt>();
   const [publishing, setPublishing] = useState(false);
+  const [reviewing, setReviewing] = useState<number>();
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const refresh = () => setReload((value) => value + 1);
@@ -82,7 +84,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
       {student ? <TaskProblems task={detail} onAnswer={start} onReview={(id, question) => {
         setReceipt(undefined);
         setTarget({ kind: "attempt", id, question });
-      }} /> : <TaskMatrix task={detail} />}
+      }} /> : <TaskMatrix task={detail} onReview={setReviewing} />}
     </section>}
     {detail && studentId !== undefined && target?.kind === "question" && <WrittenOpenQuestion
       key={target.question.id} userId={studentId} target={{
@@ -98,6 +100,8 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
       setPublishing(false);
       open(id);
     }} />}
+    {detail && reviewing !== undefined && <WrittenShortReview key={reviewing} assignmentId={detail.id} attemptId={reviewing}
+      onClose={() => setReviewing(undefined)} onConfirmed={() => { setReviewing(undefined); refresh(); }} />}
   </section>;
 }
 
@@ -113,9 +117,11 @@ function TaskProblems({ task, onAnswer, onReview }: {
       return <tr key={question.id}>
         <td><div className="written-excerpt">{question.stem}</div><small className="muted">CSP-{question.level} · v{question.revision}</small></td>
         <td>{writtenTypeLabel[question.question_type]}</td>
-        <td>{cell ? <WrittenScoreBadge correct={cell.correct} /> : <span className="muted">未交卷</span>}</td>
+        <td>{cell ? question.question_type === "short_answer" && cell.earned_score !== null
+          ? <span className="badge route">已复核 · {cell.earned_score} / {question.score} 分</span>
+          : <WrittenScoreBadge correct={cell.correct} /> : <span className="muted">未交卷</span>}</td>
         <td><div className="written-practice-actions">
-          {!task.is_closed && question.is_available && <button type="button" className="ghost" onClick={() => onAnswer(question)}>{cell ? "再练一次" : "开始作答"}</button>}
+          {!task.is_closed && question.is_available && (!cell || question.question_type !== "short_answer") && <button type="button" className="ghost" onClick={() => onAnswer(question)}>{cell ? "再练一次" : "开始作答"}</button>}
           {cell && <button type="button" className="ghost" onClick={() => onReview(cell.id, question)}>查看作答</button>}
           {!question.is_available && <span className="muted">已下架</span>}
           {task.is_closed && !cell && question.is_available && <span className="muted">已截止</span>}
@@ -125,7 +131,7 @@ function TaskProblems({ task, onAnswer, onReview }: {
   </table></div>;
 }
 
-function TaskMatrix({ task }: { task: WrittenAssignmentDetail }) {
+function TaskMatrix({ task, onReview }: { task: WrittenAssignmentDetail; onReview: (id: number) => void }) {
   const [filter, setFilter] = useState<{ index: number; kind: "wrong" | "missing" }>();
   const visible = filter ? task.rows.filter((row) => {
     const cell = row.cells[filter.index];
@@ -138,18 +144,20 @@ function TaskMatrix({ task }: { task: WrittenAssignmentDetail }) {
     </p>
     <details className="written-task-topics"><summary>单题学情</summary>
       <div className="table-scroll"><table>
-        <thead><tr><th scope="col">题目</th><th scope="col">答对</th><th scope="col">答错</th><th scope="col">未交</th></tr></thead>
+        <thead><tr><th scope="col">题目</th><th scope="col">满分</th><th scope="col">未满分</th><th scope="col">待复核</th><th scope="col">未交</th></tr></thead>
         <tbody>{task.questions.map((question, index) => {
           const cells = task.rows.map((row) => row.cells[index]);
           const right = cells.filter((cell) => cell?.correct === true).length;
           const wrong = cells.filter((cell) => cell?.correct === false).length;
-          const missing = cells.length - right - wrong;
+          const pending = cells.filter((cell) => cell?.correct === null).length;
+          const missing = cells.length - right - wrong - pending;
           return <tr key={question.id}>
             <th scope="row"><div className="written-excerpt">第 {index + 1} 题 · {question.stem}</div>
               <small className="muted">v{question.revision}{question.is_available ? "" : " · 已下架"}</small></th>
             <td>{right}</td>
-            <td>{wrong > 0 ? <button className="ghost" type="button" aria-label={`查看第 ${index + 1} 题答错的 ${wrong} 人`}
+            <td>{wrong > 0 ? <button className="ghost" type="button" aria-label={`查看第 ${index + 1} 题未满分的 ${wrong} 人`}
               onClick={() => setFilter({ index, kind: "wrong" })}>{wrong} 人</button> : "0"}</td>
+            <td>{pending}</td>
             <td>{missing > 0 ? <button className="ghost" type="button" aria-label={`查看第 ${index + 1} 题未交的 ${missing} 人`}
               onClick={() => setFilter({ index, kind: "missing" })}>{missing} 人</button> : "0"}</td>
           </tr>;
@@ -157,7 +165,7 @@ function TaskMatrix({ task }: { task: WrittenAssignmentDetail }) {
       </table></div>
     </details>
     {filter && <div className="written-task-nav">
-      <span role="status">第 {filter.index + 1} 题{filter.kind === "wrong" ? "答错" : "未交"} · {visible.length} 人</span>
+      <span role="status">第 {filter.index + 1} 题{filter.kind === "wrong" ? "未满分" : "未交"} · {visible.length} 人</span>
       <button type="button" className="ghost" onClick={() => setFilter(undefined)}>恢复全班名单</button>
     </div>}
     {visible.length === 0 ? <p className="muted">{filter ? "当前没有符合条件的学生。" : "当前班级无名单内学生。"}</p> : <div className="table-scroll"><table aria-label="班级逐题学情">
@@ -168,7 +176,10 @@ function TaskMatrix({ task }: { task: WrittenAssignmentDetail }) {
       <tbody>{visible.map((row) => <tr key={row.student_id}>
         <th scope="row">{row.name}</th>
         {row.cells.map((cell, index) => <td key={task.questions[index].id}>
-          {cell ? <WrittenScoreBadge correct={cell.correct} /> : <span className="muted">未交卷</span>}
+          {cell && task.questions[index].question_type === "short_answer"
+            ? <button type="button" className="ghost" onClick={() => onReview(cell.id)}>
+              {cell.earned_score === null ? "待复核" : `${cell.earned_score} / ${task.questions[index].score} 分`}
+            </button> : cell ? <WrittenScoreBadge correct={cell.correct} /> : <span className="muted">未交卷</span>}
         </td>)}
         <td>{row.submitted_count} / {task.questions.length}</td><td>{row.correct_count} / {task.questions.length}</td>
       </tr>)}</tbody>

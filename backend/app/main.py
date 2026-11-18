@@ -32,6 +32,7 @@ from app.api.v1 import (
     written_papers,
     written_progress,
     written_questions,
+    written_short_grades,
 )
 from app.capabilities.sandbox import SandboxError
 from app.core.config import settings
@@ -85,6 +86,7 @@ app.include_router(students.router, prefix="/api/v1")
 app.include_router(written_questions.router, prefix="/api/v1")
 app.include_router(written_questions.attempts_router, prefix="/api/v1")
 app.include_router(written_assignments.router, prefix="/api/v1")
+app.include_router(written_short_grades.router, prefix="/api/v1")
 app.include_router(written_help.router, prefix="/api/v1")
 app.include_router(written_knowledge.router, prefix="/api/v1")
 app.include_router(written_knowledge.admin_router, prefix="/api/v1")

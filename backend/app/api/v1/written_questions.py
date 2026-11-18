@@ -19,17 +19,17 @@ from app.domain.models import (
     WrittenImportAsset,
     WrittenQuestion,
     WrittenQuestionVersion,
+    WrittenShortGrade,
 )
 from app.services.admin_service import management_lock
 from app.services.written_assignments import assignment_version
 from app.services.written_bank_storage import load_bytes, load_snapshot
 from app.services.written_grading import AttemptInput, is_correct
-from app.services.written_review import visible_query
+from app.services.written_review import QuestionType, visible_query
 
 router = APIRouter(prefix="/written/questions", tags=["written-questions"])
 attempts_router = APIRouter(prefix="/written/attempts", tags=["written-attempts"])
 PracticeStudent = Annotated[User, Depends(require_role("student"))]
-QuestionType = Literal["single_choice", "multiple_choice", "true_false", "fill_blank"]
 PAGE_SIZE = 25
 
 
@@ -166,7 +166,8 @@ def attempt_summary(attempt: WrittenAttempt, revision: int) -> dict:
 
 
 def attempt_out(
-    attempt: WrittenAttempt, version: WrittenQuestionVersion, data: dict, assignment_id: int | None
+    attempt: WrittenAttempt, version: WrittenQuestionVersion, data: dict, assignment_id: int | None,
+    grade: WrittenShortGrade | None = None,
 ) -> dict:
     urls = [
         f"/api/v1/written/attempts/{attempt.id}/assets/{i}"
@@ -176,9 +177,11 @@ def attempt_out(
         **attempt_summary(attempt, version.revision),
         "assignment_id": assignment_id,
         "response": attempt.response,
-        "answer": data["answer"],
-        "explanation": data["explanation"],
+        "answer": data["answer"] if attempt.correct is not None else None,
+        "explanation": data["explanation"] if attempt.correct is not None else "",
         "question": question_out(version, data, urls),
+        **({"teacher_grade": {"points": grade.points, "feedback": grade.feedback,
+                              "graded_at": grade.created_at}} if grade else {}),
     }
 
 
@@ -224,7 +227,8 @@ async def replay_attempt(
     if attempt.request_digest != digest:
         raise submission_conflict("written_request_conflict", "该请求编号已用于另一份作答")
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
-    return {**attempt_out(attempt, version, data, assignment_id), "replayed": True}
+    grade = await session.get(WrittenShortGrade, attempt.id) if attempt.correct is not None and data["question_type"] == "short_answer" else None
+    return {**attempt_out(attempt, version, data, assignment_id, grade), "replayed": True}
 
 
 @attempts_router.post("")
@@ -269,7 +273,20 @@ async def submit_attempt(
     if snapshot is None:
         snapshot = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
     submitted = body.response.model_dump(mode="json")
-    correct = is_correct(snapshot, submitted)
+    if snapshot["question_type"] == "short_answer":
+        if body.assignment_id is None:
+            raise HTTPException(409, "简答题须从教师布置的班级任务提交")
+        if submitted["kind"] != "text":
+            raise HTTPException(422, "请提交简答文本")
+        already = await session.scalar(select(WrittenAttempt.id)
+            .join(WrittenAssignmentAttempt, WrittenAssignmentAttempt.attempt_id == WrittenAttempt.id)
+            .where(WrittenAttempt.student_id == user.id, WrittenAttempt.question_id == body.question_id,
+                   WrittenAssignmentAttempt.assignment_id == body.assignment_id).limit(1))
+        if already is not None:
+            raise HTTPException(409, "本专项的这道简答已提交，请查看原作答")
+        correct = None
+    else:
+        correct = is_correct(snapshot, submitted)
     score = snapshot["score"]
     attempt = WrittenAttempt(
         student_id=user.id,
@@ -284,7 +301,7 @@ async def submit_attempt(
             "level": snapshot["level"],
         },
         correct=correct,
-        earned_score=score if correct else 0.0,
+        earned_score=None if correct is None else score if correct else 0.0,
         max_score=score,
     )
     session.add(attempt)
@@ -326,9 +343,12 @@ async def list_attempts(
         .where(WrittenAttempt.student_id == user.id)
     )
     if view != "history":
+        # 简答仅在班级专项内完成，成绩和反馈通过历史作答查看。
+        stmt = stmt.where(WrittenAttempt.question_summary["question_type"].as_string() != "short_answer")
         other = aliased(WrittenAttempt)
         related = select(other.id).where(
-            other.student_id == user.id, other.question_id == WrittenAttempt.question_id
+            other.student_id == user.id, other.question_id == WrittenAttempt.question_id,
+            other.question_summary["question_type"].as_string() != "short_answer",
         )
         stmt = stmt.where(~related.where(other.id > WrittenAttempt.id).exists())
         if view == "wrong":
@@ -366,7 +386,8 @@ async def read_attempt(
     attempt, version = await owned_attempt(session, user.id, attempt_id)
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
     link = await session.get(WrittenAssignmentAttempt, attempt_id)
-    return attempt_out(attempt, version, data, link.assignment_id if link else None)
+    grade = await session.get(WrittenShortGrade, attempt.id) if attempt.correct is not None and data["question_type"] == "short_answer" else None
+    return attempt_out(attempt, version, data, link.assignment_id if link else None, grade)
 
 
 @attempts_router.get("/{attempt_id}/assets/{index}")

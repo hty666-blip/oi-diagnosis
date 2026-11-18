@@ -173,7 +173,7 @@ function CatalogRows({ rows, filtered, onOpen, onRefresh }: {
     <tbody>{rows.map((row) => <tr key={row.id}>
       <td><span className="muted">#{row.id}</span><div className="written-excerpt">{row.stem}</div></td>
       <td>CSP-{row.level}</td><td>{writtenTypeLabel[row.question_type]}</td><td>{row.score}</td>
-      <td><button type="button" className="ghost" onClick={() => onOpen(row)}>开始作答</button></td>
+      <td><button type="button" className="ghost" onClick={() => onOpen(row)}>{row.question_type === "short_answer" ? "查看题面" : "开始作答"}</button></td>
     </tr>)}</tbody>
   </table></div>;
 }
@@ -192,7 +192,8 @@ function AttemptRows({ rows, list, onOpen, onRetry, onBank }: {
     <thead><tr><th>题目</th><th>结果</th><th>得分</th><th>提交时间</th><th>操作</th></tr></thead>
     <tbody>{rows.map((row) => <tr key={row.id}>
       <td><span className="muted">#{row.question_id} / v{row.revision}</span><div className="written-excerpt">{row.stem}</div></td>
-      <td><WrittenScoreBadge correct={row.correct} /></td><td>{row.earned_score} / {row.max_score}</td>
+      <td>{row.question_type === "short_answer" && row.correct !== null ? <span className="badge route">已复核</span>
+        : <WrittenScoreBadge correct={row.correct} />}</td><td>{row.earned_score === null ? "—" : `${row.earned_score} / ${row.max_score}`}</td>
       <td>{new Date(row.submitted_at).toLocaleString("zh-CN")}</td>
       <td><div className="written-practice-actions">
         <button type="button" className="ghost" onClick={() => onOpen(row.id)}>查看作答</button>

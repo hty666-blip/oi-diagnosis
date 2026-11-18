@@ -6,7 +6,7 @@ import { ErrorNotice } from "./RecordUI";
 import WrittenQuestionReview, { WrittenReviewHistory } from "./WrittenQuestionReview";
 import WrittenCoverage, { type WrittenCoveragePoint } from "./WrittenCoverage";
 
-const types: Record<string, string> = { single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空" };
+const types: Record<string, string> = { single_choice: "单选", multiple_choice: "多选", true_false: "判断", fill_blank: "填空", short_answer: "简答" };
 const flags: Record<string, string> = {
   answer_unverified: "答案未核对", answer_conflict: "答案冲突", scoring_rule_unknown: "计分规则待确认",
   deduplication_requires_review: "去重关系待核对", withdrawn_question_requires_review: "撤题线索",

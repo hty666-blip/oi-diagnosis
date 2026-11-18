@@ -6,13 +6,14 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from sqlalchemy import select
 
+from app.core.text_validation import StorageText
 from app.domain.models import (
     WrittenCandidate,
     WrittenImportAsset,
@@ -63,16 +64,32 @@ class OptionInput(BaseModel):
     text: str = Field(max_length=4000)
 
 
+QuestionType = Literal["single_choice", "multiple_choice", "true_false", "fill_blank", "short_answer"]
+
+
+class RubricItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    criterion: StorageText = Field(min_length=3, max_length=500)
+    points: int = Field(strict=True, ge=1, le=100)
+
+
+class ShortAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kind: Literal["rubric"]
+    reference: StorageText = Field(min_length=5, max_length=4000)
+    rubric: Annotated[list[RubricItem], Field(min_length=1, max_length=8)]
+
+
 class QuestionDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     stem: str = Field(max_length=30000)
     shared_stem: str = Field(default="", max_length=60000)
-    question_type: Literal["single_choice", "multiple_choice", "true_false", "fill_blank"]
+    question_type: QuestionType
     level: Literal["J", "S"] | None = None
     options: list[OptionInput] = Field(default_factory=list, max_length=26)
     answer: dict = Field(default_factory=dict)
     score: float = Field(default=0, strict=True, ge=0, le=100, allow_inf_nan=False)
-    scoring_rule: Literal["all_or_nothing", "exact_text", "unconfirmed"] = "unconfirmed"
+    scoring_rule: Literal["all_or_nothing", "exact_text", "teacher_rubric", "unconfirmed"] = "unconfirmed"
     primary_knowledge_point_id: str | None = Field(default=None, max_length=80)
     secondary_knowledge_point_ids: list[str] = Field(default_factory=list, max_length=8)
     explanation: str = Field(default="", max_length=12000)
@@ -100,7 +117,7 @@ def initial_draft(record: dict, group: dict | None) -> dict:
         "answer": record.get("answer") or {},
         "score": record.get("score") or 0,
         "scoring_rule": record.get("scoring_rule")
-        if record.get("scoring_rule") in {"all_or_nothing", "exact_text"}
+        if record.get("scoring_rule") in {"all_or_nothing", "exact_text", "teacher_rubric"}
         else "unconfirmed",
         "primary_knowledge_point_id": record.get("primary_knowledge_point_id"),
         "secondary_knowledge_point_ids": record.get("secondary_knowledge_point_ids", []),
@@ -211,6 +228,16 @@ def validate_approval(
             or type(answer.get("value")) is not bool
         ):
             raise HTTPException(422, "判断题答案须明确选择正确或错误")
+    elif kind == "short_answer":
+        try:
+            rubric = ShortAnswer.model_validate(answer)
+        except ValidationError as exc:
+            raise HTTPException(422, "请填写简答参考答案及 1 至 8 条评分要点，每项分值须为正整数") from exc
+        if options or sum(item.points for item in rubric.rubric) != draft["score"]:
+            raise HTTPException(422, "简答题无需选项，评分要点的分值合计须等于题目分值")
+        if len({item.criterion.casefold() for item in rubric.rubric}) != len(rubric.rubric):
+            raise HTTPException(422, "简答评分要点不能重复")
+        draft["answer"] = rubric.model_dump(mode="json")
     else:
         accepted = answer.get("accepted")
         if (
@@ -222,9 +249,9 @@ def validate_approval(
             or answer.get("normalization") not in {"exact", "trim_outer_whitespace"}
         ):
             raise HTTPException(422, "填空题须配置有效答案及明确的空白比较规则")
-    expected_rule = "exact_text" if kind == "fill_blank" else "all_or_nothing"
+    expected_rule = {"fill_blank": "exact_text", "short_answer": "teacher_rubric"}.get(kind, "all_or_nothing")
     if draft["scoring_rule"] != expected_rule:
-        raise HTTPException(422, "计分规则待确认：本批支持全对得分，填空按指定文本规则比较")
+        raise HTTPException(422, "请确认与题型匹配的计分规则")
     # 图片仅允许沿用这一题及其题组的固定资源。
     material = "\n".join([draft["stem"], draft["shared_stem"], *(o["text"] for o in options)])
     for path in re.findall(r"!\[[^\]]*\]\(([^)\n]+)\)", material):

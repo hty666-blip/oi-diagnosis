@@ -148,7 +148,7 @@ async def assignment_detail(session, user, assignment, group):
             "name": student.display_name or student.username,
             "cells": marks,
             "submitted_count": sum(mark is not None for mark in marks),
-            "correct_count": sum(mark is not None and mark["correct"] for mark in marks),
+            "correct_count": sum(mark is not None and mark["correct"] is True for mark in marks),
         })
     return {
         **assignment_summary(assignment, group),

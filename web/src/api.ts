@@ -482,9 +482,9 @@ export interface WrittenBatch {
   summary: { questions: number; papers: number; groups: number; assets: number; knowledge_nodes: number; knowledge_leaves: number; source_canonical_count: number; candidate_count: number; published_count: number; approved_count?: number; withdrawn_count?: number; flags: Record<string, number> };
 }
 export interface WrittenDraft {
-  stem: string; shared_stem: string; question_type: "single_choice" | "multiple_choice" | "true_false" | "fill_blank";
+  stem: string; shared_stem: string; question_type: "single_choice" | "multiple_choice" | "true_false" | "fill_blank" | "short_answer";
   level: "J" | "S" | null; options: { id: string; text: string }[]; answer: Record<string, unknown>; score: number;
-  scoring_rule: "all_or_nothing" | "exact_text" | "unconfirmed"; primary_knowledge_point_id: string | null;
+  scoring_rule: "all_or_nothing" | "exact_text" | "teacher_rubric" | "unconfirmed"; primary_knowledge_point_id: string | null;
   secondary_knowledge_point_ids: string[]; explanation: string; answer_reference: string;
 }
 export interface WrittenPublication { id: number; revision: number; catalog_version: number; is_active: boolean }
@@ -519,7 +519,25 @@ export type WrittenResponse =
   | { kind: "boolean"; value: boolean }
   | { kind: "text"; value: string };
 export type WrittenReferenceAnswer = WrittenResponse
-  | { kind: "text"; accepted: string[]; normalization: "exact" | "trim_outer_whitespace" };
+  | { kind: "text"; accepted: string[]; normalization: "exact" | "trim_outer_whitespace" }
+  | WrittenRubricAnswer;
+export interface WrittenRubricAnswer {
+  kind: "rubric"; reference: string; rubric: { criterion: string; points: number }[];
+}
+export interface WrittenTeacherGrade { points: number[]; feedback: string; graded_at: string }
+export interface WrittenShortSuggestion {
+  awards: { points: number; quote: string; reason: string }[];
+  review_note: string;
+}
+export interface WrittenShortReview {
+  question: WrittenPublishedQuestion;
+  response: string;
+  answer: WrittenRubricAnswer;
+  grade: WrittenTeacherGrade | null;
+  read_only: boolean;
+  can_suggest: boolean;
+  suggestion: WrittenShortSuggestion | null;
+}
 export type WrittenAttemptView = "history" | "wrong" | "corrected";
 
 export interface WrittenProgressRow {
@@ -623,7 +641,7 @@ export interface WrittenAssignmentDetail extends WrittenAssignmentSummary {
   rows: {
     student_id: number;
     name: string;
-    cells: ({ id: number; correct: boolean; earned_score: number } | null)[];
+    cells: ({ id: number; correct: boolean | null; earned_score: number | null } | null)[];
     submitted_count: number;
     correct_count: number;
   }[];
@@ -641,8 +659,8 @@ export interface WrittenAttemptResult {
   question_id: number;
   version_id: string;
   revision: number;
-  correct: boolean;
-  earned_score: number;
+  correct: boolean | null;
+  earned_score: number | null;
   max_score: number;
   submitted_at: string;
 }
@@ -655,9 +673,10 @@ export interface WrittenAttemptSummary extends WrittenAttemptResult {
 export interface WrittenAttempt extends WrittenAttemptResult {
   assignment_id: number | null;
   response: WrittenResponse;
-  answer: WrittenReferenceAnswer;
+  answer: WrittenReferenceAnswer | null;
   explanation: string;
   question: WrittenPublishedQuestion;
+  teacher_grade?: WrittenTeacherGrade;
   replayed?: boolean;
 }
 export type WrittenHelpReference = "attempt" | "review" | "knowledge" | "prior_practice";
@@ -770,6 +789,12 @@ export const api = {
   writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
   writtenAssignment: (id: number, signal?: AbortSignal) =>
     get<WrittenAssignmentDetail>(`/written/assignments/${id}`, { signal }),
+  writtenShortReview: (assignmentId: number, attemptId: number, signal?: AbortSignal) =>
+    get<WrittenShortReview>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}`, { signal }),
+  suggestWrittenShortReview: (assignmentId: number, attemptId: number, signal?: AbortSignal) =>
+    post<WrittenShortSuggestion>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}/suggestion`, {}, { signal }),
+  confirmWrittenShortReview: (assignmentId: number, attemptId: number, body: { points: number[]; feedback: string }, signal?: AbortSignal) =>
+    post<WrittenTeacherGrade>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}`, body, { signal }),
   publishWrittenAssignment: (body: WrittenAssignmentInput, signal?: AbortSignal) =>
     post<WrittenAssignmentSummary & { replayed: boolean }>("/written/assignments", body, { signal }),
   writtenAssignmentQuestion: (assignmentId: number, id: number, signal?: AbortSignal) =>
@@ -790,7 +815,7 @@ export const api = {
     post<WrittenAttempt>("/written/attempts", body, { signal }),
   writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
     const path = url.slice(BASE.length);
-    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|(?:assignments|exams)\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
+    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|(?:assignments|exams)\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+|assignments\/[1-9]\d*\/short-reviews\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
       throw new Error("题图链接无效，请重新打开题目。");
     }
     return getBlob(path, signal);

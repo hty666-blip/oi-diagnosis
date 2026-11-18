@@ -46,7 +46,9 @@ async def recommendations(session, pending, first_attempts, taxonomies):
         return {}
     index = tuple_(Version.batch_id, catalog_level, topic_id)
     fields = (Question.id, Version.id, Version.batch_id, catalog_level, exercise)
-    catalog = visible_query().with_only_columns(*fields).order_by(Question.id)
+    catalog = visible_query().with_only_columns(*fields).where(
+        WrittenCandidate.question_type != "short_answer",
+    ).order_by(Question.id)
     suggestions = {}
     rows = await session.execute(catalog.add_columns(topic_id).where(index.in_(list(pending))))
     for question_id, version_id, batch, level, key, point in rows:
@@ -82,7 +84,8 @@ async def progress(response: Response, session: SessionDep, user: PracticeStuden
         .join(Question, Question.id == WrittenAttempt.question_id)
         .join(Version, (Version.id == WrittenAttempt.version_id) & (Version.question_id == Question.id))
         .join(WrittenCandidate, WrittenCandidate.id == Question.candidate_id)
-        .where(WrittenAttempt.student_id == user.id)
+        .where(WrittenAttempt.student_id == user.id,
+               WrittenAttempt.question_summary["question_type"].as_string() != "short_answer")
     )
     recent = (
         await session.execute(

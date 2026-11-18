@@ -133,7 +133,7 @@ export default function WrittenPapers({ active, examId, onExamId, onPractice }: 
         <tbody>{detail.items.map((question) => <tr key={question.id}>
           <td>{question.number}</td><td><div className="written-excerpt">{question.stem}</div></td>
           <td>{writtenTypeLabel[question.question_type]}</td><td>{question.score}</td>
-          <td><button className="ghost" type="button" onClick={() => onPractice(question)}>开始作答</button></td>
+          <td><button className="ghost" type="button" onClick={() => onPractice(question)}>{question.question_type === "short_answer" ? "查看题面" : "开始作答"}</button></td>
         </tr>)}</tbody>
       </table></div>
     </> : papers?.items.length ? <div className="table-scroll"><table>

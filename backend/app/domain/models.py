@@ -180,10 +180,31 @@ class WrittenAttempt(Base):
     request_digest: Mapped[str] = mapped_column(String(64))
     response: Mapped[dict] = mapped_column(JSON)
     question_summary: Mapped[dict] = mapped_column(JSON)
-    correct: Mapped[bool] = mapped_column(Boolean)
-    earned_score: Mapped[float] = mapped_column(Double)
+    correct: Mapped[bool | None] = mapped_column(Boolean)
+    earned_score: Mapped[float | None] = mapped_column(Double)
     max_score: Mapped[float] = mapped_column(Double)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenShortGrade(Base):
+    """人工确认的一次简答评分；学生作答与评分要点保留原版本。"""
+
+    __tablename__ = "written_short_grade"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    points: Mapped[list[int]] = mapped_column(JSON)
+    feedback: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenShortDraft(Base):
+    """持久化简答草评的处理租约和有效建议。"""
+
+    __tablename__ = "written_short_draft"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    claim: Mapped[str] = mapped_column(String(36))
+    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
+    suggestion: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
 
 
 class WrittenAssignment(Base):
