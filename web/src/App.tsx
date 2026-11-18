@@ -9,6 +9,7 @@ import StudentProfiles from "./components/StudentProfiles";
 import AdminWorkspace from "./components/AdminWorkspace";
 import PasswordSettings from "./components/PasswordSettings";
 import Markdown from "./Markdown";
+import Modal from "./components/Modal";
 import { CardDownload, ErrorNotice, EvidencePanel, VerdictBadge } from "./components/RecordUI";
 import ReviewPanel, { ReviewHistoryPanel } from "./components/ReviewPanel";
 import AgentCollaboration from "./components/AgentCollaboration";
@@ -65,6 +66,8 @@ export default function App() {
   const [practice, setPractice] = useState<TrainingPractice | null>(null);
   const [trainingTarget, setTrainingTarget] = useState<number>();
   const [writtenExamTarget, setWrittenExamTarget] = useState<number>();
+  const [examAnswerPending, setExamAnswerPending] = useState(false);
+  const [leaveExam, setLeaveExam] = useState<(() => void) | null>(null);
   const [sessionNotice, setSessionNotice] = useState("");
 
   useEffect(() => {
@@ -109,6 +112,7 @@ export default function App() {
 
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
+    setLeaveExam(null);
     setWrittenExamTarget(undefined);
     setSessionNotice("");
     setRestore(null);
@@ -121,6 +125,19 @@ export default function App() {
     ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "written", label: "初赛练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
     : [...(user.role === "admin" ? [{ key: "admin" as const, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "written", label: "初赛任务" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
   const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
+  function requestExamExit(action: () => void) {
+    if (examAnswerPending) setLeaveExam(() => action);
+    else action();
+  }
+  function navigate(next: View) {
+    if (next === "written" && view === "written") return;
+    requestExamExit(() => {
+      if (next === "submit") { setPractice(null); setRestore(null); }
+      if (next === "trainings") setTrainingTarget(undefined);
+      if (next === "written") setWrittenExamTarget(undefined);
+      setView(next);
+    });
+  }
 
   return (
     <div className="shell">
@@ -131,11 +148,11 @@ export default function App() {
       </header>
       <aside className="sidebar">
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); if (item.key === "written") setWrittenExamTarget(undefined); setView(item.key); }}><NavIcon name={item.key} />{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => navigate(item.key)}><NavIcon name={item.key} />{item.label}</button>)}
         </nav>
         <div className="sidebar-foot">
-          <button className="ghost" onClick={() => setView("password")}>修改密码</button>
-          <button className="logout" onClick={() => { clearSession(); setUser(null); }}>退出</button>
+          <button className="ghost" onClick={() => navigate("password")}>修改密码</button>
+          <button className="logout" onClick={() => requestExamExit(() => { clearSession(); setUser(null); })}>退出</button>
         </div>
       </aside>
       <main className="main" id="main">
@@ -148,7 +165,8 @@ export default function App() {
           } : undefined} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "written" && user.role === "student" && <Suspense fallback={<p role="status">正在打开初赛练习…</p>}>
-          <WrittenPractice key={user.id} userId={user.id} initialExamId={writtenExamTarget} />
+          <WrittenPractice key={user.id} userId={user.id} initialExamId={writtenExamTarget}
+            onExamAnswerPending={setExamAnswerPending} requestExamExit={requestExamExit} />
         </Suspense>}
         {view === "written" && user.role !== "student" && <Suspense fallback={<p role="status">正在打开初赛任务…</p>}>
           <WrittenAssignments key={user.id} />
@@ -156,6 +174,13 @@ export default function App() {
         {view === "coach" && user.role !== "student" && <CoachView userId={user.id} />}
         {view === "admin" && user.role === "admin" && <AdminWorkspace onTeaching={() => setView("trainings")} onReview={() => setView("coach")} />}
       </main>
+      {leaveExam && <Modal title="离开模拟答卷" onClose={() => setLeaveExam(null)}>
+        <p role="status">{examAnswerPending ? "本题还有作答未同步，离开后以服务器已保存的答案为准。" : "现在可以离开，答卷以服务器记录为准。"}</p>
+        <div className="row">
+          <button className="btn-primary" type="button" autoFocus onClick={() => setLeaveExam(null)}>留在答卷</button>
+          <button className="ghost" type="button" onClick={() => { setLeaveExam(null); leaveExam(); }}>{examAnswerPending ? "仍要离开" : "离开答卷"}</button>
+        </div>
+      </Modal>}
     </div>
   );
 }

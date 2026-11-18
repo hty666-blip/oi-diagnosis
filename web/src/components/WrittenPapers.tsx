@@ -7,10 +7,12 @@ import { writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 const sourceLabels = { official_paper: "真题", simulation: "模拟题", original_demo: "自编演示" };
 
-export default function WrittenPapers({ active, examId, onExamId, onPractice, onExamRetry, onExamAttempt, onExamPractice }: {
+export default function WrittenPapers({ active, examId, onExamId, onExamAnswerPending, requestExamExit, onPractice, onExamRetry, onExamAttempt, onExamPractice }: {
   active: boolean;
   examId: number | null;
   onExamId: (id: number | null) => void;
+  onExamAnswerPending: (pending: boolean) => void;
+  requestExamExit: (action: () => void) => void;
   onPractice: (question: WrittenPracticePick) => void;
   onExamRetry: (id: number, item: WrittenExamReviewItem) => void;
   onExamAttempt: (id: number, attemptId: number) => void;
@@ -96,7 +98,8 @@ export default function WrittenPapers({ active, examId, onExamId, onPractice, on
       setRestoreError("");
       onExamId(null);
     }
-    if (exam?.id === examId) return <WrittenExamView key={exam.id} initial={exam} onBack={leaveExam}
+    if (exam?.id === examId) return <WrittenExamView key={exam.id} initial={exam}
+      onBack={() => requestExamExit(leaveExam)} onAnswerPending={onExamAnswerPending}
       onRetry={(item) => { setExam(undefined); onExamRetry(examId, item); }}
       onAttempt={(id) => { setExam(undefined); onExamAttempt(examId, id); }}
       onStudyPractice={(question) => { setExam(undefined); onExamPractice(examId, question); }} />;

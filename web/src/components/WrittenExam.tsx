@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   api, ApiError, messageOf, type WrittenExam, type WrittenExamQuestion,
   type WrittenExamReviewItem, type WrittenExamSummary, type WrittenPracticePick, type WrittenResponse,
@@ -59,9 +59,10 @@ function ExamQuestion({ value, draft, disabled, onChange }: {
   </div>;
 }
 
-export default function WrittenExamView({ initial, onBack, onRetry, onAttempt, onStudyPractice }: {
+export default function WrittenExamView({ initial, onBack, onAnswerPending, onRetry, onAttempt, onStudyPractice }: {
   initial: WrittenExam;
   onBack: () => void;
+  onAnswerPending: (pending: boolean) => void;
   onRetry: (item: WrittenExamReviewItem) => void;
   onAttempt: (id: number) => void;
   onStudyPractice: (question: WrittenPracticePick) => void;
@@ -90,6 +91,13 @@ export default function WrittenExamView({ initial, onBack, onRetry, onAttempt, o
   const finished = exam.status === "submitted";
   const normalized = question && hasAnswer(draft, question.question.question_type) ? draft : null;
   const dirty = Boolean(question && !sameAnswer(normalized, question.response));
+  const answerPending = !finished && (dirty || saving);
+
+  useLayoutEffect(() => {
+    if (!answerPending) return;
+    onAnswerPending(true);
+    return () => onAnswerPending(false);
+  }, [answerPending, onAnswerPending]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -146,11 +154,11 @@ export default function WrittenExamView({ initial, onBack, onRetry, onAttempt, o
   }, [exam.id, question, dirty, normalized, working, saving, submitting, saveError]);
 
   useEffect(() => {
-    if (!dirty || !working) return;
+    if (!answerPending) return;
     function warn(event: BeforeUnloadEvent) { event.preventDefault(); }
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty, working]);
+  }, [answerPending]);
 
   async function submit() {
     const signal = lifetime.current?.signal;
@@ -185,7 +193,7 @@ export default function WrittenExamView({ initial, onBack, onRetry, onAttempt, o
   return <div className="written-practice-list">
     <section className="card">
       <div className="card-head"><h2>{exam.title}</h2>
-        <button className="ghost" type="button" disabled={!finished && (dirty || saving || submitting)} onClick={onBack}>返回试卷</button>
+        <button className="ghost" type="button" disabled={submitting} onClick={onBack}>返回试卷</button>
       </div>
       <div className="written-practice-actions">
         {finished ? <strong>{exam.earned_score} / {exam.max_score} 分</strong>

@@ -20,7 +20,11 @@ const emptyMessages: Record<"bank" | WrittenAttemptView, string> = {
   corrected: "暂无已订正的题目。错题重新答对后会出现在这里。",
 };
 
-export default function WrittenPractice({ userId, initialExamId }: { userId: number; initialExamId?: number }) {
+export default function WrittenPractice({ userId, initialExamId, onExamAnswerPending, requestExamExit }: {
+  userId: number; initialExamId?: number;
+  onExamAnswerPending: (pending: boolean) => void;
+  requestExamExit: (action: () => void) => void;
+}) {
   const [position, setPosition] = useState<WrittenPosition>(() => initialExamId === undefined
     ? readWrittenPosition(userId) : { list: "papers", target: { kind: "exam", id: initialExamId } });
   const { list, target } = position;
@@ -83,6 +87,10 @@ export default function WrittenPractice({ userId, initialExamId }: { userId: num
     }
   }
 
+  function switchTab(next: WrittenList) {
+    requestExamExit(() => showList(next));
+  }
+
   function open(next: WrittenTarget) {
     setReceipt(undefined);
     setPosition({ list, target: next });
@@ -106,13 +114,13 @@ export default function WrittenPractice({ userId, initialExamId }: { userId: num
       </button>}
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
-      <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
-      <button className="ghost" type="button" aria-pressed={list === "papers"} onClick={() => showList("papers")}>试卷</button>
-      <button className="ghost" type="button" aria-pressed={list === "assignments"} onClick={() => showList("assignments")}>班级任务</button>
-      <button className="ghost" type="button" aria-pressed={list === "knowledge"} onClick={() => showList("knowledge")}>知识库</button>
-      <button className="ghost" type="button" aria-pressed={list === "progress"} onClick={() => showList("progress")}>学习路线</button>
-      <button className="ghost" type="button" aria-pressed={list === "history"} onClick={() => showList("history")}>作答记录</button>
-      <button className="ghost" type="button" aria-pressed={inBook} onClick={() => showList(inBook ? list : "wrong")}>错题本</button>
+      <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => switchTab("bank")}>题库</button>
+      <button className="ghost" type="button" aria-pressed={list === "papers"} onClick={() => switchTab("papers")}>试卷</button>
+      <button className="ghost" type="button" aria-pressed={list === "assignments"} onClick={() => switchTab("assignments")}>班级任务</button>
+      <button className="ghost" type="button" aria-pressed={list === "knowledge"} onClick={() => switchTab("knowledge")}>知识库</button>
+      <button className="ghost" type="button" aria-pressed={list === "progress"} onClick={() => switchTab("progress")}>学习路线</button>
+      <button className="ghost" type="button" aria-pressed={list === "history"} onClick={() => switchTab("history")}>作答记录</button>
+      <button className="ghost" type="button" aria-pressed={inBook} onClick={() => switchTab(inBook ? list : "wrong")}>错题本</button>
     </nav>
     {target?.kind === "question" && <WrittenOpenQuestion key={`${target.examId ?? "bank"}:${target.id}`} userId={userId} target={target}
       onVersion={(version) => setPosition({ list, target: { ...target, version } })} onSubmitted={showResult} />}
@@ -123,6 +131,7 @@ export default function WrittenPractice({ userId, initialExamId }: { userId: num
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "papers" && <WrittenPapers active={!target || target.kind === "exam"}
       examId={target?.kind === "exam" ? target.id : null}
+      onExamAnswerPending={onExamAnswerPending} requestExamExit={requestExamExit}
       onExamId={(id) => id === null ? showList("papers") : open({ kind: "exam", id })}
       onExamRetry={(id, item) => open({ kind: "question", id: item.question_id, version: item.version_id, examId: id })}
       onExamAttempt={(id, attemptId) => open({ kind: "attempt", id: attemptId, examId: id })}
