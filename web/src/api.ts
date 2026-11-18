@@ -698,6 +698,7 @@ export interface WrittenAssignmentInput {
   due_at: string;
   request_id: string;
   questions: { id: number; version_id: string }[];
+  student_ids?: number[];
 }
 export interface WrittenAttemptResult {
   id: number;
@@ -843,6 +844,8 @@ export const api = {
   submitWrittenExam: (id: number, signal?: AbortSignal) => post<WrittenExam>(`/written/exams/${id}/submit`, undefined, { signal }),
   writtenAssignments: (signal?: AbortSignal) => get<WrittenAssignmentSummary[]>("/written/assignments", { signal }),
   writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
+  writtenAssignmentStudents: (classId: number, signal?: AbortSignal) =>
+    get<{ id: number; name: string; username: string }[]>(`/written/assignments/classes/${classId}/students`, { signal }),
   writtenAssignment: (id: number, signal?: AbortSignal) =>
     get<WrittenAssignmentDetail>(`/written/assignments/${id}`, { signal }),
   writtenShortReview: (assignmentId: number, attemptId: number, signal?: AbortSignal) =>

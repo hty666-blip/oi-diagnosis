@@ -270,11 +270,12 @@ async def publish_lectures(admin: API, batch: str) -> None:
         })
 
 
-async def publish_assignment(teacher: API, group: int, title: str, rows: list[dict]) -> int:
+async def publish_assignment(teacher: API, group: int, title: str, rows: list[dict], *, student_ids=None) -> int:
     result = await teacher.call("POST", ASSIGNMENTS, json={
         "title": title, "class_id": group, "request_id": str(uuid4()),
         "due_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
         "questions": [{"id": q["id"], "version_id": q["version_id"]} for q in rows],
+        **({"student_ids": student_ids} if student_ids is not None else {}),
     })
     return result["id"]
 
@@ -392,9 +393,12 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
             "模拟卷的单题学情没有反映未答和复练。")
     pick = next((row["practice_question"] for row in report["items"] if row["practice_question"]), None)
     require(pick is not None and retry_row.get("practice_question") is None, "待补练选题的范围有误。")
-    followup = await publish_assignment(teacher, matrix["class_id"], "模拟错题补练", [pick])
+    roster = await teacher.call("GET", f"{ASSIGNMENTS}/classes/{matrix['class_id']}/students")
+    peer_id = next(row["id"] for row in roster if row["username"] == "student02")
+    followup = await publish_assignment(teacher, matrix["class_id"], "模拟错题补练", [pick], student_ids=[peer_id])
     assigned = await peer.call("GET", f"{ASSIGNMENTS}/{followup}")
     require(assigned["questions"][0]["version_id"] == pick["version_id"], "补练专项未固定所选题目版本。")
+    await student.call("GET", f"{ASSIGNMENTS}/{followup}", expect=404)
 
     short = await submit(SHORT_QUESTION, short_task, {"kind": "text", "value": "每个节点最多有两个孩子，所以下一层最多翻倍。"})
     require(short["earned_score"] is None and short["answer"] is None, "简答提交后应待复核。")

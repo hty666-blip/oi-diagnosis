@@ -50,6 +50,7 @@ class AssignmentInput(BaseModel):
     title: StorageText = Field(min_length=1, max_length=120)
     due_at: AwareDatetime
     questions: list[AssignmentQuestionInput] = Field(min_length=1, max_length=10)
+    student_ids: list[ObjectId] | None = Field(default=None, min_length=1, max_length=200)
 
 
 @router.get("/classes")
@@ -59,6 +60,20 @@ async def assignment_classes(response: Response, session: SessionDep, user: Teac
         managed_classes(user).where(SchoolClass.archived.is_(False)).order_by(SchoolClass.name)
     )
     return [{"id": group.id, "name": group.name} for group in groups]
+
+
+@router.get("/classes/{class_id}/students")
+async def assignment_students(class_id: ObjectPathId, response: Response, session: SessionDep, user: TeacherUser):
+    response.headers["Cache-Control"] = "no-store"
+    group = await session.scalar(managed_classes(user).with_only_columns(SchoolClass.id).where(
+        SchoolClass.id == class_id, SchoolClass.archived.is_(False),
+    ))
+    if group is None:
+        raise HTTPException(404, "班级不存在或无权查看名单")
+    students = await session.execute(active_students(group).with_only_columns(
+        User.id, User.display_name, User.username,
+    ).order_by(User.display_name, User.id))
+    return [{"id": ident, "name": name or username, "username": username} for ident, name, username in students]
 
 
 @router.get("")
@@ -71,7 +86,13 @@ async def assignments(response: Response, session: SessionDep, user: CurrentUser
 @router.post("")
 async def publish_assignment(body: AssignmentInput, response: Response, session: SessionDep, user: TeacherUser):
     response.headers["Cache-Control"] = "no-store"
-    content = body.model_dump(mode="json", exclude={"request_id"})
+    # 未指定名单时保留旧版全班请求的摘要，兼容已有发布回执。
+    content = body.model_dump(mode="json", exclude={"request_id"}, exclude_none=True)
+    selected = body.student_ids
+    if selected is not None:
+        if len(set(selected)) != len(selected):
+            raise HTTPException(422, "指定学生不能重复")
+        content["student_ids"] = sorted(selected)
     digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode("ascii")).hexdigest()
     await training_write(session, user)
     prior = await session.scalar(select(WrittenAssignment).where(
@@ -101,7 +122,12 @@ async def publish_assignment(body: AssignmentInput, response: Response, session:
         row = by_id.get(item.id)
         if row is None or row[1].id != str(item.version_id):
             raise HTTPException(409, "选题已下架或有新版，请刷新题库重新选题")
-    students = list(await session.scalars(active_students(group.id).with_only_columns(User.id)))
+    student_query = active_students(group.id).with_only_columns(User.id)
+    if selected is not None:
+        student_query = student_query.where(User.id.in_(selected))
+    students = list(await session.scalars(student_query))
+    if selected is not None and len(students) != len(selected):
+        raise HTTPException(409, {"code": "written_assignment_roster_changed", "message": "所选学生已转班、停用或不在本班，请刷新名单后重新选择"})
     if not students:
         raise HTTPException(409, "该班级暂无启用的学生")
     assignment = WrittenAssignment(
@@ -122,6 +148,7 @@ async def publish_assignment(body: AssignmentInput, response: Response, session:
     ])
     audit(session, user, "written_assignment.publish", str(assignment.id), {}, {
         "class_id": group.id, "question_count": len(ids), "student_count": len(students),
+        "audience": "class" if selected is None else "selected",
     })
     await session.commit()
     return {**assignment_summary(assignment, group), "replayed": False}

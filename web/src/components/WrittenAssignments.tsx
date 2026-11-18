@@ -216,6 +216,7 @@ function TaskMatrix({ task, onReview }: { task: WrittenAssignmentDetail; onRevie
 function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onClose: () => void; onPublished: (id: number) => void }) {
   const [groups, setGroups] = useState<{ id: number; name: string }[]>();
   const [classId, setClassId] = useState(seed ? String(seed.classId) : "");
+  const [studentIds, setStudentIds] = useState<number[] | null>(null);
   const [title, setTitle] = useState(seed?.title ?? "");
   const [deadline, setDeadline] = useState(() => {
     const date = new Date();
@@ -234,6 +235,7 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
   const lastRequest = useRef<{ draft: string; id: string }>();
   const write = useRef<AbortController>();
   const validClass = groups?.some((group) => String(group.id) === classId);
+  const validAudience = studentIds === null || studentIds.length > 0;
 
   useEffect(() => () => write.current?.abort(), []);
   useEffect(() => {
@@ -257,12 +259,13 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (write.current || !validClass || !picks.length || !deadline || !title.trim()) return;
+    if (write.current || !validClass || !validAudience || !picks.length || !deadline || !title.trim()) return;
     const date = new Date(deadline);
     if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) { setError("截止时间必须晚于当前时间。"); return; }
     const body = {
       title: title.trim(), class_id: Number(classId), due_at: date.toISOString(),
       questions: picks.map(({ id, version_id }) => ({ id, version_id })),
+      ...(studentIds !== null ? { student_ids: [...studentIds].sort((left, right) => left - right) } : {}),
     };
     const draft = JSON.stringify(body);
     if (lastRequest.current?.draft !== draft) lastRequest.current = { draft, id: crypto.randomUUID() };
@@ -284,7 +287,10 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
     <form className="written-task-editor" onSubmit={(event) => void publish(event)}>
       <fieldset disabled={busy}>
         <label>专项名称<input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-        <label>班级<select required disabled={seed !== undefined} value={classId} onChange={(event) => setClassId(event.target.value)}>
+        <label>班级<select required disabled={seed !== undefined} value={classId} onChange={(event) => {
+          setClassId(event.target.value);
+          if (studentIds !== null) setStudentIds([]);
+        }}>
           <option value="">{groups ? "选择班级" : "正在读取班级…"}</option>
           {groups?.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
         </select></label>
@@ -292,6 +298,8 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
       </fieldset>
       {groups && seed && !validClass && <p className="muted">原班级已不可布置专项，请返回模拟学情。</p>}
       {!seed && groups?.length === 0 && <p className="muted">当前没有可布置任务的班级。</p>}
+      <TaskAudience key={classId} classId={validClass ? Number(classId) : undefined} studentIds={studentIds}
+        busy={busy} onChange={setStudentIds} />
       <fieldset disabled={busy}>
         <legend>选题</legend>
         <div className="written-practice-actions">
@@ -323,9 +331,68 @@ function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onCl
         </div>}
       </fieldset>
       <div className="written-practice-actions">
-        <button className="btn-primary" type="submit" disabled={busy || !validClass || !title.trim() || !deadline || !picks.length}>发布给全班</button>
+        <button className="btn-primary" type="submit" disabled={busy || !validClass || !validAudience || !title.trim() || !deadline || !picks.length}>
+          {studentIds === null ? "发布给全班" : "发布给所选学生"}
+        </button>
         <button className="ghost" type="button" disabled={busy} onClick={onClose}>取消</button>
       </div>
     </form>
   </Modal>;
+}
+
+function TaskAudience({ classId, studentIds, busy, onChange }: {
+  classId?: number;
+  studentIds: number[] | null;
+  busy: boolean;
+  onChange: (value: number[] | null) => void;
+}) {
+  const [students, setStudents] = useState<{ id: number; name: string; username: string }[]>();
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const targeted = studentIds !== null;
+
+  useEffect(() => {
+    if (classId === undefined || !targeted) return;
+    const request = new AbortController();
+    void api.writtenAssignmentStudents(classId, request.signal).then(
+      (rows) => { if (!request.signal.aborted) setStudents(rows); },
+      (failure) => { if (!request.signal.aborted) setError(messageOf(failure)); },
+    );
+    return () => request.abort();
+  }, [classId, targeted, reload]);
+
+  function refresh() {
+    setStudents(undefined);
+    setError("");
+    onChange([]);
+    setReload((value) => value + 1);
+  }
+
+  return <fieldset disabled={busy || classId === undefined}>
+    <legend>发布范围</legend>
+    <div className="training-audience">
+      <label><input name="written-audience" type="radio" checked={!targeted} onChange={() => onChange(null)} />全班</label>
+      <label><input name="written-audience" type="radio" checked={targeted} onChange={refresh} />指定学生</label>
+    </div>
+    {targeted && classId !== undefined && (error ? <ErrorNotice message={error} onRetry={refresh} />
+      : !students ? <p role="status">正在读取班级名单…</p>
+      : !students.length ? <p className="muted">当前班级暂无启用的学生。</p>
+      : <>
+        <div className="training-audience written-task-student-list" role="group" aria-label="指定学生名单">
+          {students.map((student) => {
+            const chosen = studentIds.includes(student.id);
+            return <label key={student.id}>
+              <input type="checkbox" checked={chosen} disabled={!chosen && studentIds.length >= 200} onChange={(event) => onChange(
+                event.currentTarget.checked ? [...studentIds, student.id] : studentIds.filter((id) => id !== student.id),
+              )} />
+              {student.name === student.username ? student.name : `${student.name}（${student.username}）`}
+            </label>;
+          })}
+        </div>
+        <div className="written-practice-actions">
+          <span className="muted">已选 {studentIds.length} 人</span>
+          <button type="button" className="ghost" onClick={refresh}>刷新名单</button>
+        </div>
+      </>)}
+  </fieldset>;
 }

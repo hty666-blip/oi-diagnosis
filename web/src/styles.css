@@ -947,6 +947,9 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-task-editor fieldset:first-child { display: grid; grid-template-columns: 1.2fr 1fr 1fr; align-items: end; gap: 12px; }
 .written-task-editor label { display: grid; min-width: 0; gap: 6px; }
 .written-task-editor label > :is(input, select) { width: 100%; min-width: 0; }
+.written-task-editor .training-audience label { display: flex; align-items: center; gap: 8px; }
+.written-task-editor .training-audience input { width: auto; }
+.written-task-student-list { max-height: 160px; overflow-y: auto; margin-block: 12px; padding: 8px 0; }
 .written-task-editor legend { margin-bottom: 8px; }
 .written-task-catalog { max-height: 280px; margin-top: 12px; }
 .written-task-picked { padding-left: 24px; }

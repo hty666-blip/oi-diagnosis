@@ -48,6 +48,56 @@ async def task(ctx, path, user=None):
     return result.json()
 
 
+async def test_assignment_can_target_enabled_students_and_replay_unchanged_audience(api_context):
+    ctx = api_context
+    group, other = await groups(ctx)
+    first = await publish(ctx, await staged(ctx), "q1")
+    classes = f"{ASSIGNMENTS}/classes"
+    roster = f"{classes}/{group.id}/students"
+    assert {row["id"] for row in await task(ctx, roster, ctx.users.teacher)} == {ctx.users.student.id, ctx.users.peer.id}
+    assert (await ctx.client.get(roster, headers=ctx.headers())).status_code == 403
+    assert (await ctx.client.get(f"{classes}/{other.id}/students", headers=ctx.headers(ctx.users.teacher))).status_code == 404
+
+    body = task_body(group, first)
+    student_id = ctx.users.student.id
+    peer_id = ctx.users.peer.id
+    for invalid in [[], [student_id, student_id], [True]]:
+        assert (await send(ctx, {**body, "student_ids": invalid})).status_code == 422
+    foreign = await send(ctx, {**body, "student_ids": [student_id, ctx.users.other.id]})
+    assert foreign.status_code == 409 and foreign.json()["detail"]["code"] == "written_assignment_roster_changed"
+
+    targeted = await send(ctx, {**body, "student_ids": [student_id]})
+    assert targeted.status_code == 200, targeted.text
+    assignment_id = targeted.json()["id"]
+    path = f"{ASSIGNMENTS}/{assignment_id}"
+    assert (await task(ctx, path, ctx.users.teacher))["summary"]["students"] == 1
+    assert (await task(ctx, path, ctx.users.student))["rows"][0]["student_id"] == student_id
+    assert (await ctx.client.get(path, headers=ctx.headers(ctx.users.peer))).status_code == 404
+    assert all(row["id"] != assignment_id for row in await task(ctx, ASSIGNMENTS, ctx.users.peer))
+    assert (await send(ctx, body)).status_code == 409
+
+    both = {**task_body(group, first), "student_ids": [peer_id, student_id]}
+    result = await send(ctx, both)
+    assert result.status_code == 200, result.text
+    retry = await send(ctx, {**both, "student_ids": [student_id, peer_id]})
+    assert retry.status_code == 200 and retry.json()["replayed"] and retry.json()["id"] == result.json()["id"]
+
+    whole_class = task_body(group, first)
+    initial = await send(ctx, whole_class)
+    replay = await send(ctx, {**whole_class, "student_ids": None})
+    assert initial.status_code == replay.status_code == 200 and replay.json()["id"] == initial.json()["id"]
+    assert replay.json()["replayed"]
+
+    ctx.users.peer.enabled = False
+    await ctx.session.flush()
+    assert [row["id"] for row in await task(ctx, roster, ctx.users.teacher)] == [student_id]
+    assert (await send(ctx, {**task_body(group, first), "student_ids": [peer_id]})).status_code == 409
+    ctx.users.student.class_id = other.id
+    await ctx.session.flush()
+    assert (await ctx.client.get(path, headers=ctx.headers())).status_code == 404
+    assert (await task(ctx, path, ctx.users.teacher))["rows"] == []
+
+
 async def test_fixed_assignment_version_and_separate_progress(api_context):
     ctx = api_context
     group, other = await groups(ctx)
