@@ -40,7 +40,7 @@ jobs:
           python -m pip install -U pip
           pip install -e ".[dev]"
       - name: Lint
-        run: ruff check .
+        run: ruff check . ../scripts/start_written_demo.py
       - name: Build four-language judge image
         run: docker build --tag oi-judge:dev --file ../deploy/judge.Dockerfile ../deploy
       - name: Migrate independent test database
@@ -49,6 +49,8 @@ jobs:
         env:
           RUN_DOCKER_TESTS: "1"
         run: pytest -q
+      - name: Verify the written demo from an empty database
+        run: python ../scripts/start_written_demo.py --check-only
 
   web:
     runs-on: ubuntu-latest
