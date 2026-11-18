@@ -28,21 +28,12 @@ from app.services.written_bank_storage import load_bytes, load_snapshot
 from app.services.written_exam_review import exam_retry_version
 from app.services.written_grading import AttemptInput, is_correct
 from app.services.written_review import QuestionType, visible_query
+from app.services.written_review import published_question_summary as summary
 
 router = APIRouter(prefix="/written/questions", tags=["written-questions"])
 attempts_router = APIRouter(prefix="/written/attempts", tags=["written-attempts"])
 PracticeStudent = Annotated[User, Depends(require_role("student"))]
 PAGE_SIZE = 25
-
-
-def summary(question, version):
-    data = question.public_metadata
-    return {
-        "id": question.id,
-        "revision": question.revision,
-        "version_id": version.id,
-        **{key: data.get(key) for key in ["stem", "question_type", "level", "score"]},
-    }
 
 
 async def find_visible(session: AsyncSession, question_id: int):

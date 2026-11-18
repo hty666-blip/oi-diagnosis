@@ -670,6 +670,7 @@ export interface WrittenClassExamQuestions {
     wrong_count: number;
     blank_count: number;
     corrected_count: number;
+    practice_question: WrittenPublishedSummary | null;
   }[];
 }
 export interface WrittenAssignmentSummary {

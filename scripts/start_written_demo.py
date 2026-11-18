@@ -390,6 +390,11 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     require(report["submitted_count"] == 1 and len(report["items"]) == 8
             and retry_row.get("blank_count") == 1 and retry_row.get("corrected_count") == 1,
             "模拟卷的单题学情没有反映未答和复练。")
+    pick = next((row["practice_question"] for row in report["items"] if row["practice_question"]), None)
+    require(pick is not None and retry_row.get("practice_question") is None, "待补练选题的范围有误。")
+    followup = await publish_assignment(teacher, matrix["class_id"], "模拟错题补练", [pick])
+    assigned = await peer.call("GET", f"{ASSIGNMENTS}/{followup}")
+    require(assigned["questions"][0]["version_id"] == pick["version_id"], "补练专项未固定所选题目版本。")
 
     short = await submit(SHORT_QUESTION, short_task, {"kind": "text", "value": "每个节点最多有两个孩子，所以下一层最多翻倍。"})
     require(short["earned_score"] is None and short["answer"] is None, "简答提交后应待复核。")
@@ -399,7 +404,7 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     final = await student.call("GET", f"/written/attempts/{short['id']}")
     require(final["earned_score"] == 2 and final["teacher_grade"]["points"] == [2, 0],
             "学生没有读到复核成绩。")
-    print("自动验收通过：规则判分和离线答疑、学习路线与学情、模拟交卷和复练、教练模拟学情、简答人工评分。", flush=True)
+    print("自动验收通过：规则判分和离线答疑、学习路线、模拟复习与单题学情、专项补练、简答人工评分。", flush=True)
 
 
 def run(args: argparse.Namespace) -> None:

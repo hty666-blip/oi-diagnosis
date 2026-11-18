@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, messageOf, type WrittenClassExamQuestions, type WrittenClassExamResults } from "../api";
+import { api, messageOf, type WrittenClassExamQuestions, type WrittenClassExamResults, type WrittenPublishedSummary } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 
-export default function WrittenExamResults() {
+export interface ExamFollowup {
+  classId: number;
+  title: string;
+  questions: WrittenPublishedSummary[];
+}
+
+export default function WrittenExamResults({ onFollowup }: { onFollowup: (draft: ExamFollowup) => void }) {
   const [classes, setClasses] = useState<{ id: number; name: string }[]>();
   const [selected, setSelected] = useState<number>();
   const [error, setError] = useState("");
@@ -29,12 +35,12 @@ export default function WrittenExamResults() {
             {classes.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
           </select></label>
         </div>
-        <ClassResultTable key={classId} classId={classId} />
+        <ClassResultTable key={classId} classId={classId} onFollowup={onFollowup} />
       </>}
   </section>;
 }
 
-function ClassResultTable({ classId }: { classId: number }) {
+function ClassResultTable({ classId, onFollowup }: { classId: number; onFollowup: (draft: ExamFollowup) => void }) {
   const [page, setPage] = useState<WrittenClassExamResults>();
   const [examId, setExamId] = useState<number>();
   const [cursors, setCursors] = useState<number[]>([]);
@@ -89,12 +95,19 @@ function ClassResultTable({ classId }: { classId: number }) {
       <button type="button" className="ghost" disabled={beforeId === undefined} onClick={() => changePage(cursors.slice(0, -1))}>上一页</button>
       <button type="button" className="ghost" disabled={next === null} onClick={() => { if (next !== null) changePage([...cursors, next]); }}>下一页</button>
     </div>}
-    {examId !== undefined && <ClassExamQuestions classId={classId} examId={examId} onClose={() => setExamId(undefined)} />}
+    {examId !== undefined && <ClassExamQuestions classId={classId} examId={examId} onClose={() => setExamId(undefined)}
+      onFollowup={(draft) => { setExamId(undefined); onFollowup(draft); }} />}
   </>;
 }
 
-function ClassExamQuestions({ classId, examId, onClose }: { classId: number; examId: number; onClose: () => void }) {
+function ClassExamQuestions({ classId, examId, onClose, onFollowup }: {
+  classId: number;
+  examId: number;
+  onClose: () => void;
+  onFollowup: (draft: ExamFollowup) => void;
+}) {
   const [report, setReport] = useState<WrittenClassExamQuestions>();
+  const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
 
@@ -107,6 +120,7 @@ function ClassExamQuestions({ classId, examId, onClose }: { classId: number; exa
     return () => request.abort();
   }, [classId, examId, reload]);
 
+  const chosen = report?.items.flatMap((row) => row.practice_question && selected.includes(row.version_id) ? [row.practice_question] : []) ?? [];
   return <Modal title="模拟卷单题学情" onClose={onClose} wide>
     {error ? <ErrorNotice message={error} onRetry={() => { setError(""); setReload((value) => value + 1); }} />
       : !report ? <p role="status">正在读取单题学情…</p>
@@ -115,12 +129,24 @@ function ClassExamQuestions({ classId, examId, onClose }: { classId: number; exa
         <p className="muted">同一题的不同版本分行统计。</p>
         {report.items.length ? <div className="table-scroll"><table aria-label="模拟卷逐题统计">
           <thead><tr><th scope="col">答卷题号</th><th scope="col">版本</th><th scope="col">本版卷数</th><th scope="col">卷内答对</th>
-            <th scope="col">卷内答错</th><th scope="col">未答</th><th scope="col">复练答对</th></tr></thead>
+            <th scope="col">卷内答错</th><th scope="col">未答</th><th scope="col">复练答对</th><th scope="col">补练选题</th></tr></thead>
           <tbody>{report.items.map((row) => <tr key={`${row.question_id}:${row.version_id}:${row.number}`}>
             <th scope="row">第 {row.number} 题</th><td>v{row.revision}</td><td>{row.answer_count}</td>
             <td>{row.correct_count}</td><td>{row.wrong_count}</td><td>{row.blank_count}</td><td>{row.corrected_count}</td>
+            <td>{row.practice_question ? <input type="checkbox" aria-label={`选入第 ${row.number} 题 v${row.revision}`}
+              checked={selected.includes(row.version_id)} disabled={chosen.length >= 10 && !selected.includes(row.version_id)}
+              onChange={(event) => {
+                const checked = event.currentTarget.checked;
+                setSelected((values) => checked ? [...values, row.version_id] : values.filter((id) => id !== row.version_id));
+              }} />
+              : <span className="muted">{row.wrong_count + row.blank_count > row.corrected_count ? "原版不可用" : "无需补练"}</span>}</td>
           </tr>)}</tbody>
         </table></div> : <p className="muted">暂无可统计的作答。</p>}
+        {report.items.some((row) => row.practice_question) && <div className="admin-actions">
+          <button className="btn-primary" type="button" disabled={chosen.length === 0}
+            onClick={() => onFollowup({ classId, title: "模拟错题补练", questions: chosen })}>用所选题创建专项</button>
+          <span className="muted">已选 {chosen.length} / 10</span>
+        </div>}
       </>}
   </Modal>;
 }

@@ -58,6 +58,16 @@ def learning_topic(point_id: str, nodes: dict[str, dict]) -> dict:
     }
 
 
+def published_question_summary(question, version):
+    data = question.public_metadata
+    return {
+        "id": question.id,
+        "revision": question.revision,
+        "version_id": version.id,
+        **{key: data.get(key) for key in ["stem", "question_type", "level", "score"]},
+    }
+
+
 class OptionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9_-]+$")

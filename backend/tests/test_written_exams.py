@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import func, select
-from test_written_assignments import groups
+from test_written_assignments import ASSIGNMENTS, groups, send, task_body
 from test_written_attempts import attempt, single
 from test_written_bank_import import make_records
 from test_written_knowledge import ARTICLE, POINT, create_entry, edit
@@ -372,3 +372,19 @@ async def test_coach_can_drill_into_paper_results_for_each_frozen_version(api_co
         ("2", second["version_id"], 2, 1, 0, 1, 0),
     ]
     assert (await ctx.client.get(report_path(group.id, peer_exam), headers=coach)).json() == data
+    assert [row["practice_question"] for row in data["items"][:2]] == [None, None]
+    pick = data["items"][-1]["practice_question"]
+    assert pick["id"] == second["id"] and pick["version_id"] == second["version_id"]
+    bundle = await send(ctx, task_body(group, pick))
+    assert bundle.status_code == 200, bundle.text
+    practice = await ctx.client.get(f"{ASSIGNMENTS}/{bundle.json()['id']}", headers=ctx.headers(ctx.users.peer))
+    assert practice.status_code == 200 and practice.json()["questions"][0]["version_id"] == second["version_id"]
+
+    hidden = await ctx.client.post(f"/api/v1/admin/written-bank/published/{second['id']}/state",
+                                   headers=ctx.headers(ctx.users.admin), json={
+                                       "expected_version": second["catalog_version"], "is_active": False,
+                                   })
+    assert hidden.status_code == 200, hidden.text
+    withdrawn = (await ctx.client.get(path, headers=coach)).json()["items"][-1]
+    assert withdrawn == {**data["items"][-1], "practice_question": None}
+    assert (await send(ctx, task_body(group, pick))).status_code == 409

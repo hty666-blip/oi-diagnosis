@@ -28,7 +28,7 @@ from app.services.written_learning import (
     frozen_topic,
     recommendations,
 )
-from app.services.written_review import visible_query
+from app.services.written_review import published_question_summary, visible_query
 
 CLASS_RESULT_LIMIT = 25
 
@@ -145,7 +145,19 @@ async def class_exam_questions(session, class_id: int, exam_id: int):
         .where(item.exam_id.in_(cohort)).group_by(*group)
         .order_by(func.min(item.position), item.question_id, version.revision.desc())
     )
-    return {"title": reference.title, "submitted_count": submitted_count, "items": [dict(row) for row in rows.mappings()]}
+    items = [dict(row) for row in rows.mappings()]
+    pending = {(row["question_id"], row["version_id"]) for row in items
+               if row["wrong_count"] + row["blank_count"] > row["corrected_count"]}
+    available = {}
+    if pending:
+        current = await session.execute(visible_query().where(
+            WrittenQuestion.id.in_({question_id for question_id, _ in pending}),
+        ))
+        available = {(question.id, revision.id): published_question_summary(question, revision)
+                     for question, revision in current if (question.id, revision.id) in pending}
+    for row in items:
+        row["practice_question"] = available.get((row["question_id"], row["version_id"]))
+    return {"title": reference.title, "submitted_count": submitted_count, "items": items}
 
 
 async def review_items(session, student_id: int, exam_id: int) -> list[dict]:

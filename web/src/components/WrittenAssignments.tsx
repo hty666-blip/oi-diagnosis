@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, messageOf, type WrittenAssignmentDetail, type WrittenAssignmentSummary, type WrittenAttempt, type WrittenPublishedSummary } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
-import WrittenExamResults from "./WrittenExamResults";
+import WrittenExamResults, { type ExamFollowup } from "./WrittenExamResults";
 import WrittenShortReview from "./WrittenShortReview";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
 
@@ -20,6 +20,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
   const [target, setTarget] = useState<OpenTask>();
   const [receipt, setReceipt] = useState<WrittenAttempt>();
   const [publishing, setPublishing] = useState(false);
+  const [followup, setFollowup] = useState<ExamFollowup>();
   const [reviewing, setReviewing] = useState<number>();
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -53,10 +54,25 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
     refresh();
   }
 
+  function beginPublish(draft?: ExamFollowup) {
+    setFollowup(draft);
+    setPublishing(true);
+  }
+
+  function closePublish() {
+    setFollowup(undefined);
+    setPublishing(false);
+  }
+
+  const publishDialog = publishing && <PublishTask seed={followup} onClose={closePublish} onPublished={(id) => {
+    closePublish();
+    setShowExams(false);
+    open(id);
+  }} />;
   const teacherNavigation = !student && <>
     <header className="page-head">
       <h1>初赛任务</h1>
-      {!showExams && <button type="button" className="btn-primary" onClick={() => setPublishing(true)}>发布专项</button>}
+      {!showExams && <button type="button" className="btn-primary" onClick={() => beginPublish()}>发布专项</button>}
     </header>
     <nav className="admin-tabs" aria-label="初赛任务">
       <button type="button" className="ghost" aria-pressed={!showExams} onClick={() => setShowExams(false)}>班级专项</button>
@@ -64,7 +80,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
     </nav>
   </>;
 
-  if (showExams) return <section>{teacherNavigation}<WrittenExamResults /></section>;
+  if (showExams) return <section>{teacherNavigation}<WrittenExamResults onFollowup={beginPublish} />{publishDialog}</section>;
 
   return <section>
     {teacherNavigation}
@@ -109,10 +125,7 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
     {detail && studentId !== undefined && target?.kind === "attempt" && <WrittenOpenAttempt
       key={target.id} userId={studentId} id={target.id} immediate={receipt} taskContext={detail.id}
       onRetryQuestion={detail.is_closed || !target.question.is_available ? undefined : () => start(target.question)} />}
-    {publishing && <PublishTask onClose={() => setPublishing(false)} onPublished={(id) => {
-      setPublishing(false);
-      open(id);
-    }} />}
+    {publishDialog}
     {detail && reviewing !== undefined && <WrittenShortReview key={reviewing} assignmentId={detail.id} attemptId={reviewing}
       onClose={() => setReviewing(undefined)} onConfirmed={() => { setReviewing(undefined); refresh(); }} />}
   </section>;
@@ -200,10 +213,10 @@ function TaskMatrix({ task, onReview }: { task: WrittenAssignmentDetail; onRevie
   </>;
 }
 
-function PublishTask({ onClose, onPublished }: { onClose: () => void; onPublished: (id: number) => void }) {
+function PublishTask({ seed, onClose, onPublished }: { seed?: ExamFollowup; onClose: () => void; onPublished: (id: number) => void }) {
   const [groups, setGroups] = useState<{ id: number; name: string }[]>();
-  const [classId, setClassId] = useState("");
-  const [title, setTitle] = useState("");
+  const [classId, setClassId] = useState(seed ? String(seed.classId) : "");
+  const [title, setTitle] = useState(seed?.title ?? "");
   const [deadline, setDeadline] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() + 7);
@@ -213,13 +226,14 @@ function PublishTask({ onClose, onPublished }: { onClose: () => void; onPublishe
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const [catalog, setCatalog] = useState<{ items: WrittenPublishedSummary[]; has_more: boolean }>();
-  const [picks, setPicks] = useState<WrittenPublishedSummary[]>([]);
+  const [picks, setPicks] = useState<WrittenPublishedSummary[]>(seed?.questions ?? []);
   const [error, setError] = useState("");
   const [catalogError, setCatalogError] = useState("");
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const lastRequest = useRef<{ draft: string; id: string }>();
   const write = useRef<AbortController>();
+  const validClass = groups?.some((group) => String(group.id) === classId);
 
   useEffect(() => () => write.current?.abort(), []);
   useEffect(() => {
@@ -243,7 +257,7 @@ function PublishTask({ onClose, onPublished }: { onClose: () => void; onPublishe
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (write.current || !classId || !picks.length || !deadline || !title.trim()) return;
+    if (write.current || !validClass || !picks.length || !deadline || !title.trim()) return;
     const date = new Date(deadline);
     if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) { setError("截止时间必须晚于当前时间。"); return; }
     const body = {
@@ -270,13 +284,14 @@ function PublishTask({ onClose, onPublished }: { onClose: () => void; onPublishe
     <form className="written-task-editor" onSubmit={(event) => void publish(event)}>
       <fieldset disabled={busy}>
         <label>专项名称<input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-        <label>班级<select required value={classId} onChange={(event) => setClassId(event.target.value)}>
+        <label>班级<select required disabled={seed !== undefined} value={classId} onChange={(event) => setClassId(event.target.value)}>
           <option value="">{groups ? "选择班级" : "正在读取班级…"}</option>
           {groups?.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
         </select></label>
         <label>截止时间<input type="datetime-local" required value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
       </fieldset>
-      {groups?.length === 0 && <p className="muted">当前没有可布置任务的班级。</p>}
+      {groups && seed && !validClass && <p className="muted">原班级已不可布置专项，请返回模拟学情。</p>}
+      {!seed && groups?.length === 0 && <p className="muted">当前没有可布置任务的班级。</p>}
       <fieldset disabled={busy}>
         <legend>选题</legend>
         <div className="written-practice-actions">
@@ -308,7 +323,7 @@ function PublishTask({ onClose, onPublished }: { onClose: () => void; onPublishe
         </div>}
       </fieldset>
       <div className="written-practice-actions">
-        <button className="btn-primary" type="submit" disabled={busy || !classId || !title.trim() || !deadline || !picks.length}>发布给全班</button>
+        <button className="btn-primary" type="submit" disabled={busy || !validClass || !title.trim() || !deadline || !picks.length}>发布给全班</button>
         <button className="ghost" type="button" disabled={busy} onClick={onClose}>取消</button>
       </div>
     </form>
