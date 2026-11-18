@@ -2,9 +2,10 @@ import { readLocal, removeLocal, writeLocal, type WrittenAttemptView, type Writt
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type WrittenList = "bank" | "papers" | "knowledge" | "progress" | "assignments" | WrittenAttemptView;
+type ExamOrigin = { examId?: number; returnExamId?: number };
 export type WrittenTarget =
-  | { kind: "question"; id: number; version?: string; examId?: number }
-  | { kind: "attempt"; id: number; examId?: number }
+  | ({ kind: "question"; id: number; version?: string } & ExamOrigin)
+  | ({ kind: "attempt"; id: number } & ExamOrigin)
   | { kind: "exam"; id: number };
 export interface WrittenPosition {
   list: WrittenList;
@@ -32,8 +33,11 @@ export function readWrittenPosition(userId: number): WrittenPosition {
     if (value && ["bank", "papers", "knowledge", "progress", "history", "wrong", "corrected"].includes(value.list)) {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {
-        const fromExam = value.list === "papers" && Number.isSafeInteger(target.examId) && target.examId > 0
-          ? { examId: target.examId as number } : {};
+        const fromExam: ExamOrigin = {};
+        if (value.list === "papers") {
+          if (Number.isSafeInteger(target.examId) && target.examId > 0) fromExam.examId = target.examId;
+          else if (Number.isSafeInteger(target.returnExamId) && target.returnExamId > 0) fromExam.returnExamId = target.returnExamId;
+        }
         if (target.kind === "attempt") return { list: value.list, target: { kind: "attempt", id: target.id, ...fromExam } };
         if (target.kind === "exam" && value.list === "papers") return { list: "papers", target: { kind: "exam", id: target.id } };
         if (target.kind === "question") {

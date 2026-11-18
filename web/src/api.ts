@@ -539,6 +539,7 @@ export interface WrittenShortReview {
   suggestion: WrittenShortSuggestion | null;
 }
 export type WrittenAttemptView = "history" | "wrong" | "corrected";
+export type WrittenPracticePick = Pick<WrittenPublishedSummary, "id" | "version_id">;
 
 export interface WrittenProgressRow {
   batch_id: string;
@@ -549,7 +550,7 @@ export interface WrittenProgressRow {
   latest_attempt_id: number;
   last_error_id: number | null;
   review_attempt_id: number | null;
-  next_question: { id: number; version_id: string } | null;
+  next_question: WrittenPracticePick | null;
 }
 export interface WrittenCoverageRow {
   id: string;
@@ -635,6 +636,13 @@ export interface WrittenExamReviewItem {
   answered: boolean;
   available: boolean;
   latest_attempt: { id: number; correct: boolean } | null;
+}
+export interface WrittenExamStudyTopic {
+  point: { id: string; name: string };
+  level: "J" | "S" | null;
+  numbers: string[];
+  article: { id: number; title: string } | null;
+  next_question: WrittenPracticePick | null;
 }
 export interface WrittenClassExamResults {
   items: {
@@ -808,6 +816,8 @@ export const api = {
     get<WrittenExamQuestion>(`/written/exams/${id}/questions/${questionId}`, { signal }),
   writtenExamReview: (id: number, signal?: AbortSignal) =>
     get<{ items: WrittenExamReviewItem[] }>(`/written/exams/${id}/review`, { signal }),
+  writtenExamStudy: (id: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamStudyTopic[] }>(`/written/exams/${id}/study`, { signal }),
   writtenExamRetryQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
     get<WrittenPublishedQuestion>(`/written/exams/${id}/review/${questionId}`, { signal }),
   saveWrittenExamAnswer: async (id: number, questionId: number, revision: number, response: WrittenResponse | null, signal?: AbortSignal) =>

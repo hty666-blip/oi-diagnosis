@@ -23,7 +23,12 @@ from app.domain.models import (
 from app.services.admin_service import management_lock
 from app.services.written_assignments import managed_classes
 from app.services.written_bank_storage import load_snapshot
-from app.services.written_exam_review import class_exam_results, exam_retry_version, review_items
+from app.services.written_exam_review import (
+    class_exam_results,
+    exam_retry_version,
+    review_items,
+    study_topics,
+)
 from app.services.written_grading import BooleanResponse, OptionResponse, TextResponse, is_correct
 
 
@@ -170,6 +175,11 @@ async def read_exam(exam_id: ObjectPathId, session: SessionDep, user: PracticeSt
 @router.get("/{exam_id}/review")
 async def exam_review(exam_id: ObjectPathId, session: SessionDep, user: PracticeStudent):
     return {"items": await review_items(session, user.id, exam_id)}
+
+
+@router.get("/{exam_id}/study")
+async def exam_study(exam_id: ObjectPathId, session: SessionDep, user: PracticeStudent):
+    return {"items": await study_topics(session, user.id, exam_id)}
 
 
 @router.get("/{exam_id}/review/{question_id}")

@@ -1,5 +1,6 @@
 """整卷模拟的时间、固定题面、草稿冲突和不可重复交卷。"""
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -7,11 +8,12 @@ from sqlalchemy import func, select
 from test_written_assignments import groups
 from test_written_attempts import attempt, single
 from test_written_bank_import import make_records
+from test_written_knowledge import ARTICLE, POINT, create_entry, edit
 from test_written_progress import publish
 from test_written_review import staged
 
 from app.api.v1 import written_exams
-from app.domain.models import WrittenAttempt
+from app.domain.models import WrittenAttempt, WrittenQuestionVersion
 from app.services import written_exam_review
 
 EXAMS = "/api/v1/written/exams"
@@ -232,3 +234,70 @@ async def test_coach_mock_results_follow_current_class_and_linked_retries(api_co
     other_group.archived = True
     await ctx.session.flush()
     assert (await ctx.client.get(urls[other_group.id], headers=admin)).status_code == 404
+
+
+async def test_exam_study_groups_frozen_topics_and_only_recommends_unseen_published_questions(api_context):
+    ctx = api_context
+    records = make_records()
+    paper = records["papers.jsonl"][0]
+    paper.update(duration_minutes=10, total_score=4)
+    records["papers.jsonl"].append({**paper, "id": "extra", "title": "补充练习"})
+    records["knowledge_points.json"]["nodes"].append({"id": "TIME", "name": "时间复杂度", "is_leaf": True})
+    for question in records["questions.jsonl"]:
+        question["score"] = 2
+    first = records["questions.jsonl"][0]
+    for ident, changes in [
+        ("duplicate", {"relation_to_canonical": "exact_duplicate"}),
+        ("advanced", {"stem": "提高组题面", "canonical_question_id": "advanced", "level": "S"}),
+        ("new", {"stem": "尚未作答的新题", "canonical_question_id": "new"}),
+        ("unpublished", {"stem": "待发布题面", "canonical_question_id": "unpublished"}),
+    ]:
+        records["questions.jsonl"].append({**deepcopy(first), "id": ident, "paper_id": "extra", **changes})
+    root = await staged(ctx, records)
+    batch = root.split("/")[-1]
+    original = await publish(ctx, root, "q1")
+    for ident in ("q2", "duplicate", "advanced"):
+        await publish(ctx, root, ident)
+    fresh = await publish(ctx, root, "new")
+    old = await ctx.session.get(WrittenQuestionVersion, original["version_id"])
+    old.snapshot_metadata = {key: value for key, value in old.snapshot_metadata.items() if key != "learning_topic"}
+    await ctx.session.flush()
+    draft = await create_entry(ctx, batch)
+    headers = ctx.headers()
+    started = await ctx.client.post(f"{EXAMS}/start/{batch}/paper1", headers=headers)
+    assert started.status_code == 200, started.text
+    url = f"{EXAMS}/{started.json()['id']}"
+    assert (await ctx.client.get(url + "/study", headers=headers)).status_code == 409
+    assert (await ctx.client.get(url + "/study", headers=ctx.headers(ctx.users.peer))).status_code == 404
+    assert (await ctx.client.get(url + "/study", headers=ctx.headers(ctx.users.teacher))).status_code == 403
+    assert (await ctx.client.post(url + "/submit", headers=headers)).status_code == 200
+
+    async def topic():
+        result = await ctx.client.get(url + "/study", headers=headers)
+        assert result.status_code == 200, result.text
+        assert result.headers["cache-control"] == "no-store"
+        [item] = result.json()["items"]
+        return item
+
+    initial = await topic()
+    assert initial["numbers"] == ["1", "2"] and initial["level"] == "J"
+    assert initial["point"]["id"] == POINT and initial["article"] is None
+    assert initial["next_question"] == {"id": fresh["id"], "version_id": fresh["version_id"]}
+    published = await edit(ctx, draft, "publish", ARTICLE)
+    assert published.status_code == 200, published.text
+    await publish(ctx, root, "q1", level="S", primary_knowledge_point_id="TIME")
+    other = await ctx.client.post("/api/v1/written/attempts", json=attempt(fresh, single("A")),
+                                  headers=ctx.headers(ctx.users.peer))
+    assert other.status_code == 200, other.text
+    assert await topic() == {**initial, "article": {"id": draft["id"], "title": ARTICLE["title"]}}
+
+    solved = await ctx.client.post("/api/v1/written/attempts", json=attempt(fresh, single("A")), headers=headers)
+    assert solved.status_code == 200 and solved.json()["correct"] is True and solved.json().get("exam_id") is None
+    assert (await topic())["next_question"] is None
+    withdrawn = await edit(ctx, published.json(), "unpublish")
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert (await topic())["article"] is None
+    result = (await ctx.client.get(url, headers=headers)).json()
+    assert result["earned_score"] == 0 and result["max_score"] == 4
+    original_review = (await ctx.client.get(url + "/review", headers=headers)).json()["items"]
+    assert all(item["latest_attempt"] is None for item in original_review)

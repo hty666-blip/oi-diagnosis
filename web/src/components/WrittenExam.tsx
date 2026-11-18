@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, ApiError, messageOf, type WrittenExam, type WrittenExamQuestion,
-  type WrittenExamReviewItem, type WrittenExamSummary, type WrittenResponse,
+  type WrittenExamReviewItem, type WrittenExamSummary, type WrittenPracticePick, type WrittenResponse,
 } from "../api";
 import Markdown from "../Markdown";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
+import WrittenExamStudy from "./WrittenExamStudy";
 import { answerText, hasAnswer, useWrittenImages, WrittenAnswers, writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 function sameAnswer(left: WrittenResponse | null, right: WrittenResponse | null) {
@@ -58,11 +59,12 @@ function ExamQuestion({ value, draft, disabled, onChange }: {
   </div>;
 }
 
-export default function WrittenExamView({ initial, onBack, onRetry, onAttempt }: {
+export default function WrittenExamView({ initial, onBack, onRetry, onAttempt, onStudyPractice }: {
   initial: WrittenExam;
   onBack: () => void;
   onRetry: (item: WrittenExamReviewItem) => void;
   onAttempt: (id: number) => void;
+  onStudyPractice: (question: WrittenPracticePick) => void;
 }) {
   const [exam, setExam] = useState(initial);
   const [selected, setSelected] = useState(initial.items[0]?.question_id);
@@ -177,6 +179,7 @@ export default function WrittenExamView({ initial, onBack, onRetry, onAttempt }:
   }, [working, finished, saving, submitting]);
 
   const answered = exam.items.filter((item) => item.answered).length;
+  const missed = exam.items.filter((item) => (item.earned_score ?? 0) < item.max_score).length;
   const minutes = Math.floor(remaining / 60);
   const countdown = String(minutes).padStart(2, "0") + ":" + String(remaining % 60).padStart(2, "0");
   return <div className="written-practice-list">
@@ -204,8 +207,10 @@ export default function WrittenExamView({ initial, onBack, onRetry, onAttempt }:
         else setSaveError("");
       }} />}
     </section>
-    {finished && <ExamReview id={exam.id} count={exam.items.filter((item) => (item.earned_score ?? 0) < item.max_score).length}
-      onReviewQuestion={setSelected} onRetry={onRetry} onAttempt={onAttempt} />}
+    {finished && missed > 0 && <>
+      <WrittenExamStudy examId={exam.id} onPractice={onStudyPractice} />
+      <ExamReview id={exam.id} count={missed} onReviewQuestion={setSelected} onRetry={onRetry} onAttempt={onAttempt} />
+    </>}
     {loading && <p role="status">正在读取题面…</p>}
     {loadError && <ErrorNotice message={loadError} onRetry={() => setReload((value) => value + 1)} />}
     {!loading && question?.card.question_id === selected && question && <ExamQuestion value={question} draft={draft}

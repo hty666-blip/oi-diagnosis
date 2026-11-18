@@ -89,16 +89,19 @@ export default function WrittenPractice({ userId }: { userId: number }) {
 
   function showResult(value: WrittenAttempt) {
     setReceipt(value);
-    setPosition({ list, target: { kind: "attempt", id: value.id, examId: value.exam_id } });
+    setPosition({ list, target: {
+      kind: "attempt", id: value.id, examId: value.exam_id,
+      returnExamId: target?.kind === "question" ? target.returnExamId : undefined,
+    } });
   }
 
-  const linkedExam = target && target.kind !== "exam" ? target.examId : undefined;
+  const returnExamId = target && target.kind !== "exam" ? target.examId ?? target.returnExamId : undefined;
   return <section className="written-practice">
     <header className="page-head">
       <h1>初赛练习</h1>
       {target && target.kind !== "exam" && <button className="ghost" type="button"
-        onClick={() => linkedExam ? open({ kind: "exam", id: linkedExam }) : showList(list)}>
-        {linkedExam ? "返回模拟答卷" : `返回${listLabels[list]}`}
+        onClick={() => returnExamId ? open({ kind: "exam", id: returnExamId }) : showList(list)}>
+        {returnExamId ? "返回模拟答卷" : `返回${listLabels[list]}`}
       </button>}
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
@@ -113,7 +116,8 @@ export default function WrittenPractice({ userId }: { userId: number }) {
     {target?.kind === "question" && <WrittenOpenQuestion key={`${target.examId ?? "bank"}:${target.id}`} userId={userId} target={target}
       onVersion={(version) => setPosition({ list, target: { ...target, version } })} onSubmitted={showResult} />}
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
-      examContext={linkedExam} onRetryQuestion={(id) => open({ kind: "question", id, examId: linkedExam })} />}
+      examContext={target.examId}
+      onRetryQuestion={(id) => open({ kind: "question", id, examId: target.examId, returnExamId: target.returnExamId })} />}
     {list === "knowledge" && <StudentKnowledge active={!target}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "papers" && <WrittenPapers active={!target || target.kind === "exam"}
@@ -121,6 +125,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
       onExamId={(id) => id === null ? showList("papers") : open({ kind: "exam", id })}
       onExamRetry={(id, item) => open({ kind: "question", id: item.question_id, version: item.version_id, examId: id })}
       onExamAttempt={(id, attemptId) => open({ kind: "attempt", id: attemptId, examId: id })}
+      onExamPractice={(id, question) => open({ kind: "question", id: question.id, version: question.version_id, returnExamId: id })}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "assignments" && <WrittenAssignments studentId={userId} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}

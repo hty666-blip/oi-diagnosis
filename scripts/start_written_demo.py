@@ -348,12 +348,18 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     exam_question = exam_path + f"/questions/{exam['items'][0]['question_id']}"
     before = await student.call("GET", exam_question)
     require("answer" not in before and exam["status"] == "working", "模拟交卷前不应返回答案。")
+    await student.call("GET", exam_path + "/study", expect=409)
     await student.call("PUT", exam_question, json={"expected_revision": 0,
                                                     "response": {"kind": "option", "option_ids": ["B"]}})
     restored = await student.call("GET", exam_question)
     require(restored["response"]["option_ids"] == ["B"], "模拟答题卡没有保存。")
     finished = await student.call("POST", exam_path + "/submit")
     require(finished["earned_score"] == 2 and finished["max_score"] == 16, "原创模拟卷预期得分为 2 / 16。")
+    study_path = exam_path + "/study"
+    await peer.call("GET", study_path, expect=404)
+    topics = (await student.call("GET", study_path))["items"]
+    require(sum(len(topic["numbers"]) for topic in topics) == 7
+            and any(topic["article"] for topic in topics), "错题按知识点归类或讲义入口有误。")
     results_path = f"/written/exams/classes/{matrix['class_id']}/results"
     await student.call("GET", results_path, expect=403)
     results = (await teacher.call("GET", results_path))["items"]

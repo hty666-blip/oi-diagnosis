@@ -91,7 +91,7 @@ function ArticleText({ article }: { article: PublishedKnowledge }) {
   </article>;
 }
 
-function KnowledgeReader({ id, onClose, onPractice }: {
+export function KnowledgeReader({ id, onClose, onPractice }: {
   id: number; onClose: () => void; onPractice?: OpenPractice;
 }) {
   const [article, setArticle] = useState<PublishedKnowledge>();

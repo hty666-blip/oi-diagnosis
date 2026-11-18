@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, messageOf, type WrittenExam, type WrittenExamReviewItem, type WrittenPaperQuestions, type WrittenPaperSummary, type WrittenPublishedSummary } from "../api";
+import { api, messageOf, type WrittenExam, type WrittenExamReviewItem, type WrittenPaperQuestions, type WrittenPaperSummary, type WrittenPracticePick } from "../api";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 import WrittenExamView, { WrittenExamHistory } from "./WrittenExam";
@@ -7,13 +7,14 @@ import { writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 const sourceLabels = { official_paper: "真题", simulation: "模拟题", original_demo: "自编演示" };
 
-export default function WrittenPapers({ active, examId, onExamId, onPractice, onExamRetry, onExamAttempt }: {
+export default function WrittenPapers({ active, examId, onExamId, onPractice, onExamRetry, onExamAttempt, onExamPractice }: {
   active: boolean;
   examId: number | null;
   onExamId: (id: number | null) => void;
-  onPractice: (question: WrittenPublishedSummary) => void;
+  onPractice: (question: WrittenPracticePick) => void;
   onExamRetry: (id: number, item: WrittenExamReviewItem) => void;
   onExamAttempt: (id: number, attemptId: number) => void;
+  onExamPractice: (id: number, question: WrittenPracticePick) => void;
 }) {
   const [papers, setPapers] = useState<{ items: WrittenPaperSummary[]; has_more: boolean }>();
   const [selected, setSelected] = useState<WrittenPaperSummary>();
@@ -97,7 +98,8 @@ export default function WrittenPapers({ active, examId, onExamId, onPractice, on
     }
     if (exam?.id === examId) return <WrittenExamView key={exam.id} initial={exam} onBack={leaveExam}
       onRetry={(item) => { setExam(undefined); onExamRetry(examId, item); }}
-      onAttempt={(id) => { setExam(undefined); onExamAttempt(examId, id); }} />;
+      onAttempt={(id) => { setExam(undefined); onExamAttempt(examId, id); }}
+      onStudyPractice={(question) => { setExam(undefined); onExamPractice(examId, question); }} />;
     return <section className="card written-practice-list">
       <div className="card-head"><h2>恢复答卷</h2><button className="ghost" type="button" onClick={leaveExam}>返回试卷</button></div>
       {restoreError ? <ErrorNotice message={restoreError} onRetry={() => setExamReload((value) => value + 1)} />
