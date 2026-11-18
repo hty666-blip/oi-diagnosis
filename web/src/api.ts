@@ -564,7 +564,13 @@ export interface WrittenPaperSummary {
   candidate_count: number;
 }
 export interface WrittenPaperQuestions {
-  paper: WrittenPaperSummary;
+  paper: WrittenPaperSummary & {
+    duration_minutes: number | null;
+    duration_source: string | null;
+    source_total_score: number | null;
+    source_recorded_score: number | null;
+    published_score: number;
+  };
   items: (WrittenPublishedSummary & { number: string })[];
   has_more: boolean;
 }

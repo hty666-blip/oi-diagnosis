@@ -10,7 +10,10 @@ PAPERS = "/api/v1/written/papers"
 async def test_paper_navigation_preserves_source_order_and_batch_scope(api_context):
     ctx = api_context
     records = make_records()
-    records["papers.jsonl"][0].update(level="J", year=2025, source_kind="original_demo")
+    records["papers.jsonl"][0].update(
+        level="J", year=2025, source_kind="original_demo", duration_minutes=120,
+        duration_source="样本记录，原卷待核对", total_score_official=100, total_score_recorded=99,
+    )
     records["questions.jsonl"][0]["original_number"] = "2"
     records["questions.jsonl"][1]["original_number"] = "9-1"
     root = await staged(ctx, records)
@@ -35,10 +38,16 @@ async def test_paper_navigation_preserves_source_order_and_batch_scope(api_conte
     assert current["published_count"] == 1 and current["candidate_count"] == 2
     result = (await ctx.client.get(path, headers=headers)).json()
     assert [item["number"] for item in result["items"]] == ["9-1"]
+    assert result["paper"]["published_score"] == result["items"][0]["score"]
+    assert result["paper"]["source_total_score"] == 100
+    assert result["paper"]["source_recorded_score"] == 99
+    assert result["paper"]["duration_minutes"] == 120
+    assert result["paper"]["duration_source"] == "样本记录，原卷待核对"
 
     first = await publish(ctx, root, "q1")
     result = (await ctx.client.get(path, headers=headers)).json()
     assert result["paper"]["published_count"] == 2
+    assert result["paper"]["published_score"] == sum(item["score"] for item in result["items"])
     assert [item["id"] for item in result["items"]] == [first["id"], second["id"]]
     assert [item["number"] for item in result["items"]] == ["2", "9-1"]
     assert all("answer" not in item and "explanation" not in item for item in result["items"])
@@ -50,4 +59,5 @@ async def test_paper_navigation_preserves_source_order_and_batch_scope(api_conte
     assert hidden.status_code == 200
     page = (await ctx.client.get(path, headers=headers)).json()
     assert page["paper"]["published_count"] == 1
+    assert page["paper"]["published_score"] == page["items"][0]["score"]
     assert page["items"][0]["version_id"] == first["version_id"]

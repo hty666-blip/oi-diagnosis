@@ -50,7 +50,17 @@ export default function WrittenPapers({ active, onPractice }: {
     {error && <ErrorNotice message={error} onRetry={refresh} />}
     {loading && !error && <p role="status">正在读取试卷…</p>}
     {!error && !loading && (selected && detail ? <>
-      <p className="muted">已上架 {detail.paper.published_count} / 收录 {detail.paper.candidate_count} 题。逐题作答，提交后可看解析。</p>
+      <p className="muted">
+        已上架 {detail.paper.published_count} / 收录 {detail.paper.candidate_count} 题 · 上架题合计 {detail.paper.published_score} 分
+        {detail.paper.source_total_score !== null && <> · 题包标注卷面 {detail.paper.source_total_score} 分</>}
+      </p>
+      {detail.paper.source_recorded_score !== null && detail.paper.source_total_score !== null
+        && detail.paper.source_recorded_score !== detail.paper.source_total_score
+        && <p className="muted">题包收录题合计 {detail.paper.source_recorded_score} 分，与标注卷面总分有差异。</p>}
+      {detail.paper.duration_minutes !== null && <p className="muted">
+        题包标注时长 {detail.paper.duration_minutes} 分钟
+        {detail.paper.duration_source && <>（{detail.paper.duration_source}）</>}
+      </p>}
       <div className="table-scroll"><table>
         <thead><tr><th>题号</th><th>题目</th><th>题型</th><th>分值</th><th>操作</th></tr></thead>
         <tbody>{detail.items.map((question) => <tr key={question.id}>

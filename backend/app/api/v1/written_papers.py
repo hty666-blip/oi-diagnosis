@@ -1,6 +1,7 @@
 """按原试卷组织当前可作答的已审核题目。"""
 
 from collections import Counter
+from math import fsum
 from typing import Annotated
 from uuid import UUID
 
@@ -35,6 +36,21 @@ def paper_out(batch, paper, published, total):
         "source_kind": kind if kind in ("official_paper", "simulation", "original_demo") else None,
         "published_count": published,
         "candidate_count": total,
+    }
+
+
+def paper_metadata(paper: dict) -> dict:
+    duration = paper.get("duration_minutes")
+    duration_source = paper.get("duration_source")
+    total = paper.get("total_score_official", paper.get("total_score"))
+    recorded = paper.get("total_score_recorded")
+    return {
+        "duration_minutes": duration if type(duration) is int and 0 < duration <= 1440 else None,
+        "duration_source": duration_source[:240] if isinstance(duration_source, str) else None,
+        "source_total_score": total if type(total) in (int, float) and 0 < total <= 100000 else None,
+        "source_recorded_score": (
+            recorded if type(recorded) in (int, float) and 0 <= recorded <= 100000 else None
+        ),
     }
 
 
@@ -89,7 +105,11 @@ async def paper_questions(
         for position, row in enumerate(original, 1) if row["id"] in available
     ]
     return {
-        "paper": paper_out(batch, paper, len(rows), len(original)),
+        "paper": {
+            **paper_out(batch, paper, len(rows), len(original)),
+            **paper_metadata(paper),
+            "published_score": fsum(item["score"] for item in ordered),
+        },
         "items": ordered[offset:offset + PAGE_SIZE],
         "has_more": len(ordered) > offset + PAGE_SIZE,
     }
