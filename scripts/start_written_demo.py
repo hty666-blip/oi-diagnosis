@@ -94,13 +94,16 @@ def demo_env(password: str, mysql_port: int, log_path: Path, *, enable_model: bo
 async def wait_database(env: dict) -> None:
     engine = create_async_engine(env["DATABASE_URL"], hide_parameters=True)
     try:
-        for _ in range(90):
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
             try:
-                async with engine.connect() as conn:
-                    db, version = (await conn.execute(text("SELECT DATABASE(), VERSION()"))).one()
-                    require(db == DATABASE and version.startswith("8.4."), "数据库不是独立演示 MySQL 8.4。")
-                    return
-            except OperationalError:
+                # TCP 可连不等于 MySQL 已完成握手和认证。
+                async with asyncio.timeout(4):
+                    async with engine.connect() as conn:
+                        db, version = (await conn.execute(text("SELECT DATABASE(), VERSION()"))).one()
+                        require(db == DATABASE and version.startswith("8.4."), "数据库不是独立演示 MySQL 8.4。")
+                        return
+            except (OperationalError, TimeoutError):
                 await asyncio.sleep(1)
         raise DemoError("独立 MySQL 未就绪。")
     finally:
@@ -330,6 +333,8 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     })
     require(helper["tutor"]["source"] == "reviewed" and bool(helper["tutor"]["reply"]),
             "关闭模型后的审核解析不可用。")
+    require(helper.get("knowledge", {}).get("title") == "二叉树层数与节点数",
+            "错题证据未关联本次发布的二叉树讲义。")
     fixed = await submit(NEW_QUESTION, objective_task, {"kind": "boolean", "value": False})
     route = await student.call("GET", "/written/progress")
     require(fixed["correct"] and any(item["status"] == "reviewed" for item in route["items"]),
