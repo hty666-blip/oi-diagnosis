@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,6 +21,7 @@ from app.core.security import (
 from app.core.text_validation import StorageText
 from app.domain.models import User
 from app.services.admin_service import audit, management_lock
+from app.services.student_invites import redeem_invite
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -55,10 +56,27 @@ class UserOut(BaseModel):
     must_change_password: bool
 
 
+class StudentRegistration(LoginIn):
+    username: StorageText = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    display_name: StorageText = Field(min_length=1, max_length=64)
+    password: StorageText = Field(min_length=8, max_length=128)
+    invite_code: str = Field(pattern=r"^[A-Za-z0-9_-]{32}$")
+
+    @field_validator("display_name", "invite_code", mode="before")
+    @classmethod
+    def strip_fields(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
 def _out(u: User) -> UserOut:
     return UserOut(id=u.id, username=u.username, display_name=u.display_name,
                    role=u.role, class_name=u.class_name, class_id=u.class_id,
                    must_change_password=u.must_change_password)
+
+
+def _session(user: User) -> dict:
+    token = create_access_token(user.id, user.role, user.username, user.token_version)
+    return {"access_token": token, "token_type": "bearer", "user": _out(user).model_dump()}
 
 
 @router.post("/login")
@@ -81,8 +99,19 @@ async def login(payload: LoginIn, session: SessionDep) -> dict:
         except SQLAlchemyError as exc:
             await session.rollback()
             raise HTTPException(status_code=503, detail="登录服务暂时不可用，请稍后重试") from exc
-    token = create_access_token(user.id, user.role, user.username, user.token_version)
-    return {"access_token": token, "token_type": "bearer", "user": _out(user).model_dump()}
+    return _session(user)
+
+
+@router.post("/register", status_code=201)
+async def register_student(payload: StudentRegistration, response: Response, session: SessionDep) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        user = await redeem_invite(session, code=payload.invite_code, username=payload.username,
+                                   display_name=payload.display_name, password=payload.password)
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise HTTPException(503, "注册服务暂时不可用，请稍后重试") from exc
+    return _session(user)
 
 
 @router.get("/me")

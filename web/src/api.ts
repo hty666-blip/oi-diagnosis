@@ -969,6 +969,14 @@ export const api = {
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
+  registerStudent: (body: { username: string; display_name: string; password: string; invite_code: string }) =>
+    post<{ access_token: string; user: AuthUser }>("/auth/register", body, { anonymous: true }),
+  studentInvites: (classId: number, signal?: AbortSignal) =>
+    get<{ archived: boolean; items: StudentInvite[] }>(`/admin/classes/${classId}/student-invites`, { signal }),
+  issueStudentInvite: (classId: number, signal?: AbortSignal) =>
+    post<StudentInvite & { code: string }>(`/admin/classes/${classId}/student-invites`, undefined, { signal }),
+  revokeStudentInvite: (classId: number, inviteId: number, signal?: AbortSignal) =>
+    post<StudentInvite>(`/admin/classes/${classId}/student-invites/${inviteId}/revoke`, undefined, { signal }),
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
   getProblem: (pid: string, trainingId?: number, submissionId?: number) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid) + (trainingId ? `?training_id=${trainingId}` : submissionId ? `?submission_id=${submissionId}` : "")),
@@ -1026,6 +1034,12 @@ export interface AdminAccount extends AuthUser {
 }
 export interface AccountInput {
   username: string; display_name: string; role: AuthUser["role"]; password: string; class_id: number | null;
+}
+export interface StudentInvite {
+  id: number;
+  created_at: string;
+  expires_at: string;
+  state: "active" | "used" | "expired" | "revoked";
 }
 export interface AdminClass {
   id: number; name: string; archived: boolean; version: number; teacher_ids: number[]; students: number;

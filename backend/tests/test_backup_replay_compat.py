@@ -27,6 +27,7 @@ from app.services.backup_service import (
     EXAM_TABLES,
     HELP_TABLE,
     HELP_TARGET_REVISION,
+    INVITE_TARGET_REVISION,
     KNOWLEDGE_TABLES,
     MAGIC,
     RECEIPT_SOURCE_REVISION,
@@ -75,6 +76,19 @@ def test_m7_archive_adds_only_empty_receipts_without_changing_file(decoder):
         before[len(MAGIC):len(MAGIC) + 12], before[len(MAGIC) + 12:], MAGIC))) == payload
     with pytest.raises(BackupError, match="archive_changed"):
         io.read(path, "0" * 64)
+
+
+def test_invite_revision_keeps_only_durable_tables_in_old_backups(monkeypatch, tmp_path):
+    names = {table.name for table in backup_service.tables()}
+    assert "student_invite" not in names
+    monkeypatch.setattr(backup_service, "current_revision", lambda: INVITE_TARGET_REVISION)
+    io = BackupIO(directory=tmp_path / "backups")
+    path = tmp_path / "saved.oibak"
+    data = {name: [] for name in names}
+    archive_payload(io, path, {"format": "oi-backup-v1", "revision": EXAM_RETRY_TARGET_REVISION, "tables": data})
+    restored = io.read(path)
+    assert restored["source_revision"] == EXAM_RETRY_TARGET_REVISION
+    assert restored["revision"] == INVITE_TARGET_REVISION and restored["tables"] == data
 
 
 def test_current_archive_keeps_receipts_and_derives_its_own_source(decoder):
@@ -344,7 +358,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == EXAM_RETRY_TARGET_REVISION
+    assert restored["restored_revision"] == backup_service.current_revision()
     assert all(restored["counts"][name] == 0 for name in ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES)
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2

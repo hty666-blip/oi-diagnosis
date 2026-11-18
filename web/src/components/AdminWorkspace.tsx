@@ -5,6 +5,7 @@ import { ErrorNotice } from "./RecordUI";
 
 import Modal from "./Modal";
 import AccountCsvEditor from "./AccountCsvEditor";
+import StudentInviteManager from "./StudentInviteManager";
 
 const RuntimeOperations = lazy(() => import("./RuntimeOperations"));
 const ProblemCatalog = lazy(() => import("./ProblemCatalog"));
@@ -22,7 +23,14 @@ const managementTabs: [Tab, string][] = [
   ["runtime", "运行维护"], ["audit", "操作审计"],
 ];
 const roles = { student: "学生", teacher: "教练", admin: "管理员" };
-const actions: Record<string, string> = { "written.preview": "预览初赛题包", "written.stage": "暂存初赛候选题", "written_assignment.publish": "发布初赛专项", "written.knowledge.create": "新建知识条目", "written.knowledge.save": "保存知识条目编辑稿", "written.knowledge.publish": "审核发布知识条目", "written.knowledge.unpublish": "下架知识条目", "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架", "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码", "student.transfer": "学生转班", "class.create": "创建班级", "class.update": "更新班级 / 转交训练" };
+const actions: Record<string, string> = {
+  "written.preview": "预览初赛题包", "written.stage": "暂存初赛候选题", "written_assignment.publish": "发布初赛专项",
+  "written.knowledge.create": "新建知识条目", "written.knowledge.save": "保存知识条目编辑稿", "written.knowledge.publish": "审核发布知识条目", "written.knowledge.unpublish": "下架知识条目",
+  "ai.connectivity_check": "发起模型连通检查", "problem.import": "导入题目版本", "problem.state": "题目上下架",
+  "account.create": "创建账号", "account.update": "更新账号", "account.reset_password": "重置密码", "account.change_password": "本人修改密码",
+  "student.transfer": "学生转班", "student.register": "学生使用邀请码注册",
+  "class.create": "创建班级", "class.update": "更新班级 / 转交训练", "class.invite.issue": "签发学生邀请码", "class.invite.revoke": "撤销学生邀请码",
+};
 const emptyAccount: AccountInput = { username: "", display_name: "", role: "student", password: "", class_id: null };
 
 export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: () => void; onReview: () => void }) {
@@ -49,6 +57,7 @@ export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: (
   const [impact, setImpact] = useState<TransferImpact>();
   const [className, setClassName] = useState("");
   const [group, setGroup] = useState<AdminClass>();
+  const [inviteGroup, setInviteGroup] = useState<AdminClass>();
   const [transferTo, setTransferTo] = useState<number | null>(null);
   const [csv, setCsv] = useState("");
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.importPreview>>>();
@@ -152,8 +161,16 @@ export default function AdminWorkspace({ onTeaching, onReview }: { onTeaching: (
     {tab === "classes" && <>
       <section className="card"><div className="card-head"><h2>班级与负责教练</h2><button className="btn-primary" disabled={blocked} onClick={() => { closeClass(); setClassCreating(true); }}>创建班级</button></div><p className="muted">归档后停止发布新训练，已发布任务仍可完成。</p>
 
-        <div className="table-scroll"><table><thead><tr><th>编号 / 班级</th><th>学生数</th><th>负责教练</th><th>状态</th><th>操作</th></tr></thead><tbody>{classes.map((c) => <tr key={c.id}><td>#{c.id} · {c.name}</td><td><button className="ghost" disabled={blocked} onClick={() => showMembers(c.id)}>查看 {c.students} 位学生</button></td><td>{c.teacher_ids.map(teacherLabel).join("、") || "尚未分配"}</td><td>{c.archived ? "已归档" : "使用中"}</td><td><button className="ghost" disabled={blocked} onClick={() => { setError(""); setGroup({ ...c, teacher_ids: [...c.teacher_ids] }); setTransferTo(null); }}>管理 {c.name}</button></td></tr>)}</tbody></table></div>{!classes.length && !loading && <p className="muted">先创建班级，再分配教练和学生。</p>}
+        <div className="table-scroll"><table><thead><tr><th>编号 / 班级</th><th>学生数</th><th>负责教练</th><th>状态</th><th>操作</th></tr></thead><tbody>{classes.map((c) => <tr key={c.id}>
+          <td>#{c.id} · {c.name}</td><td><button className="ghost" disabled={blocked} onClick={() => showMembers(c.id)}>查看 {c.students} 位学生</button></td>
+          <td>{c.teacher_ids.map(teacherLabel).join("、") || "尚未分配"}</td><td>{c.archived ? "已归档" : "使用中"}</td>
+          <td><div className="written-practice-actions">
+            <button className="ghost" disabled={blocked} onClick={() => { setError(""); setGroup({ ...c, teacher_ids: [...c.teacher_ids] }); setTransferTo(null); }}>管理 {c.name}</button>
+            <button className="ghost" type="button" disabled={blocked} onClick={() => setInviteGroup(c)} aria-label={`管理 ${c.name}的邀请码`}>邀请码</button>
+          </div></td>
+        </tr>)}</tbody></table></div>{!classes.length && !loading && <p className="muted">先创建班级，再分配教练和学生。</p>}
       </section>
+      {inviteGroup && <StudentInviteManager key={inviteGroup.id} group={inviteGroup} onClose={() => setInviteGroup(undefined)} />}
       {classCreating && <Modal title="创建班级" onClose={closeClass} busy={busy} error={error} wide>
 
         <form className="admin-form" onSubmit={(event) => { event.preventDefault(); void run(async () => {

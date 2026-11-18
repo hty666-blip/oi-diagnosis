@@ -26,7 +26,7 @@ from app.services.problem_versions import version_digest
 
 ROOT = Path(__file__).resolve().parents[3]
 EXCLUDED = {"worker_heartbeat", "ai_configuration", "ai_configuration_check", "ai_call_event", "backup_artifact",
-            "maintenance_task", "problem_import_draft", "submission_lock"}
+            "maintenance_task", "problem_import_draft", "submission_lock", "student_invite"}
 MAGIC = b"OI-BACKUP-1\x00"
 MAX_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE = 32 * 1024 * 1024
@@ -56,6 +56,7 @@ SHORT_GRADE_TARGET_REVISION = "v678c29e3a5f"
 SHORT_GRADE_TABLES = {"written_short_grade", "written_short_draft"}
 EXAM_RETRY_TARGET_REVISION = "w789d30f4b60"
 EXAM_RETRY_TABLES = {"written_exam_attempt"}
+INVITE_TARGET_REVISION = "x890e41a2c7d"
 BACKUP_COMPATIBILITY_STEPS = (
     (RECEIPT_TARGET_REVISION, {RECEIPT_TABLE}),
     (WRITTEN_TARGET_REVISION, WRITTEN_TABLES),
@@ -67,6 +68,7 @@ BACKUP_COMPATIBILITY_STEPS = (
     (EXAM_TARGET_REVISION, EXAM_TABLES),
     (SHORT_GRADE_TARGET_REVISION, SHORT_GRADE_TABLES),
     (EXAM_RETRY_TARGET_REVISION, EXAM_RETRY_TABLES),
+    (INVITE_TARGET_REVISION, set()),  # 临时邀请码在恢复时重新签发。
 )
 
 
@@ -229,7 +231,7 @@ class BackupIO:
             if added_tables:
                 for table in added_tables:
                     data[table] = []
-                payload["revision"] = target_revision
+            payload["revision"] = target_revision
             if REVIEW_TABLES.issubset(added_tables) and source_revision == WRITTEN_TARGET_REVISION:
                 for row in data["written_candidate"]:
                     if not isinstance(row, dict) or any(name in row for name in REVIEW_CANDIDATE_DEFAULTS) or row.get("review_status") != "needs_review":

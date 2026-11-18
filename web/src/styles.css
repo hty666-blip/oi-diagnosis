@@ -127,6 +127,7 @@ a { color: inherit; }
 .login-card .hint { margin: 0 0 28px; color: var(--muted); font-size: 13px; }
 .login-card .err { overflow-wrap: anywhere; }
 .login-card .btn-primary { width: 100%; min-height: 44px; margin-top: 4px; }
+.login-card .login-mode { margin-top: 12px; }
 
 @media (max-width: 760px) {
   .login-brand { padding-inline: 24px; }

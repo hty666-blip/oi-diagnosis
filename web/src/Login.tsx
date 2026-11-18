@@ -13,6 +13,9 @@ const ROLE_LABEL: Record<string, string> = { student: "学生", teacher: "教练
 export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [demos, setDemos] = useState<Demo[]>([]);
@@ -21,12 +24,24 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
     api.demoAccounts().then(setDemos).catch(() => setDemos([]));
   }, []);
 
+  const ready = username.trim() && password && (!registering || (displayName.trim() && inviteCode.trim()));
+
+  function changeMode(next: boolean) {
+    setRegistering(next);
+    setPassword("");
+    setDisplayName("");
+    setInviteCode("");
+    setErr("");
+  }
+
   async function submit() {
-    if (busy || !username.trim() || !password) return;
+    if (busy || !ready) return;
     setBusy(true);
     setErr("");
     try {
-      const r = await api.login(username.trim(), password);
+      const r = registering ? await api.registerStudent({
+        username: username.trim(), password, display_name: displayName.trim(), invite_code: inviteCode.trim(),
+      }) : await api.login(username.trim(), password);
       setSession(r.access_token, r.user);
       onLogin(r.user);
     } catch (e) {
@@ -62,12 +77,28 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
 
         <div className="login-panel">
           <form className="login-card" aria-labelledby="login-title" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-            <h2 id="login-title">登录</h2>
-            <p className="hint">{demos.length > 0 ? "输入账号，或选择演示账号。" : "使用分配的账号登录。"}</p>
+            <h2 id="login-title">{registering ? "学生注册" : "登录"}</h2>
+            <p className="hint">{registering ? "使用班级提供的一次性邀请码注册。" : demos.length > 0 ? "输入账号，或选择演示账号。" : "使用分配的账号登录。"}</p>
+
+            {registering && <>
+              <div className="field">
+                <label htmlFor="register-invite">班级邀请码</label>
+                <input id="register-invite" type="password" autoComplete="off" value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value)} required maxLength={36} disabled={busy} />
+              </div>
+              <div className="field">
+                <label htmlFor="register-name">姓名或昵称</label>
+                <input id="register-name" autoComplete="nickname" value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)} required maxLength={64} disabled={busy} />
+              </div>
+            </>}
 
             <div className="field">
               <label htmlFor="login-username">用户名</label>
-              <input id="login-username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" maxLength={64} required disabled={busy} />
+              <input id="login-username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username"
+                pattern={registering ? "[A-Za-z0-9][A-Za-z0-9_.\\-]*" : undefined}
+                title={registering ? "以字母或数字开头，可使用字母、数字、点、下划线和短横线" : undefined}
+                maxLength={64} required disabled={busy} />
             </div>
             <div className="field">
               <label htmlFor="login-password">密码</label>
@@ -76,8 +107,9 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
                 id="login-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                maxLength={1024}
+                autoComplete={registering ? "new-password" : "current-password"}
+                minLength={registering ? 8 : undefined}
+                maxLength={registering ? 128 : 1024}
                 required
                 disabled={busy}
               />
@@ -85,11 +117,14 @@ export default function Login({ onLogin }: { onLogin: (u: AuthUser) => void }) {
 
             {err && <div className="err" role="alert">{err}</div>}
 
-            <button type="submit" className="btn-primary" disabled={busy || !username.trim() || !password}>
-              {busy ? "登录中…" : "进入系统"}
+            <button type="submit" className="btn-primary" disabled={busy || !ready}>
+              {registering ? (busy ? "注册中…" : "注册并进入系统") : (busy ? "登录中…" : "进入系统")}
+            </button>
+            <button type="button" className="ghost login-mode" disabled={busy} onClick={() => changeMode(!registering)}>
+              {registering ? "返回登录" : "使用邀请码注册"}
             </button>
 
-            {demos.length > 0 && <div className="demo-accounts">
+            {!registering && demos.length > 0 && <div className="demo-accounts">
               <div className="label">演示账号</div>
               <div className="demo-grid">
                 {demos.map((d) => (

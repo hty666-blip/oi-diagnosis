@@ -666,6 +666,20 @@ class ClassTeacher(Base):
     teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
 
 
+class StudentInvite(Base):
+    """班级的一次性注册凭据，只存摘要。"""
+
+    __tablename__ = "student_invite"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"), index=True)
+    code_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    used_by_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+
 class AdminAudit(Base):
     __tablename__ = "admin_audit"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

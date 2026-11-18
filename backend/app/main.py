@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from app.api.errors import request_validation_error_handler
 from app.api.v1 import (
     admin,
+    admin_invites,
     admin_problems,
     admin_runtime,
     admin_written,
@@ -76,6 +77,7 @@ app.include_router(catalog.router, prefix="/api/v1")
 app.include_router(card.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(admin_invites.router, prefix="/api/v1")
 app.include_router(admin_problems.router, prefix="/api/v1")
 app.include_router(admin_runtime.router, prefix="/api/v1")
 app.include_router(admin_written.router, prefix="/api/v1")
