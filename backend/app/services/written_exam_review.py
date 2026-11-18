@@ -4,7 +4,7 @@ from collections import defaultdict
 from math import fsum
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, select
+from sqlalchemy import Select, case, func, select
 
 from app.domain.models import (
     User,
@@ -50,7 +50,7 @@ def missed(exam_id: int):
     )
 
 
-def latest_exam_attempt_ids(exam_ids: list[int]):
+def latest_exam_attempt_ids(exam_ids: list[int] | Select):
     return (
         select(func.max(WrittenAttempt.id))
         .join(WrittenExamAttempt, WrittenExamAttempt.attempt_id == WrittenAttempt.id)
@@ -60,12 +60,18 @@ def latest_exam_attempt_ids(exam_ids: list[int]):
     )
 
 
-async def class_exam_results(session, class_id: int, before_id: int | None):
+def submitted_class_exams(class_id: int):
     students = active_students(class_id).with_only_columns(User.id)
+    return select(WrittenExam).where(
+        WrittenExam.student_id.in_(students), WrittenExam.submitted_at.is_not(None),
+    )
+
+
+async def class_exam_results(session, class_id: int, before_id: int | None):
     query = (
-        select(WrittenExam.id, WrittenExam.title, WrittenExam.submitted_at, User.display_name, User.username)
+        submitted_class_exams(class_id)
+        .with_only_columns(WrittenExam.id, WrittenExam.title, WrittenExam.submitted_at, User.display_name, User.username)
         .join(User, User.id == WrittenExam.student_id)
-        .where(WrittenExam.student_id.in_(students), WrittenExam.submitted_at.is_not(None))
     )
     if before_id is not None:
         query = query.where(WrittenExam.id < before_id)
@@ -101,6 +107,45 @@ async def class_exam_results(session, class_id: int, before_id: int | None):
             "corrected_count": sum((row.id, item.question_id, item.version_id) in corrected for item in missed_items),
         })
     return {"items": items, "next_before_id": page[-1].id if len(rows) > CLASS_RESULT_LIMIT else None}
+
+
+async def class_exam_questions(session, class_id: int, exam_id: int):
+    scope = submitted_class_exams(class_id)
+    reference = await session.scalar(scope.where(WrittenExam.id == exam_id))
+    if reference is None:
+        raise HTTPException(404, "已交答卷不存在或无权查看")
+    cohort = scope.with_only_columns(WrittenExam.id).where(
+        WrittenExam.batch_id == reference.batch_id, WrittenExam.paper_id == reference.paper_id,
+    )
+    submitted_count = await session.scalar(select(func.count()).select_from(cohort.subquery()))
+
+    retakes = (
+        select(WrittenExamAttempt.exam_id, WrittenAttempt.question_id, WrittenAttempt.version_id, WrittenAttempt.correct)
+        .join(WrittenAttempt, WrittenAttempt.id == WrittenExamAttempt.attempt_id)
+        .where(WrittenAttempt.id.in_(latest_exam_attempt_ids(cohort))).subquery()
+    )
+    item = WrittenExamItem
+    version = WrittenQuestionVersion
+    full_score = item.earned_score == item.max_score
+    missed_score = item.earned_score < item.max_score
+    blank = item.response.is_(None)
+    group = (item.number, item.question_id, item.version_id, version.revision)
+    rows = await session.execute(
+        select(
+            *group,
+            func.count().label("answer_count"),
+            func.sum(case((full_score, 1), else_=0)).label("correct_count"),
+            func.sum(case((missed_score & ~blank, 1), else_=0)).label("wrong_count"),
+            func.sum(case((blank, 1), else_=0)).label("blank_count"),
+            func.sum(case((missed_score & retakes.c.correct.is_(True), 1), else_=0)).label("corrected_count"),
+        ).select_from(item)
+        .join(version, version.id == item.version_id)
+        .outerjoin(retakes, (retakes.c.exam_id == item.exam_id) & (retakes.c.question_id == item.question_id)
+                   & (retakes.c.version_id == item.version_id))
+        .where(item.exam_id.in_(cohort)).group_by(*group)
+        .order_by(func.min(item.position), item.question_id, version.revision.desc())
+    )
+    return {"title": reference.title, "submitted_count": submitted_count, "items": [dict(row) for row in rows.mappings()]}
 
 
 async def review_items(session, student_id: int, exam_id: int) -> list[dict]:

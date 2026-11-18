@@ -385,6 +385,11 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     require(len(results) == 1 and results[0]["earned_score"] == 2 and results[0]["max_score"] == 16
             and results[0]["missed_count"] == 7 and results[0]["corrected_count"] == 1,
             "教练看到的卷分或复练次数与学生侧不一致。")
+    report = await teacher.call("GET", f"{results_path}/{exam['id']}/questions")
+    retry_row = next((row for row in report["items"] if row["question_id"] == retry_id), {})
+    require(report["submitted_count"] == 1 and len(report["items"]) == 8
+            and retry_row.get("blank_count") == 1 and retry_row.get("corrected_count") == 1,
+            "模拟卷的单题学情没有反映未答和复练。")
 
     short = await submit(SHORT_QUESTION, short_task, {"kind": "text", "value": "每个节点最多有两个孩子，所以下一层最多翻倍。"})
     require(short["earned_score"] is None and short["answer"] is None, "简答提交后应待复核。")

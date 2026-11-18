@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, messageOf, type WrittenClassExamResults } from "../api";
+import { api, messageOf, type WrittenClassExamQuestions, type WrittenClassExamResults } from "../api";
+import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 
 export default function WrittenExamResults() {
@@ -35,6 +36,7 @@ export default function WrittenExamResults() {
 
 function ClassResultTable({ classId }: { classId: number }) {
   const [page, setPage] = useState<WrittenClassExamResults>();
+  const [examId, setExamId] = useState<number>();
   const [cursors, setCursors] = useState<number[]>([]);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -72,12 +74,14 @@ function ClassResultTable({ classId }: { classId: number }) {
     {page.items.length === 0 ? <p className="muted">当前没有已交答卷。</p> : <div className="table-scroll">
       <table aria-label="班级模拟答卷">
         <thead><tr><th scope="col">学生</th><th scope="col">试卷</th><th scope="col">交卷时间</th>
-          <th scope="col">原卷得分</th><th scope="col">复练答对 / 原卷错题与未答</th></tr></thead>
+          <th scope="col">原卷得分</th><th scope="col">复练答对 / 原卷错题与未答</th><th scope="col">操作</th></tr></thead>
         <tbody>{page.items.map((row) => <tr key={row.id}>
           <th scope="row">{row.student_name}</th><td>{row.title}</td>
           <td><time dateTime={row.submitted_at}>{new Date(row.submitted_at).toLocaleString("zh-CN")}</time></td>
           <td>{row.earned_score} / {row.max_score} 分</td>
           <td>{row.missed_count ? `${row.corrected_count} / ${row.missed_count} 题` : "无错题"}</td>
+          <td><button type="button" className="ghost" onClick={() => setExamId(row.id)}
+            aria-label={`查看《${row.title}》单题学情`}>查看单题学情</button></td>
         </tr>)}</tbody>
       </table>
     </div>}
@@ -85,5 +89,38 @@ function ClassResultTable({ classId }: { classId: number }) {
       <button type="button" className="ghost" disabled={beforeId === undefined} onClick={() => changePage(cursors.slice(0, -1))}>上一页</button>
       <button type="button" className="ghost" disabled={next === null} onClick={() => { if (next !== null) changePage([...cursors, next]); }}>下一页</button>
     </div>}
+    {examId !== undefined && <ClassExamQuestions classId={classId} examId={examId} onClose={() => setExamId(undefined)} />}
   </>;
+}
+
+function ClassExamQuestions({ classId, examId, onClose }: { classId: number; examId: number; onClose: () => void }) {
+  const [report, setReport] = useState<WrittenClassExamQuestions>();
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    const request = new AbortController();
+    void api.writtenClassExamQuestions(classId, examId, request.signal).then(
+      (value) => { if (!request.signal.aborted) setReport(value); },
+      (failure) => { if (!request.signal.aborted) setError(messageOf(failure)); },
+    );
+    return () => request.abort();
+  }, [classId, examId, reload]);
+
+  return <Modal title="模拟卷单题学情" onClose={onClose} wide>
+    {error ? <ErrorNotice message={error} onRetry={() => { setError(""); setReload((value) => value + 1); }} />
+      : !report ? <p role="status">正在读取单题学情…</p>
+      : <>
+        <div className="card-head"><h3>{report.title}</h3><span className="muted">已交 {report.submitted_count} 份</span></div>
+        <p className="muted">同一题的不同版本分行统计。</p>
+        {report.items.length ? <div className="table-scroll"><table aria-label="模拟卷逐题统计">
+          <thead><tr><th scope="col">答卷题号</th><th scope="col">版本</th><th scope="col">本版卷数</th><th scope="col">卷内答对</th>
+            <th scope="col">卷内答错</th><th scope="col">未答</th><th scope="col">复练答对</th></tr></thead>
+          <tbody>{report.items.map((row) => <tr key={`${row.question_id}:${row.version_id}:${row.number}`}>
+            <th scope="row">第 {row.number} 题</th><td>v{row.revision}</td><td>{row.answer_count}</td>
+            <td>{row.correct_count}</td><td>{row.wrong_count}</td><td>{row.blank_count}</td><td>{row.corrected_count}</td>
+          </tr>)}</tbody>
+        </table></div> : <p className="muted">暂无可统计的作答。</p>}
+      </>}
+  </Modal>;
 }

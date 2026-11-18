@@ -301,3 +301,74 @@ async def test_exam_study_groups_frozen_topics_and_only_recommends_unseen_publis
     assert result["earned_score"] == 0 and result["max_score"] == 4
     original_review = (await ctx.client.get(url + "/review", headers=headers)).json()["items"]
     assert all(item["latest_attempt"] is None for item in original_review)
+
+
+async def test_coach_can_drill_into_paper_results_for_each_frozen_version(api_context):
+    ctx = api_context
+    group, other_group = await groups(ctx)
+    records = make_records()
+    records["papers.jsonl"][0].update(duration_minutes=10, total_score=4)
+    for question in records["questions.jsonl"]:
+        question["score"] = 2
+    root = await staged(ctx, records)
+    batch = root.split("/")[-1]
+    first = await publish(ctx, root, "q1")
+    second = await publish(ctx, root, "q2")
+    coach = ctx.headers(ctx.users.teacher)
+
+    async def begin(user, batch_id=batch):
+        result = await ctx.client.post(f"{EXAMS}/start/{batch_id}/paper1", headers=ctx.headers(user))
+        assert result.status_code == 200, result.text
+        return result.json()["id"]
+
+    async def save_and_finish(user, exam_id, replies):
+        headers = ctx.headers(user)
+        path = f"{EXAMS}/{exam_id}"
+        for question_id, choice in replies:
+            result = await ctx.client.put(f"{path}/questions/{question_id}", headers=headers, json={
+                "expected_revision": 0, "response": single(choice),
+            })
+            assert result.status_code == 200, result.text
+        result = await ctx.client.post(path + "/submit", headers=headers)
+        assert result.status_code == 200, result.text
+
+    def report_path(class_id, exam_id):
+        return f"{EXAMS}/classes/{class_id}/results/{exam_id}/questions"
+
+    exam = await begin(ctx.users.student)
+    path = report_path(group.id, exam)
+    assert (await ctx.client.get(path, headers=coach)).status_code == 404
+    await save_and_finish(ctx.users.student, exam, [(first["id"], "B")])
+    retry = await ctx.client.post("/api/v1/written/attempts", headers=ctx.headers(), json={
+        **attempt(first, single("A")), "exam_id": exam,
+    })
+    assert retry.status_code == 200 and retry.json()["correct"] is True
+    newer = await publish(ctx, root, "q1", explanation="同一题的第二次审核版本。")
+    peer_exam = await begin(ctx.users.peer)
+    other_exam = await begin(ctx.users.other)
+    await save_and_finish(ctx.users.other, other_exam, [(first["id"], "B")])
+    assert (await ctx.client.get(report_path(group.id, other_exam), headers=coach)).status_code == 404
+    assert (await ctx.client.get(report_path(other_group.id, other_exam), headers=coach)).status_code == 404
+    assert (await ctx.client.get(path, headers=ctx.headers())).status_code == 403
+    initial = await ctx.client.get(path, headers=coach)
+    assert initial.status_code == 200 and initial.json()["submitted_count"] == 1
+    assert initial.headers["cache-control"] == "no-store"
+    await save_and_finish(ctx.users.peer, peer_exam, [(first["id"], "A"), (second["id"], "A")])
+    records["questions.jsonl"][0]["stem"] = "另一批次的试题。"
+    another_root = await staged(ctx, records)
+    for ident in ("q1", "q2"):
+        await publish(ctx, another_root, ident)
+    another_exam = await begin(ctx.users.student, another_root.split("/")[-1])
+    await save_and_finish(ctx.users.student, another_exam, [])
+
+    response = await ctx.client.get(path, headers=coach)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["submitted_count"] == 2 and data["title"] == "自编测试卷"
+    assert [(row["number"], row["version_id"], row["answer_count"], row["correct_count"],
+             row["wrong_count"], row["blank_count"], row["corrected_count"]) for row in data["items"]] == [
+        ("1", newer["version_id"], 1, 1, 0, 0, 0),
+        ("1", first["version_id"], 1, 0, 1, 0, 1),
+        ("2", second["version_id"], 2, 1, 0, 1, 0),
+    ]
+    assert (await ctx.client.get(report_path(group.id, peer_exam), headers=coach)).json() == data
