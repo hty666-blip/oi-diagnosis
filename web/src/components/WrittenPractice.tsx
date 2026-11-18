@@ -89,13 +89,17 @@ export default function WrittenPractice({ userId }: { userId: number }) {
 
   function showResult(value: WrittenAttempt) {
     setReceipt(value);
-    setPosition({ list, target: { kind: "attempt", id: value.id } });
+    setPosition({ list, target: { kind: "attempt", id: value.id, examId: value.exam_id } });
   }
 
+  const linkedExam = target && target.kind !== "exam" ? target.examId : undefined;
   return <section className="written-practice">
     <header className="page-head">
       <h1>初赛练习</h1>
-      {target && target.kind !== "exam" && <button className="ghost" type="button" onClick={() => showList(list)}>返回{listLabels[list]}</button>}
+      {target && target.kind !== "exam" && <button className="ghost" type="button"
+        onClick={() => linkedExam ? open({ kind: "exam", id: linkedExam }) : showList(list)}>
+        {linkedExam ? "返回模拟答卷" : `返回${listLabels[list]}`}
+      </button>}
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
       <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
@@ -106,15 +110,17 @@ export default function WrittenPractice({ userId }: { userId: number }) {
       <button className="ghost" type="button" aria-pressed={list === "history"} onClick={() => showList("history")}>作答记录</button>
       <button className="ghost" type="button" aria-pressed={inBook} onClick={() => showList(inBook ? list : "wrong")}>错题本</button>
     </nav>
-    {target?.kind === "question" && <WrittenOpenQuestion key={target.id} userId={userId} target={target}
+    {target?.kind === "question" && <WrittenOpenQuestion key={`${target.examId ?? "bank"}:${target.id}`} userId={userId} target={target}
       onVersion={(version) => setPosition({ list, target: { ...target, version } })} onSubmitted={showResult} />}
     {target?.kind === "attempt" && <WrittenOpenAttempt key={target.id} userId={userId} id={target.id} immediate={receipt}
-      onRetryQuestion={(id) => open({ kind: "question", id })} />}
+      examContext={linkedExam} onRetryQuestion={(id) => open({ kind: "question", id, examId: linkedExam })} />}
     {list === "knowledge" && <StudentKnowledge active={!target}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "papers" && <WrittenPapers active={!target || target.kind === "exam"}
       examId={target?.kind === "exam" ? target.id : null}
       onExamId={(id) => id === null ? showList("papers") : open({ kind: "exam", id })}
+      onExamRetry={(id, item) => open({ kind: "question", id: item.question_id, version: item.version_id, examId: id })}
+      onExamAttempt={(id, attemptId) => open({ kind: "attempt", id: attemptId, examId: id })}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "assignments" && <WrittenAssignments studentId={userId} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}

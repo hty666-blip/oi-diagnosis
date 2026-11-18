@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from app.api.input_types import ObjectId
 
@@ -59,9 +59,16 @@ class AttemptInput(BaseModel):
     version_id: UUID
     request_id: UUID
     assignment_id: ObjectId | None = None
+    exam_id: ObjectId | None = None
     response: Annotated[
         OptionResponse | BooleanResponse | TextResponse, Field(discriminator="kind")
     ]
+
+    @model_validator(mode="after")
+    def only_one_context(self):
+        if self.exam_id is not None and self.assignment_id is not None:
+            raise ValueError("作答不能同时属于班级专项与整卷复练")
+        return self
 
     def digest(self) -> str:
         content = self.model_dump(mode="json", exclude={"request_id"}, exclude_none=True)

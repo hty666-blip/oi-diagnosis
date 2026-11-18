@@ -354,6 +354,22 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     require(restored["response"]["option_ids"] == ["B"], "模拟答题卡没有保存。")
     finished = await student.call("POST", exam_path + "/submit")
     require(finished["earned_score"] == 2 and finished["max_score"] == 16, "原创模拟卷预期得分为 2 / 16。")
+    review_path = exam_path + "/review"
+    errors = (await student.call("GET", review_path))["items"]
+    require(len(errors) == 7 and not errors[0]["answered"], "模拟未答题没有进入复练清单。")
+    first_error = errors[0]
+    retry_id = first_error["question_id"]
+    retry_question = await student.call("GET", f"{review_path}/{retry_id}")
+    require(retry_question["question_type"] == "fill_blank" and "answer" not in retry_question,
+            "复练第一题不是原卷还未作答的填空，或提前返回了答案。")
+    practice = await student.call("POST", "/written/attempts", json={
+        "exam_id": exam["id"], "question_id": retry_id, "version_id": retry_question["version_id"],
+        "request_id": str(uuid4()), "response": {"kind": "text", "value": "22"},
+    })
+    reviewed = (await student.call("GET", review_path))["items"]
+    require(reviewed[0]["latest_attempt"] == {"id": practice["id"], "correct": True}
+            and (await student.call("GET", exam_path))["earned_score"] == 2,
+            "原卷复练进度或卷分有误。")
 
     short = await submit(SHORT_QUESTION, short_task, {"kind": "text", "value": "每个节点最多有两个孩子，所以下一层最多翻倍。"})
     require(short["earned_score"] is None and short["answer"] is None, "简答提交后应待复核。")
@@ -363,7 +379,7 @@ async def exercise(student: API, peer: API, teacher: API, rows: dict,
     final = await student.call("GET", f"/written/attempts/{short['id']}")
     require(final["earned_score"] == 2 and final["teacher_grade"]["points"] == [2, 0],
             "学生没有读到复核成绩。")
-    print("自动验收通过：规则判分和离线答疑、学习路线与学情、答题卡与交卷、简答人工评分。", flush=True)
+    print("自动验收通过：规则判分和离线答疑、学习路线与学情、答题卡与交卷、模拟错题复练、简答人工评分。", flush=True)
 
 
 def run(args: argparse.Namespace) -> None:

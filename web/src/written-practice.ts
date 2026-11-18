@@ -3,8 +3,8 @@ import { readLocal, removeLocal, writeLocal, type WrittenAttemptView, type Writt
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type WrittenList = "bank" | "papers" | "knowledge" | "progress" | "assignments" | WrittenAttemptView;
 export type WrittenTarget =
-  | { kind: "question"; id: number; version?: string }
-  | { kind: "attempt"; id: number }
+  | { kind: "question"; id: number; version?: string; examId?: number }
+  | { kind: "attempt"; id: number; examId?: number }
   | { kind: "exam"; id: number };
 export interface WrittenPosition {
   list: WrittenList;
@@ -32,11 +32,13 @@ export function readWrittenPosition(userId: number): WrittenPosition {
     if (value && ["bank", "papers", "knowledge", "progress", "history", "wrong", "corrected"].includes(value.list)) {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {
-        if (target.kind === "attempt") return { list: value.list, target: { kind: "attempt", id: target.id } };
+        const fromExam = value.list === "papers" && Number.isSafeInteger(target.examId) && target.examId > 0
+          ? { examId: target.examId as number } : {};
+        if (target.kind === "attempt") return { list: value.list, target: { kind: "attempt", id: target.id, ...fromExam } };
         if (target.kind === "exam" && value.list === "papers") return { list: "papers", target: { kind: "exam", id: target.id } };
         if (target.kind === "question") {
           const version = typeof target.version === "string" && uuid.test(target.version) ? target.version : undefined;
-          return { list: value.list, target: { kind: "question", id: target.id, version } };
+          return { list: value.list, target: { kind: "question", id: target.id, version, ...fromExam } };
         }
       }
       return { list: value.list, target: null };
@@ -70,8 +72,9 @@ function readResponse(value: unknown): WrittenResponse | null {
   return null;
 }
 
-export function writtenAnswerStore(userId: number, questionId: number, version: string, assignmentId?: number) {
-  const key = assignmentId === undefined
+export function writtenAnswerStore(userId: number, questionId: number, version: string, assignmentId?: number, examId?: number) {
+  const key = examId !== undefined ? `oi-written-exam-retry-draft:${userId}:${examId}:${questionId}:${version}`
+    : assignmentId === undefined
     ? `oi-written-draft:${userId}:${questionId}:${version}`
     : `oi-written-task-draft:${userId}:${assignmentId}:${questionId}:${version}`;
   const statusKey = (id: string) => `${key}:${id}`;

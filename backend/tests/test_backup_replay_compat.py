@@ -22,6 +22,8 @@ from app.services.backup_service import (
     ASSIGNMENT_TABLES,
     ATTEMPT_TABLE,
     ATTEMPT_TARGET_REVISION,
+    EXAM_RETRY_TABLES,
+    EXAM_RETRY_TARGET_REVISION,
     EXAM_TABLES,
     HELP_TABLE,
     HELP_TARGET_REVISION,
@@ -34,7 +36,6 @@ from app.services.backup_service import (
     REVIEW_TABLES,
     REVIEW_TARGET_REVISION,
     SHORT_GRADE_TABLES,
-    SHORT_GRADE_TARGET_REVISION,
     WRITTEN_TABLES,
     WRITTEN_TARGET_REVISION,
     BackupError,
@@ -331,7 +332,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES | REVIEW_TABLES | KNOWLEDGE_TABLES | ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
+    for table in WRITTEN_TABLES | REVIEW_TABLES | KNOWLEDGE_TABLES | ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -343,8 +344,8 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored_payload["tables"][RECEIPT_TABLE] == ([] if legacy else original_receipts)
     restored = await io.restore(restored_payload, replay_restore_target)
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
-    assert restored["restored_revision"] == SHORT_GRADE_TARGET_REVISION
-    assert all(restored["counts"][name] == 0 for name in ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES)
+    assert restored["restored_revision"] == EXAM_RETRY_TARGET_REVISION
+    assert all(restored["counts"][name] == 0 for name in ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES)
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

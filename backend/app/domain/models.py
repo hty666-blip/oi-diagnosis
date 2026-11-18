@@ -278,6 +278,14 @@ class WrittenExamItem(Base):
     earned_score: Mapped[float | None] = mapped_column(Double, nullable=True)
 
 
+class WrittenExamAttempt(Base):
+    """将普通练习回执与已交答卷关联，单独记录复练。"""
+
+    __tablename__ = "written_exam_attempt"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("written_exam.id"), index=True)
+
+
 class WrittenHelpTurn(Base):
     """一次追问、诊断交接和讲解，按照本人作答保存。"""
 

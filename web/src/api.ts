@@ -628,6 +628,14 @@ export interface WrittenExamQuestion {
   answer?: WrittenReferenceAnswer;
   explanation?: string;
 }
+export interface WrittenExamReviewItem {
+  question_id: number;
+  number: string;
+  version_id: string;
+  answered: boolean;
+  available: boolean;
+  latest_attempt: { id: number; correct: boolean } | null;
+}
 export interface WrittenAssignmentSummary {
   id: number;
   class_id: number;
@@ -672,6 +680,7 @@ export interface WrittenAttemptSummary extends WrittenAttemptResult {
 }
 export interface WrittenAttempt extends WrittenAttemptResult {
   assignment_id: number | null;
+  exam_id?: number;
   response: WrittenResponse;
   answer: WrittenReferenceAnswer | null;
   explanation: string;
@@ -782,6 +791,10 @@ export const api = {
   writtenExam: (id: number, signal?: AbortSignal) => get<WrittenExam>(`/written/exams/${id}`, { signal }),
   writtenExamQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
     get<WrittenExamQuestion>(`/written/exams/${id}/questions/${questionId}`, { signal }),
+  writtenExamReview: (id: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamReviewItem[] }>(`/written/exams/${id}/review`, { signal }),
+  writtenExamRetryQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
+    get<WrittenPublishedQuestion>(`/written/exams/${id}/review/${questionId}`, { signal }),
   saveWrittenExamAnswer: async (id: number, questionId: number, revision: number, response: WrittenResponse | null, signal?: AbortSignal) =>
     readJson<WrittenExamCard>(await request(`/written/exams/${id}/questions/${questionId}`, { expected_revision: revision, response }, "PUT", { signal })),
   submitWrittenExam: (id: number, signal?: AbortSignal) => post<WrittenExam>(`/written/exams/${id}/submit`, undefined, { signal }),
@@ -811,7 +824,7 @@ export const api = {
     if (beforeId !== undefined) params.set("before_id", String(beforeId));
     return get<{ items: WrittenAttemptSummary[]; has_more: boolean; next_before_id: number | null }>(`/written/attempts?${params}`, { signal });
   },
-  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse; assignment_id?: number }, signal?: AbortSignal) =>
+  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse; assignment_id?: number; exam_id?: number }, signal?: AbortSignal) =>
     post<WrittenAttempt>("/written/attempts", body, { signal }),
   writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
     const path = url.slice(BASE.length);

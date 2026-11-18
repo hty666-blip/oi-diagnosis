@@ -16,6 +16,7 @@ from app.domain.models import (
     WrittenAssignmentAttempt,
     WrittenAttempt,
     WrittenCandidate,
+    WrittenExamAttempt,
     WrittenImportAsset,
     WrittenQuestion,
     WrittenQuestionVersion,
@@ -24,6 +25,7 @@ from app.domain.models import (
 from app.services.admin_service import management_lock
 from app.services.written_assignments import assignment_version
 from app.services.written_bank_storage import load_bytes, load_snapshot
+from app.services.written_exam_review import exam_retry_version
 from app.services.written_grading import AttemptInput, is_correct
 from app.services.written_review import QuestionType, visible_query
 
@@ -168,6 +170,7 @@ def attempt_summary(attempt: WrittenAttempt, revision: int) -> dict:
 def attempt_out(
     attempt: WrittenAttempt, version: WrittenQuestionVersion, data: dict, assignment_id: int | None,
     grade: WrittenShortGrade | None = None,
+    *, exam_id: int | None = None,
 ) -> dict:
     urls = [
         f"/api/v1/written/attempts/{attempt.id}/assets/{i}"
@@ -176,6 +179,7 @@ def attempt_out(
     return {
         **attempt_summary(attempt, version.revision),
         "assignment_id": assignment_id,
+        **({"exam_id": exam_id} if exam_id is not None else {}),
         "response": attempt.response,
         "answer": data["answer"] if attempt.correct is not None else None,
         "explanation": data["explanation"] if attempt.correct is not None else "",
@@ -222,13 +226,13 @@ def submission_conflict(code: str, message: str) -> HTTPException:
 
 async def replay_attempt(
     session, attempt: WrittenAttempt, version: WrittenQuestionVersion, digest: str,
-    assignment_id: int | None,
+    assignment_id: int | None, exam_id: int | None,
 ):
     if attempt.request_digest != digest:
         raise submission_conflict("written_request_conflict", "该请求编号已用于另一份作答")
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
     grade = await session.get(WrittenShortGrade, attempt.id) if attempt.correct is not None and data["question_type"] == "short_answer" else None
-    return {**attempt_out(attempt, version, data, assignment_id, grade), "replayed": True}
+    return {**attempt_out(attempt, version, data, assignment_id, grade, exam_id=exam_id), "replayed": True}
 
 
 @attempts_router.post("")
@@ -243,7 +247,7 @@ async def submit_attempt(
     request_id, version_id, digest = str(body.request_id), str(body.version_id), body.digest()
     previous = await receipt(session, user.id, request_id)
     if previous is not None:
-        return await replay_attempt(session, *previous, digest, body.assignment_id)
+        return await replay_attempt(session, *previous, digest, body.assignment_id, body.exam_id)
 
     # 先读取不可变快照，减少持有管理锁的时间。锁内重新确认上架状态与版本。
     version = await submission_version(session, user, body)
@@ -263,7 +267,7 @@ async def submit_attempt(
     previous = await receipt(session, user.id, request_id)
     if previous is not None:
         await session.commit()
-        return await replay_attempt(session, *previous, digest, body.assignment_id)
+        return await replay_attempt(session, *previous, digest, body.assignment_id, body.exam_id)
 
     version = await submission_version(session, user, body)
     if version is None:
@@ -308,11 +312,16 @@ async def submit_attempt(
     if body.assignment_id is not None:
         await session.flush()
         session.add(WrittenAssignmentAttempt(attempt_id=attempt.id, assignment_id=body.assignment_id))
+    elif body.exam_id is not None:
+        await session.flush()
+        session.add(WrittenExamAttempt(attempt_id=attempt.id, exam_id=body.exam_id))
     await session.commit()
-    return {**attempt_out(attempt, version, snapshot, body.assignment_id), "replayed": False}
+    return {**attempt_out(attempt, version, snapshot, body.assignment_id, exam_id=body.exam_id), "replayed": False}
 
 
 async def submission_version(session: AsyncSession, user: User, body: AttemptInput):
+    if body.exam_id is not None:
+        return await exam_retry_version(session, user.id, body.exam_id, body.question_id)
     if body.assignment_id is not None:
         return await assignment_version(
             session, user, body.assignment_id, body.question_id, submitting=True
@@ -386,8 +395,10 @@ async def read_attempt(
     attempt, version = await owned_attempt(session, user.id, attempt_id)
     data = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
     link = await session.get(WrittenAssignmentAttempt, attempt_id)
+    retry = await session.get(WrittenExamAttempt, attempt_id) if link is None else None
     grade = await session.get(WrittenShortGrade, attempt.id) if attempt.correct is not None and data["question_type"] == "short_answer" else None
-    return attempt_out(attempt, version, data, link.assignment_id if link else None, grade)
+    return attempt_out(attempt, version, data, link.assignment_id if link else None, grade,
+                       exam_id=retry.exam_id if retry else None)
 
 
 @attempts_router.get("/{attempt_id}/assets/{index}")

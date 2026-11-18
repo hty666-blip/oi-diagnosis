@@ -16,6 +16,7 @@ from app.api.v1.written_questions import PracticeStudent, question_out, read_ima
 from app.domain.models import User, WrittenExam, WrittenExamItem, WrittenQuestionVersion
 from app.services.admin_service import management_lock
 from app.services.written_bank_storage import load_snapshot
+from app.services.written_exam_review import exam_retry_version, review_items
 from app.services.written_grading import BooleanResponse, OptionResponse, TextResponse, is_correct
 
 
@@ -144,6 +145,20 @@ async def start(batch_id: UUID, paper_id: PaperId, request: Request, session: Se
 @router.get("/{exam_id}")
 async def read_exam(exam_id: ObjectPathId, session: SessionDep, user: PracticeStudent):
     return await detail(session, await owned(session, user.id, exam_id))
+
+
+@router.get("/{exam_id}/review")
+async def exam_review(exam_id: ObjectPathId, session: SessionDep, user: PracticeStudent):
+    return {"items": await review_items(session, user.id, exam_id)}
+
+
+@router.get("/{exam_id}/review/{question_id}")
+async def retry_question(exam_id: ObjectPathId, question_id: ObjectPathId, session: SessionDep, user: PracticeStudent):
+    version = await exam_retry_version(session, user.id, exam_id, question_id)
+    snapshot = await load_snapshot(session, version.batch_id, version.snapshot_metadata)
+    urls = [f"/api/v1/written/questions/{question_id}/assets/{i}?version_id={version.id}"
+            for i in range(len(snapshot.get("asset_paths", [])))]
+    return question_out(version, snapshot, urls)
 
 
 @router.get("/{exam_id}/questions/{question_id}")

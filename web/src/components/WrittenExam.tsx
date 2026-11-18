@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, ApiError, messageOf, type WrittenExam, type WrittenExamQuestion,
-  type WrittenExamSummary, type WrittenResponse,
+  type WrittenExamReviewItem, type WrittenExamSummary, type WrittenResponse,
 } from "../api";
 import Markdown from "../Markdown";
 import Modal from "./Modal";
@@ -58,7 +58,12 @@ function ExamQuestion({ value, draft, disabled, onChange }: {
   </div>;
 }
 
-export default function WrittenExamView({ initial, onBack }: { initial: WrittenExam; onBack: () => void }) {
+export default function WrittenExamView({ initial, onBack, onRetry, onAttempt }: {
+  initial: WrittenExam;
+  onBack: () => void;
+  onRetry: (item: WrittenExamReviewItem) => void;
+  onAttempt: (id: number) => void;
+}) {
   const [exam, setExam] = useState(initial);
   const [selected, setSelected] = useState(initial.items[0]?.question_id);
   const [question, setQuestion] = useState<WrittenExamQuestion>();
@@ -199,6 +204,8 @@ export default function WrittenExamView({ initial, onBack }: { initial: WrittenE
         else setSaveError("");
       }} />}
     </section>
+    {finished && <ExamReview id={exam.id} count={exam.items.filter((item) => (item.earned_score ?? 0) < item.max_score).length}
+      onReviewQuestion={setSelected} onRetry={onRetry} onAttempt={onAttempt} />}
     {loading && <p role="status">正在读取题面…</p>}
     {loadError && <ErrorNotice message={loadError} onRetry={() => setReload((value) => value + 1)} />}
     {!loading && question?.card.question_id === selected && question && <ExamQuestion value={question} draft={draft}
@@ -208,6 +215,50 @@ export default function WrittenExamView({ initial, onBack }: { initial: WrittenE
       <button className="btn-primary" type="button" disabled={submitting} onClick={() => void submit()}>确认交卷</button>
     </Modal>}
   </div>;
+}
+
+function ExamReview({ id, count, onRetry, onAttempt, onReviewQuestion }: {
+  id: number;
+  count: number;
+  onRetry: (item: WrittenExamReviewItem) => void;
+  onAttempt: (id: number) => void;
+  onReviewQuestion: (id: number) => void;
+}) {
+  const [items, setItems] = useState<WrittenExamReviewItem[]>();
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!count) return;
+    const request = new AbortController();
+    setError("");
+    void api.writtenExamReview(id, request.signal)
+      .then((value) => { if (!request.signal.aborted) setItems(value.items); })
+      .catch((failure) => { if (!request.signal.aborted) setError(messageOf(failure)); });
+    return () => request.abort();
+  }, [id, count, reload]);
+  if (!count) return null;
+  return <details className="card written-task-topics" open>
+    <summary>错题复练 · {count} 题</summary>
+    <p className="muted">答错和未答的题可以重新练习，复练成绩不改变原卷分。</p>
+    {error && <ErrorNotice message={error} onRetry={() => setReload((n) => n + 1)} />}
+    {!items && !error && <p role="status">正在读取复练状态…</p>}
+    {items && <div className="table-scroll"><table aria-label="模拟错题复练">
+      <thead><tr><th scope="col">原卷题号</th><th scope="col">原卷结果</th><th scope="col">复练进度</th><th scope="col">操作</th></tr></thead>
+      <tbody>{items.map((item) => <tr key={item.question_id}>
+        <th scope="row">第 {item.number} 题</th>
+        <td>{item.answered ? "答错" : "未作答"}</td>
+        <td>{item.latest_attempt?.correct ? "已复练答对" : item.latest_attempt ? "复练未对" : "待复练"}</td>
+        <td><div className="written-practice-actions">
+          <button className="ghost" type="button" onClick={() => onReviewQuestion(item.question_id)}>查看原题</button>
+          {item.available && <button className="ghost" type="button" onClick={() => onRetry(item)}>
+            {item.latest_attempt ? "再练一次" : "开始复练"}
+          </button>}
+          {item.latest_attempt && <button className="ghost" type="button" onClick={() => onAttempt(item.latest_attempt!.id)}>查看复练记录</button>}
+          {!item.available && <span className="muted">原版已下架或更新</span>}
+        </div></td>
+      </tr>)}</tbody>
+    </table></div>}
+  </details>;
 }
 
 export function WrittenExamHistory({ onOpen }: { onOpen: (id: number) => void }) {
