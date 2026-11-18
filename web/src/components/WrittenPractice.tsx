@@ -129,7 +129,7 @@ export default function WrittenPractice({ userId, initialExamId, onExamAnswerPen
       onRetryQuestion={(id) => open({ kind: "question", id, examId: target.examId, returnExamId: target.returnExamId })} />}
     {list === "knowledge" && <StudentKnowledge active={!target}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
-    {list === "papers" && <WrittenPapers active={!target || target.kind === "exam"}
+    {list === "papers" && <WrittenPapers userId={userId} active={!target || target.kind === "exam"}
       examId={target?.kind === "exam" ? target.id : null}
       onExamAnswerPending={onExamAnswerPending} requestExamExit={requestExamExit}
       onExamId={(id) => id === null ? showList("papers") : open({ kind: "exam", id })}

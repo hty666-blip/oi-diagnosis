@@ -14,7 +14,7 @@ from test_written_progress import publish as publish_candidate
 from test_written_review import approval, detail, review, staged
 
 from app.api.v1 import written_help
-from app.domain.models import User, WrittenHelpTurn, WrittenQuestionVersion
+from app.domain.models import User, WrittenAttempt, WrittenHelpTurn, WrittenQuestionVersion
 from app.gateway.llm import LLMClient
 from app.infra.db import get_session
 from app.main import app
@@ -30,6 +30,79 @@ async def wrong_attempt(ctx, question=None):
 
 def request_body(message="请讲一下我这道题为什么答错。", after_id=None):
     return {"request_id": str(uuid4()), "after_id": after_id, "message": message}
+
+
+async def test_submitted_mock_wrong_answer_has_own_agent_thread(api_context, monkeypatch):
+    ctx = api_context
+    records = make_records()
+    records["papers.jsonl"][0].update(duration_minutes=10, total_score=6)
+    first_record = records["questions.jsonl"][0]
+    records["questions.jsonl"].append({**first_record, "id": "q3", "stem": "另一个独立模拟问题？"})
+    for number, question in enumerate(records["questions.jsonl"], 1):
+        question.update(original_number=str(number), score=2)
+    root = await staged(ctx, records)
+    first, second, blank = [await publish_candidate(ctx, root, f"q{number}") for number in (1, 2, 3)]
+    headers = ctx.headers()
+    begin = await ctx.client.post(f"/api/v1/written/exams/start/{root.split('/')[-1]}/paper1", headers=headers)
+    assert begin.status_code == 200, begin.text
+    exam_url = f"/api/v1/written/exams/{begin.json()['id']}"
+    wrong_question = f"{exam_url}/questions/{first['id']}"
+    wrong_url = wrong_question + "/help"
+    right_question = f"{exam_url}/questions/{second['id']}"
+    body = request_body()
+    assert (await ctx.client.get(wrong_url, headers=headers)).status_code == 409
+    assert (await ctx.client.post(wrong_url, headers=headers, json=body)).status_code == 409
+    for question_url, choice in ((wrong_question, "B"), (right_question, "A")):
+        draft = await ctx.client.put(question_url, headers=headers, json={
+            "expected_revision": 0, "response": single(choice),
+        })
+        assert draft.status_code == 200, draft.text
+    result = await ctx.client.post(exam_url + "/submit", headers=headers)
+    assert result.status_code == 200 and result.json()["earned_score"] == 2
+    for url, learner, code in (
+        (wrong_url, ctx.users.peer, 404), (wrong_url, ctx.users.teacher, 403),
+        (right_question + "/help", ctx.users.student, 409),
+        (f"{exam_url}/questions/{blank['id']}/help", ctx.users.student, 409),
+    ):
+        assert (await ctx.client.get(url, headers=ctx.headers(learner))).status_code == code
+        assert (await ctx.client.post(url, headers=ctx.headers(learner), json=body)).status_code == code
+
+    hidden = await ctx.client.post(f"/api/v1/admin/written-bank/published/{first['id']}/state", json={
+        "expected_version": first["catalog_version"], "is_active": False,
+    }, headers=ctx.headers(ctx.users.admin))
+    assert hidden.status_code == 200, hidden.text
+    packets = []
+    handoff = {"hypothesis": None, "focus": "对照原卷上的加法与审核答案", "references": ["attempt", "review"]}
+
+    def complete(request):
+        packet = json.loads(json.loads(request.content)["messages"][1]["content"])
+        packets.append(packet)
+        content = ({"reply": "一个方块再加一个方块，数起来一共两个。", "references": ["review"]}
+                   if "diagnosis" in packet else handoff)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(content)}}]})
+
+    async def client(*args, **kwargs):
+        return LLMClient(base_url="https://mock.test", api_key="mock-only", model="mock",
+                         transport=httpx.MockTransport(complete))
+
+    monkeypatch.setattr(written_help, "runtime_client", client)
+    explained = await ctx.client.post(wrong_url, headers=headers, json=body)
+    assert explained.status_code == 200, explained.text
+    assert explained.headers["cache-control"] == "no-store"
+    turn = explained.json()
+    assert turn["diagnosis"]["source"] == turn["tutor"]["source"] == "model"
+    assert len(packets) == 2 and packets[1]["diagnosis"] == handoff
+    for packet in packets:
+        assert packet["student_answer"] == single("B")
+        assert packet["reviewed_answer"]["option_ids"] == ["A"]
+        assert packet["score"] == {"earned": 0, "max": 2}
+    replay = await ctx.client.post(wrong_url, headers=headers, json=body)
+    assert replay.json()["replayed"] and replay.json()["id"] == turn["id"] and len(packets) == 2
+    history = await ctx.client.get(wrong_url, headers=headers)
+    assert history.headers["cache-control"] == "no-store" and history.json()["items"][0]["tutor"] == turn["tutor"]
+    assert (await ctx.client.get(exam_url, headers=headers)).json()["earned_score"] == 2
+    for model in (WrittenAttempt, WrittenHelpTurn):
+        assert await ctx.session.scalar(select(func.count()).select_from(model)) == 0
 
 
 async def test_both_agents_receive_only_earlier_same_topic_practice(api_context, monkeypatch):

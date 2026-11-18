@@ -17,6 +17,7 @@ from sqlalchemy import (
     CheckConstraint,
     Double,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -286,7 +287,17 @@ class WrittenExamAttempt(Base):
     exam_id: Mapped[int] = mapped_column(ForeignKey("written_exam.id"), index=True)
 
 
-class WrittenHelpTurn(Base):
+class WrittenHelpTurnFields:
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(36))
+    question: Mapped[str] = mapped_column(Text)
+    claim_token: Mapped[str] = mapped_column(String(36))
+    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
+    result: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenHelpTurn(WrittenHelpTurnFields, Base):
     """一次追问、诊断交接和讲解，按照本人作答保存。"""
 
     __tablename__ = "written_help_turn"
@@ -294,15 +305,21 @@ class WrittenHelpTurn(Base):
         UniqueConstraint("attempt_id", "request_id", name="uq_written_help_request"),
         Index("ix_written_help_order", "attempt_id", "id"),
     )
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"))
-    request_id: Mapped[str] = mapped_column(String(36))
-    question: Mapped[str] = mapped_column(Text)
-    claim_token: Mapped[str] = mapped_column(String(36))
-    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
-    result: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenExamHelpTurn(WrittenHelpTurnFields, Base):
+    """原卷错题的答疑独立保存。"""
+
+    __tablename__ = "written_exam_help_turn"
+    __table_args__ = (
+        ForeignKeyConstraint(["exam_id", "question_id"], ["written_exam_item.exam_id", "written_exam_item.question_id"],
+                             name="fk_written_exam_help_item"),
+        UniqueConstraint("exam_id", "question_id", "request_id", name="uq_written_exam_help_request"),
+        Index("ix_written_exam_help_order", "exam_id", "question_id", "id"),
+    )
+    exam_id: Mapped[int] = mapped_column(BigInteger)
+    question_id: Mapped[int] = mapped_column(BigInteger)
 
 
 class WrittenKnowledgeEntry(Base):

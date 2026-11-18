@@ -40,6 +40,23 @@ test("同一个学生和相同编号的编程提交与笔试追问各自恢复",
   assert.deepEqual(code.read(), first);
 });
 
+test("原卷追问按账号、答卷和题号保存，独立于普通作答追问", () => {
+  const b = browser();
+  const ordinary = questionDraftStore(b.storage, 1, 4, () => uuid(1), "written");
+  const exam = (userId, examId, questionId) =>
+    questionDraftStore(b.storage, userId, `${examId}:${questionId}`, () => uuid(1), "written-exam");
+  ordinary.write("普通练习的问题");
+  const sent = exam(1, 4, 4).write("原卷问题");
+  exam(1, 4, 5).write("同卷另一题");
+  exam(1, 5, 4).write("另一张卷的同一道题");
+  exam(1, 4, 4).acknowledge(sent.id);
+  assert.equal(exam(1, 4, 4).read().content, "");
+  assert.equal(exam(1, 4, 5).read().content, "同卷另一题");
+  assert.equal(exam(1, 5, 4).read().content, "另一张卷的同一道题");
+  assert.equal(exam(2, 4, 5).read().content, "");
+  assert.equal(ordinary.read().content, "普通练习的问题");
+});
+
 test("只有发送成功确认才清理当前问题，不影响其他记录", () => {
   const b = browser(), store = b.store();
   const sent = store.write("已发送的问题");

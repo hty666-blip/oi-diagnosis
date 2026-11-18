@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api, ApiError, messageOf, readLocal, removeLocal, writeLocal,
-  type WrittenHelpHistory, type WrittenHelpReference, type WrittenHelpTurn,
+  type WrittenHelpHistory, type WrittenHelpReference, type WrittenHelpTarget, type WrittenHelpTurn,
 } from "../api";
 import { shouldSendMessage } from "../editor-input";
 import Markdown from "../Markdown";
@@ -59,8 +59,9 @@ function DiscussionTurn({ turn }: { turn: WrittenHelpTurn }) {
   </article>;
 }
 
-export default function WrittenHelp({ userId, attemptId }: { userId: number; attemptId: number }) {
-  const store = questionDraftStore(storage, userId, attemptId, undefined, "written");
+export default function WrittenHelp({ userId, target }: { userId: number; target: WrittenHelpTarget }) {
+  const key = typeof target === "number" ? target : `${target.examId}:${target.questionId}`;
+  const store = questionDraftStore(storage, userId, key, undefined, typeof target === "number" ? "written" : "written-exam");
   const [draft, setDraft] = useState(() => store.read());
   const [history, setHistory] = useState<WrittenHelpHistory>({ items: [], before_id: null, pending: null });
   const [hydrated, setHydrated] = useState(false);
@@ -77,7 +78,7 @@ export default function WrittenHelp({ userId, attemptId }: { userId: number; att
     readRequest.current = request;
     setLoading(true);
     try {
-      const value = await api.writtenHelpHistory(attemptId, before, request.signal);
+      const value = await api.writtenHelpHistory(target, before, request.signal);
       if (request.signal.aborted) return;
       if (before) {
         setHistory((current) => ({ ...current, before_id: value.before_id, items: [...value.items, ...current.items] }));
@@ -100,7 +101,7 @@ export default function WrittenHelp({ userId, attemptId }: { userId: number; att
       readRequest.current?.abort();
       sendRequest.current?.abort();
     };
-  }, [attemptId]);
+  }, [userId, key]);
 
   async function ask(value: QuestionDraft) {
     if (sendRequest.current || loading || !value.content.trim() || !value.id) return;
@@ -110,7 +111,7 @@ export default function WrittenHelp({ userId, attemptId }: { userId: number; att
     setError("");
     try {
       const prior = history.items[history.items.length - 1];
-      const turn = await api.askWrittenHelp(attemptId, {
+      const turn = await api.askWrittenHelp(target, {
         request_id: value.id, message: value.content, after_id: prior?.id ?? null,
       }, request.signal);
       if (request.signal.aborted) return;

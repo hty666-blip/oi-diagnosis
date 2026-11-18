@@ -247,7 +247,7 @@ function WrittenPaper({ question, receipt, userId, assignmentId, examId, closed,
             onSubmitted={onSubmitted} onCheckVersion={onCheckVersion} />}
       </>}
     </section>
-    {receipt?.correct === false && question.question_type !== "short_answer" && <WrittenHelp key={receipt.id} userId={userId} attemptId={receipt.id} />}
+    {receipt?.correct === false && question.question_type !== "short_answer" && <WrittenHelp key={receipt.id} userId={userId} target={receipt.id} />}
   </div>;
 }
 

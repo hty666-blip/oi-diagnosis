@@ -7,6 +7,7 @@ import Markdown from "../Markdown";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 import WrittenExamStudy from "./WrittenExamStudy";
+import WrittenHelp from "./WrittenHelp";
 import { answerText, hasAnswer, useWrittenImages, WrittenAnswers, writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 function sameAnswer(left: WrittenResponse | null, right: WrittenResponse | null) {
@@ -59,7 +60,8 @@ function ExamQuestion({ value, draft, disabled, onChange }: {
   </div>;
 }
 
-export default function WrittenExamView({ initial, onBack, onAnswerPending, onRetry, onAttempt, onStudyPractice }: {
+export default function WrittenExamView({ userId, initial, onBack, onAnswerPending, onRetry, onAttempt, onStudyPractice }: {
+  userId: number;
   initial: WrittenExam;
   onBack: () => void;
   onAnswerPending: (pending: boolean) => void;
@@ -221,8 +223,13 @@ export default function WrittenExamView({ initial, onBack, onAnswerPending, onRe
     </>}
     {loading && <p role="status">正在读取题面…</p>}
     {loadError && <ErrorNotice message={loadError} onRetry={() => setReload((value) => value + 1)} />}
-    {!loading && question?.card.question_id === selected && question && <ExamQuestion value={question} draft={draft}
-      disabled={!working || submitting || conflict} onChange={(response) => { setDraft(response); setSaveError(""); }} />}
+    {!loading && question?.card.question_id === selected && question && <>
+      <ExamQuestion value={question} draft={draft} disabled={!working || submitting || conflict}
+        onChange={(response) => { setDraft(response); setSaveError(""); }} />
+      {finished && question.answer && question.response && question.card.earned_score !== null
+        && question.card.earned_score < question.card.max_score && <WrittenHelp key={question.card.question_id} userId={userId}
+          target={{ examId: exam.id, questionId: question.card.question_id }} />}
+    </>}
     {confirm && working && <Modal title="确认交卷" busy={submitting} error={submitError} onClose={() => { setConfirm(false); setSubmitError(""); }}>
       <p>已答 {answered} 题，未答 {exam.items.length - answered} 题。交卷后可查看成绩和解析。</p>
       <button className="btn-primary" type="button" disabled={submitting} onClick={() => void submit()}>确认交卷</button>

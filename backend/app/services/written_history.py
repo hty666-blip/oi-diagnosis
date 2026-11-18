@@ -7,7 +7,7 @@ from app.domain.models import WrittenAttempt, WrittenQuestionVersion
 from app.services.written_bank_storage import snapshot_primary_point
 
 
-async def earlier_practice(session, attempt, batch_id, snapshot):
+async def earlier_practice(session, student_id, current_question_id, batch_id, snapshot, *, before):
     primary = snapshot.get("primary_knowledge_point_id")
     if not primary:
         return []
@@ -21,9 +21,9 @@ async def earlier_practice(session, attempt, batch_id, snapshot):
         .join(WrittenQuestionVersion, (WrittenQuestionVersion.id == WrittenAttempt.version_id)
               & (WrittenQuestionVersion.question_id == WrittenAttempt.question_id))
         .where(
-            WrittenAttempt.student_id == attempt.student_id,
-            WrittenAttempt.id < attempt.id,
-            WrittenAttempt.question_id != attempt.question_id,
+            WrittenAttempt.student_id == student_id,
+            before,
+            WrittenAttempt.question_id != current_question_id,
             WrittenQuestionVersion.batch_id == batch_id,
             WrittenAttempt.question_summary["level"].as_string() == snapshot["level"],
             WrittenAttempt.correct.is_not(None),

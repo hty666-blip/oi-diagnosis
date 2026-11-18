@@ -22,6 +22,7 @@ from app.services.backup_service import (
     ASSIGNMENT_TABLES,
     ATTEMPT_TABLE,
     ATTEMPT_TARGET_REVISION,
+    EXAM_HELP_TABLE,
     EXAM_RETRY_TABLES,
     EXAM_RETRY_TARGET_REVISION,
     EXAM_TABLES,
@@ -79,7 +80,9 @@ def test_m7_archive_adds_only_empty_receipts_without_changing_file(decoder):
 
 
 def test_invite_revision_keeps_only_durable_tables_in_old_backups(monkeypatch, tmp_path):
-    names = {table.name for table in backup_service.tables()}
+    durable = [table for table in backup_service.tables() if table.name != EXAM_HELP_TABLE]
+    monkeypatch.setattr(backup_service, "tables", lambda: durable)
+    names = {table.name for table in durable}
     assert "student_invite" not in names
     monkeypatch.setattr(backup_service, "current_revision", lambda: INVITE_TARGET_REVISION)
     io = BackupIO(directory=tmp_path / "backups")
@@ -89,6 +92,18 @@ def test_invite_revision_keeps_only_durable_tables_in_old_backups(monkeypatch, t
     restored = io.read(path)
     assert restored["source_revision"] == EXAM_RETRY_TARGET_REVISION
     assert restored["revision"] == INVITE_TARGET_REVISION and restored["tables"] == data
+
+
+def test_old_backup_adds_empty_mock_exam_help_and_current_backup_keeps_turn(tmp_path):
+    tables = {table.name: [] for table in backup_service.tables() if table.name != EXAM_HELP_TABLE}
+    io = BackupIO(directory=tmp_path / "backups")
+    path = tmp_path / "saved.oibak"
+    archive_payload(io, path, {"format": "oi-backup-v1", "revision": INVITE_TARGET_REVISION, "tables": tables})
+    restored = io.read(path)
+    assert restored["source_revision"] == INVITE_TARGET_REVISION and restored["tables"][EXAM_HELP_TABLE] == []
+    tables[EXAM_HELP_TABLE] = [{"id": 1, "exam_id": 2, "question_id": 3, "result": {"comparison": "原卷证据"}}]
+    archive_payload(io, path, {"format": "oi-backup-v1", "revision": backup_service.current_revision(), "tables": tables})
+    assert io.read(path)["tables"][EXAM_HELP_TABLE] == tables[EXAM_HELP_TABLE]
 
 
 def test_current_archive_keeps_receipts_and_derives_its_own_source(decoder):
@@ -346,7 +361,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert revision == RECEIPT_TARGET_REVISION and counts[RECEIPT_TABLE] == 1
     payload = json.loads(raw)
     # 当前元数据建出的测试源库包含后加的空表；旧版归档应排除这些表。
-    for table in WRITTEN_TABLES | REVIEW_TABLES | KNOWLEDGE_TABLES | ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES | {ATTEMPT_TABLE, HELP_TABLE}:
+    for table in WRITTEN_TABLES | REVIEW_TABLES | KNOWLEDGE_TABLES | ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES | {ATTEMPT_TABLE, HELP_TABLE, EXAM_HELP_TABLE}:
         assert payload["tables"].pop(table) == []
     original_receipts = copy.deepcopy(payload["tables"][RECEIPT_TABLE])
     if legacy:
@@ -360,6 +375,7 @@ async def test_backup_receipts_and_m7_empty_receipts_restore_completely(
     assert restored["source_revision"] == (RECEIPT_SOURCE_REVISION if legacy else revision)
     assert restored["restored_revision"] == backup_service.current_revision()
     assert all(restored["counts"][name] == 0 for name in ASSIGNMENT_TABLES | EXAM_TABLES | SHORT_GRADE_TABLES | EXAM_RETRY_TABLES)
+    assert restored["counts"][EXAM_HELP_TABLE] == 0
     assert restored["content_verified"] and restored["counts"][RECEIPT_TABLE] == (0 if legacy else 1)
     assert restored["counts"]["hint_turn"] == 2
     target = create_async_engine(replay_restore_target)

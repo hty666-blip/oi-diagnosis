@@ -762,6 +762,12 @@ export interface WrittenHelpHistory {
   before_id: number | null;
   pending: { request_id: string; message: string; retry_at: string } | null;
 }
+export type WrittenHelpTarget = number | { examId: number; questionId: number };
+
+function writtenHelpPath(target: WrittenHelpTarget) {
+  return typeof target === "number" ? `/written/attempts/${target}/help`
+    : `/written/exams/${target.examId}/questions/${target.questionId}/help`;
+}
 export interface KnowledgeArticle {
   title: string;
   body: string;
@@ -872,10 +878,10 @@ export const api = {
   writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
   writtenProgress: (signal?: AbortSignal) =>
     get<{ items: WrittenProgressRow[]; attempt_limit: number }>("/written/progress", { signal }),
-  writtenHelpHistory: (id: number, before?: number, signal?: AbortSignal) =>
-    get<WrittenHelpHistory>(`/written/attempts/${id}/help${before ? `?before_id=${before}` : ""}`, { signal }),
-  askWrittenHelp: (id: number, body: { request_id: string; message: string; after_id: number | null }, signal?: AbortSignal) =>
-    post<WrittenHelpTurn>(`/written/attempts/${id}/help`, body, { signal }),
+  writtenHelpHistory: (target: WrittenHelpTarget, before?: number, signal?: AbortSignal) =>
+    get<WrittenHelpHistory>(`${writtenHelpPath(target)}${before ? `?before_id=${before}` : ""}`, { signal }),
+  askWrittenHelp: (target: WrittenHelpTarget, body: { request_id: string; message: string; after_id: number | null }, signal?: AbortSignal) =>
+    post<WrittenHelpTurn>(writtenHelpPath(target), body, { signal }),
   writtenAttempts: (view: WrittenAttemptView, beforeId?: number, signal?: AbortSignal) => {
     const params = new URLSearchParams({ view });
     if (beforeId !== undefined) params.set("before_id", String(beforeId));

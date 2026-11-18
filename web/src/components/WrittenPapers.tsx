@@ -7,7 +7,8 @@ import { writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 const sourceLabels = { official_paper: "真题", simulation: "模拟题", original_demo: "自编演示" };
 
-export default function WrittenPapers({ active, examId, onExamId, onExamAnswerPending, requestExamExit, onPractice, onExamRetry, onExamAttempt, onExamPractice }: {
+export default function WrittenPapers({ userId, active, examId, onExamId, onExamAnswerPending, requestExamExit, onPractice, onExamRetry, onExamAttempt, onExamPractice }: {
+  userId: number;
   active: boolean;
   examId: number | null;
   onExamId: (id: number | null) => void;
@@ -98,7 +99,7 @@ export default function WrittenPapers({ active, examId, onExamId, onExamAnswerPe
       setRestoreError("");
       onExamId(null);
     }
-    if (exam?.id === examId) return <WrittenExamView key={exam.id} initial={exam}
+    if (exam?.id === examId) return <WrittenExamView key={exam.id} userId={userId} initial={exam}
       onBack={() => requestExamExit(leaveExam)} onAnswerPending={onExamAnswerPending}
       onRetry={(item) => { setExam(undefined); onExamRetry(examId, item); }}
       onAttempt={(id) => { setExam(undefined); onExamAttempt(examId, id); }}

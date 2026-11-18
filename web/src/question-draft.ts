@@ -11,9 +11,9 @@ function canonicalId(value: string): string {
     ? value.toLowerCase() : value;
 }
 
-export function questionDraftStore(storage: DraftStorage, userId: number, submissionId: number,
-  newId: () => string = () => crypto.randomUUID(), scope: "code" | "written" = "code") {
-  const prefix = scope === "written" ? "oi-written-question-draft" : "oi-question-draft";
+export function questionDraftStore(storage: DraftStorage, userId: number, submissionId: number | string,
+  newId: () => string = () => crypto.randomUUID(), scope: "code" | "written" | "written-exam" = "code") {
+  const prefix = scope === "code" ? "oi-question-draft" : `oi-${scope}-question-draft`;
   const key = `${prefix}:${userId}:${submissionId}`;
   const acknowledgedKey = (id: string) => `${prefix}-ack:${userId}:${submissionId}:${id}`;
   function write(content: string): QuestionDraft {
