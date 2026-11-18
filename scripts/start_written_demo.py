@@ -20,6 +20,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -91,8 +92,6 @@ def demo_env(password: str, mysql_port: int, log_path: Path, *, enable_model: bo
 
 
 async def wait_database(env: dict) -> None:
-    from sqlalchemy.ext.asyncio import create_async_engine
-
     engine = create_async_engine(env["DATABASE_URL"], hide_parameters=True)
     try:
         for _ in range(90):
@@ -186,7 +185,6 @@ async def bootstrap_users(env: dict, accounts: list[dict]) -> int:
     from app.core.security import hash_password
     from app.domain.models import ClassTeacher, SchoolClass, User
     from app.infra.db import configure_database_engine
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
     engine = create_async_engine(env["DATABASE_URL"], hide_parameters=True)
     configure_database_engine(engine)
