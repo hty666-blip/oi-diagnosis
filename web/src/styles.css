@@ -796,6 +796,7 @@ td small, th small { margin-top: 4px; }
 .training-bank { background: var(--bg-soft); }
 .training-bank .row { border-bottom: 1px solid var(--line); }
 .profile-feedback { background: var(--bg-soft); padding: 16px; }
+.student-written-profile caption { text-align: left; margin-bottom: 8px; color: var(--muted); }
 .student-training-history > li { background: var(--panel); padding: 24px; border-bottom: 1px solid var(--line); margin: 0 0 16px; }
 .student-training-history .card-head h3 { font-size: 16px; }
 .oj { gap: 24px; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); }

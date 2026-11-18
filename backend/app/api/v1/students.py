@@ -14,7 +14,8 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router.get("/{student_id}/profile")
-async def get_profile(student_id: ObjectPathId, session: SessionDep, user: CurrentUser):
+async def get_profile(student_id: ObjectPathId, response: Response, session: SessionDep, user: CurrentUser):
+    response.headers["Cache-Control"] = "no-store"
     return await student_profile(session, user, student_id)
 
 

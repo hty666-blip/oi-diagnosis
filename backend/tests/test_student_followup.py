@@ -8,6 +8,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from test_trainings import create, payload
+from test_written_assignments import groups
+from test_written_attempts import attempt, single
+from test_written_bank_import import make_records
+from test_written_progress import publish
+from test_written_review import staged
 
 from app.domain.models import JudgeJob, Problem, Training, TrainingFeedback, TrainingMember, User
 from app.services.student_followup_service import FeedbackCreate, create_feedback
@@ -179,6 +184,56 @@ async def test_profile_and_report_only_include_accessible_student_training(api_c
     assert (await profile(ctx)).status_code == 404
     assert (await profile(ctx, actor=ctx.users.student)).json()["items"] == []
     assert (await history(ctx, tid, actor=ctx.users.student)).status_code == 404
+
+
+async def test_profile_includes_only_the_students_written_practice_and_submitted_exams(api_context):
+    ctx = api_context
+    _, other = await groups(ctx)
+    records = make_records()
+    records["papers.jsonl"][0].update(duration_minutes=10, total_score=4)
+    for question in records["questions.jsonl"]:
+        question["score"] = 2
+    root = await staged(ctx, records)
+    first = await publish(ctx, root, "q1")
+    await publish(ctx, root, "q2")
+    attempts = "/api/v1/written/attempts"
+    start = f"/api/v1/written/exams/start/{root.split('/')[-1]}/paper1"
+    mine = ctx.headers()
+    peer = ctx.headers(ctx.users.peer)
+    wrong = await ctx.client.post(attempts, headers=mine, json=attempt(first, single("B")))
+    assert wrong.status_code == 200 and wrong.json()["correct"] is False
+    outside = await ctx.client.post(attempts, headers=peer, json=attempt(first, single("A")))
+    assert outside.status_code == 200 and outside.json()["correct"] is True
+    exam = await ctx.client.post(start, headers=mine)
+    assert exam.status_code == 200, exam.text
+    exam_id = exam.json()["id"]
+    assert (await profile(ctx, actor=ctx.users.student)).json()["written"]["exams"] == []
+    assert (await ctx.client.post(f"/api/v1/written/exams/{exam_id}/submit", headers=mine)).status_code == 200
+    other_exam = await ctx.client.post(start, headers=peer)
+    other_id = other_exam.json()["id"]
+    assert (await ctx.client.post(f"/api/v1/written/exams/{other_id}/submit", headers=peer)).status_code == 200
+    fixed = await ctx.client.post(attempts, headers=mine, json={**attempt(first, single("A")), "exam_id": exam_id})
+    assert fixed.status_code == 200 and fixed.json()["correct"] is True
+
+    for user in (ctx.users.student, ctx.users.teacher, ctx.users.admin):
+        result = await profile(ctx, actor=user)
+        assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+        written = result.json()["written"]
+        assert (written["attempt_count"], written["full_score_count"], written["pending_count"]) == (2, 1, 0)
+        [exam_row] = written["exams"]
+        assert (exam_row["id"], exam_row["earned_score"], exam_row["max_score"]) == (exam_id, 0, 4)
+        assert (exam_row["corrected_count"], exam_row["missed_count"]) == (1, 2)
+        assert set(exam_row) == {"id", "title", "submitted_at", "earned_score", "max_score", "missed_count", "corrected_count"}
+
+    report_url = f"/api/v1/students/{ctx.users.student.id}/profile/report"
+    report = await ctx.client.get(report_url, headers=mine)
+    assert report.status_code == 200 and "## 初赛练习" in report.text
+    assert "原卷 0 / 4 分，复练答对 1 / 2 题" in report.text
+    assert (await ctx.client.get(report_url, headers=peer)).status_code == 404
+    assert (await profile(ctx, actor=ctx.users.other_teacher)).status_code == 404
+    ctx.users.student.class_id = other.id
+    await ctx.session.flush()
+    assert (await profile(ctx, actor=ctx.users.teacher)).status_code == 404
 
 
 @pytest.mark.parametrize("content", [" ", "\x00", "\ud800"])

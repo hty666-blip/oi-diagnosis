@@ -3,7 +3,7 @@ import {
   api, messageOf, type WrittenAttempt, type WrittenAttemptSummary, type WrittenAttemptView,
   type WrittenCatalogFilter, type WrittenPublishedSummary,
 } from "../api";
-import { readWrittenPosition, rememberWrittenPosition, type WrittenList, type WrittenTarget } from "../written-practice";
+import { readWrittenPosition, rememberWrittenPosition, type WrittenList, type WrittenPosition, type WrittenTarget } from "../written-practice";
 import { ErrorNotice } from "./RecordUI";
 import { WrittenOpenAttempt, WrittenOpenQuestion, WrittenScoreBadge, writtenTypeLabel } from "./WrittenPracticeQuestion";
 import { StudentKnowledge } from "./WrittenKnowledge";
@@ -20,8 +20,9 @@ const emptyMessages: Record<"bank" | WrittenAttemptView, string> = {
   corrected: "暂无已订正的题目。错题重新答对后会出现在这里。",
 };
 
-export default function WrittenPractice({ userId }: { userId: number }) {
-  const [position, setPosition] = useState(() => readWrittenPosition(userId));
+export default function WrittenPractice({ userId, initialExamId }: { userId: number; initialExamId?: number }) {
+  const [position, setPosition] = useState<WrittenPosition>(() => initialExamId === undefined
+    ? readWrittenPosition(userId) : { list: "papers", target: { kind: "exam", id: initialExamId } });
   const { list, target } = position;
   const [receipt, setReceipt] = useState<WrittenAttempt>();
   const [filter, setFilter] = useState(emptyFilter);

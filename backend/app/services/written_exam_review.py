@@ -77,10 +77,17 @@ async def class_exam_results(session, class_id: int, before_id: int | None):
         query = query.where(WrittenExam.id < before_id)
     rows = (await session.execute(query.order_by(WrittenExam.id.desc()).limit(CLASS_RESULT_LIMIT + 1))).all()
     page = rows[:CLASS_RESULT_LIMIT]
-    if not page:
-        return {"items": [], "next_before_id": None}
+    scores = await summarize_exam_cards(session, [row.id for row in page])
+    items = [{
+        "id": row.id, "student_name": row.display_name or row.username, "title": row.title,
+        "submitted_at": row.submitted_at, **scores[row.id],
+    } for row in page]
+    return {"items": items, "next_before_id": page[-1].id if len(rows) > CLASS_RESULT_LIMIT else None}
 
-    exam_ids = [row.id for row in page]
+
+async def summarize_exam_cards(session, exam_ids: list[int]):
+    if not exam_ids:
+        return {}
     cards = defaultdict(list)
     for item in await session.execute(select(
         WrittenExamItem.exam_id, WrittenExamItem.question_id, WrittenExamItem.version_id,
@@ -94,19 +101,17 @@ async def class_exam_results(session, class_id: int, before_id: int | None):
     )
     corrected = {(exam_id, question_id, version_id) for exam_id, question_id, version_id in last_correct}
 
-    items = []
-    for row in page:
-        card = cards[row.id]
+    scores = {}
+    for exam_id in exam_ids:
+        card = cards[exam_id]
         missed_items = [item for item in card if item.earned_score < item.max_score]
-        items.append({
-            "id": row.id, "student_name": row.display_name or row.username, "title": row.title,
-            "submitted_at": row.submitted_at,
+        scores[exam_id] = {
             "earned_score": fsum(item.earned_score for item in card),
             "max_score": fsum(item.max_score for item in card),
             "missed_count": len(missed_items),
-            "corrected_count": sum((row.id, item.question_id, item.version_id) in corrected for item in missed_items),
-        })
-    return {"items": items, "next_before_id": page[-1].id if len(rows) > CLASS_RESULT_LIMIT else None}
+            "corrected_count": sum((exam_id, item.question_id, item.version_id) in corrected for item in missed_items),
+        }
+    return scores
 
 
 async def class_exam_cohort(session, class_id: int, exam_id: int):

@@ -64,6 +64,7 @@ export default function App() {
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
   const [practice, setPractice] = useState<TrainingPractice | null>(null);
   const [trainingTarget, setTrainingTarget] = useState<number>();
+  const [writtenExamTarget, setWrittenExamTarget] = useState<number>();
   const [sessionNotice, setSessionNotice] = useState("");
 
   useEffect(() => {
@@ -108,6 +109,7 @@ export default function App() {
 
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
+    setWrittenExamTarget(undefined);
     setSessionNotice("");
     setRestore(null);
     setPractice(null); setTrainingTarget(undefined); setView(homeView(next));
@@ -129,7 +131,7 @@ export default function App() {
       </header>
       <aside className="sidebar">
         <nav className="nav-group" aria-label="主要导航">
-          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); setView(item.key); }}><NavIcon name={item.key} />{item.label}</button>)}
+          {nav.map((item) => <button key={item.key} className={"nav-item " + (view === item.key ? "active" : "")} aria-current={view === item.key ? "page" : undefined} onClick={() => { if (item.key === "submit") { setPractice(null); setRestore(null); } if (item.key === "trainings") setTrainingTarget(undefined); if (item.key === "written") setWrittenExamTarget(undefined); setView(item.key); }}><NavIcon name={item.key} />{item.label}</button>)}
         </nav>
         <div className="sidebar-foot">
           <button className="ghost" onClick={() => setView("password")}>修改密码</button>
@@ -139,10 +141,14 @@ export default function App() {
       <main className="main" id="main">
         {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={`${user.id}:${practice?.id ?? "free"}:${practice?.pid ?? ""}`} userId={user.id} restore={restore} training={practice ?? undefined} /></div>}
         {view === "trainings" && <TrainingWorkspace user={user} initialTrainingId={trainingTarget} onPractice={openPractice} />}
-        {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }} />}
+        {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }}
+          onWrittenExam={user.role === "student" ? (id) => {
+            setWrittenExamTarget(id);
+            setView("written");
+          } : undefined} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "written" && user.role === "student" && <Suspense fallback={<p role="status">正在打开初赛练习…</p>}>
-          <WrittenPractice key={user.id} userId={user.id} />
+          <WrittenPractice key={user.id} userId={user.id} initialExamId={writtenExamTarget} />
         </Suspense>}
         {view === "written" && user.role !== "student" && <Suspense fallback={<p role="status">正在打开初赛任务…</p>}>
           <WrittenAssignments key={user.id} />

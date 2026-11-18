@@ -18,10 +18,16 @@ from app.domain.models import (
     TrainingMember,
     TrainingProblem,
     User,
+    WrittenAttempt,
+    WrittenExam,
 )
 from app.services.class_access import same_class, student_class_scope
 from app.services.problem_versions import resolve_many
 from app.services.training_service import accessible_training, submission_cell, training_out
+from app.services.written_exam_review import summarize_exam_cards
+
+PROFILE_WRITTEN_ATTEMPTS = 100
+PROFILE_WRITTEN_EXAMS = 5
 
 
 class FeedbackCreate(BaseModel):
@@ -115,8 +121,24 @@ async def student_profile(session: AsyncSession, user: User, student_id: int):
     items, truncated, _ = await student_tasks(session, user, student)
     return {"student": {"id": student.id, "name": student.display_name or student.username, "class_name": student.class_name},
             "items": items, "truncated": truncated, "observed_at": datetime.now(UTC),
+            "written": await written_activity(session, student.id),
             "summary": {"trainings": len(items), "completed": sum(t["complete"] for t in items),
                         "remedial": sum(t["source_training_id"] is not None for t in items)}}
+
+
+async def written_activity(session: AsyncSession, student_id: int):
+    attempts = (await session.scalars(select(WrittenAttempt.correct).where(WrittenAttempt.student_id == student_id)
+                                     .order_by(WrittenAttempt.id.desc()).limit(PROFILE_WRITTEN_ATTEMPTS))).all()
+    exams = (await session.execute(select(WrittenExam.id, WrittenExam.title, WrittenExam.submitted_at).where(
+        WrittenExam.student_id == student_id, WrittenExam.submitted_at.is_not(None),
+    ).order_by(WrittenExam.submitted_at.desc(), WrittenExam.id.desc()).limit(PROFILE_WRITTEN_EXAMS))).all()
+    scores = await summarize_exam_cards(session, [exam.id for exam in exams])
+    return {
+        "attempt_count": len(attempts), "full_score_count": sum(result is True for result in attempts),
+        "pending_count": sum(result is None for result in attempts),
+        "attempt_limit": PROFILE_WRITTEN_ATTEMPTS, "exam_limit": PROFILE_WRITTEN_EXAMS,
+        "exams": [{"id": exam.id, "title": exam.title, "submitted_at": exam.submitted_at, **scores[exam.id]} for exam in exams],
+    }
 
 
 async def feedback_history(session: AsyncSession, user: User, training_id: int, student_id: int):
@@ -175,7 +197,18 @@ def profile_markdown(profile: dict) -> str:
               "CE": "编译错误", "WA": "答案错误", "RE": "运行错误", "TLE": "超时", "MLE": "内存超限", "OLE": "输出超限",
               "pending": "判题中", "failed": "执行故障", "cancelled": "已取消"}
     lines = [f"# {student['name']} · 训练档案", f"班级：{student['class_name']}",
-             f"数据时间：{profile['observed_at'].isoformat()}", "以下为最近最多 100 份有访问权限的已发布训练，包含补练；正式通过仅指当前题包测试通过。"]
+             f"数据时间：{profile['observed_at'].isoformat()}"]
+    written = profile["written"]
+    if written["attempt_count"] or written["exams"]:
+        lines += ["## 初赛练习",
+                  f"最近最多 {written['attempt_limit']} 次单题作答中，共作答 {written['attempt_count']} 次，"
+                  f"满分 {written['full_score_count']} 次，待复核 {written['pending_count']} 次。"]
+        if written["exams"]:
+            lines.append(f"### 最近最多 {written['exam_limit']} 份已交模拟卷")
+        for exam in written["exams"]:
+            lines.append(f"- {exam['title']}：原卷 {exam['earned_score']:g} / {exam['max_score']:g} 分，"
+                         f"复练答对 {exam['corrected_count']} / {exam['missed_count']} 题。")
+    lines.append("编程部分汇总最近最多 100 份可访问的已发布训练。正式通过指当前题包测试通过。")
     for task in profile["items"]:
         lines += [f"## {task['title']}（训练 #{task['id']}）", "必做题已完成" if task["complete"] else "必做题尚未全部完成"]
         if task["source_training_id"]:

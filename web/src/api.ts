@@ -473,6 +473,13 @@ export interface StudentProfile {
   student: { id: number; name: string; class_name: string };
   summary: { trainings: number; completed: number; remedial: number };
   truncated: boolean; observed_at: string;
+  written: {
+    attempt_count: number; full_score_count: number; pending_count: number; attempt_limit: number; exam_limit: number;
+    exams: {
+      id: number; title: string; submitted_at: string; earned_score: number; max_score: number;
+      missed_count: number; corrected_count: number;
+    }[];
+  };
   items: (Omit<Training, "problems"> & { complete: boolean; feedback_count: number; latest_feedback: StudentFeedback | null;
     problems: { pid: string; title: string; required: boolean; cell: TrainingDetail["rows"][number]["cells"][number] }[] })[];
 }
