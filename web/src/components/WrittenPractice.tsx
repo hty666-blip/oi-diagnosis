@@ -95,7 +95,7 @@ export default function WrittenPractice({ userId }: { userId: number }) {
   return <section className="written-practice">
     <header className="page-head">
       <h1>初赛练习</h1>
-      {target && <button className="ghost" type="button" onClick={() => showList(list)}>返回{listLabels[list]}</button>}
+      {target && target.kind !== "exam" && <button className="ghost" type="button" onClick={() => showList(list)}>返回{listLabels[list]}</button>}
     </header>
     <nav className="admin-tabs" aria-label="初赛练习">
       <button className="ghost" type="button" aria-pressed={list === "bank"} onClick={() => showList("bank")}>题库</button>
@@ -112,7 +112,9 @@ export default function WrittenPractice({ userId }: { userId: number }) {
       onRetryQuestion={(id) => open({ kind: "question", id })} />}
     {list === "knowledge" && <StudentKnowledge active={!target}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
-    {list === "papers" && <WrittenPapers active={!target}
+    {list === "papers" && <WrittenPapers active={!target || target.kind === "exam"}
+      examId={target?.kind === "exam" ? target.id : null}
+      onExamId={(id) => id === null ? showList("papers") : open({ kind: "exam", id })}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
     {list === "assignments" && <WrittenAssignments studentId={userId} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}

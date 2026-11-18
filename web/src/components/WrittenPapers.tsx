@@ -7,8 +7,10 @@ import { writtenTypeLabel } from "./WrittenPracticeQuestion";
 
 const sourceLabels = { official_paper: "真题", simulation: "模拟题", original_demo: "自编演示" };
 
-export default function WrittenPapers({ active, onPractice }: {
+export default function WrittenPapers({ active, examId, onExamId, onPractice }: {
   active: boolean;
+  examId: number | null;
+  onExamId: (id: number | null) => void;
   onPractice: (question: WrittenPublishedSummary) => void;
 }) {
   const [papers, setPapers] = useState<{ items: WrittenPaperSummary[]; has_more: boolean }>();
@@ -20,6 +22,8 @@ export default function WrittenPapers({ active, onPractice }: {
   const [reload, setReload] = useState(0);
   const [history, setHistory] = useState(false);
   const [exam, setExam] = useState<WrittenExam>();
+  const [examReload, setExamReload] = useState(0);
+  const [restoreError, setRestoreError] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [examError, setExamError] = useState("");
   const [opening, setOpening] = useState(false);
@@ -29,7 +33,19 @@ export default function WrittenPapers({ active, onPractice }: {
 
   useEffect(() => () => examRequest.current?.abort(), []);
   useEffect(() => {
-    if (!active || history || exam) return;
+    if (!active || examId === null || examId === exam?.id) return;
+    const request = new AbortController();
+    setRestoreError("");
+    void api.writtenExam(examId, request.signal).then((result) => {
+      if (!request.signal.aborted) setExam(result);
+    }).catch((failure) => {
+      if (!request.signal.aborted) setRestoreError(messageOf(failure));
+    });
+    return () => request.abort();
+  }, [active, examId, exam?.id, examReload]);
+
+  useEffect(() => {
+    if (!active || history || examId !== null) return;
     const request = new AbortController();
     setError("");
     setLoading(true);
@@ -43,7 +59,7 @@ export default function WrittenPapers({ active, onPractice }: {
     void load.catch((failure) => { if (!request.signal.aborted) setError(messageOf(failure)); })
       .finally(() => { if (!request.signal.aborted) setLoading(false); });
     return () => request.abort();
-  }, [active, offset, selected, reload, history, exam]);
+  }, [active, offset, selected, reload, history, examId]);
 
   function select(paper?: WrittenPaperSummary) {
     setDetail(undefined);
@@ -62,6 +78,7 @@ export default function WrittenPapers({ active, onPractice }: {
         : await api.startWrittenExam(detail!.paper.batch_id, detail!.paper.id, controller.signal);
       if (controller.signal.aborted) return;
       setExam(result);
+      onExamId(result.id);
       setConfirm(false);
     } catch (failure) {
       if (!controller.signal.aborted) setExamError(messageOf(failure));
@@ -70,7 +87,19 @@ export default function WrittenPapers({ active, onPractice }: {
     }
   }
 
-  if (exam) return <div hidden={!active}><WrittenExamView key={exam.id} initial={exam} onBack={() => setExam(undefined)} /></div>;
+  if (examId !== null) {
+    function leaveExam() {
+      setExam(undefined);
+      setRestoreError("");
+      onExamId(null);
+    }
+    if (exam?.id === examId) return <WrittenExamView key={exam.id} initial={exam} onBack={leaveExam} />;
+    return <section className="card written-practice-list">
+      <div className="card-head"><h2>恢复答卷</h2><button className="ghost" type="button" onClick={leaveExam}>返回试卷</button></div>
+      {restoreError ? <ErrorNotice message={restoreError} onRetry={() => setExamReload((value) => value + 1)} />
+        : <p role="status">正在恢复答卷…</p>}
+    </section>;
+  }
 
   return <div hidden={!active}><section className="card written-practice-list">
     <div className="card-head">
@@ -124,7 +153,7 @@ export default function WrittenPapers({ active, onPractice }: {
       <button type="button" className="ghost" disabled={loading || !hasMore || !!error} onClick={() => setOffset(offset + 25)}>下一页</button>
     </div>}
     {confirm && detail && <Modal title="限时模拟" busy={opening} error={examError} onClose={() => setConfirm(false)}>
-      <p>首次打开开始 {detail.paper.duration_minutes} 分钟计时。每套卷只保留一份答卷。离开后可在模拟记录继续，计时持续进行。</p>
+      <p>首次打开开始 {detail.paper.duration_minutes} 分钟计时。每套卷只保留一份答卷。刷新会恢复答卷，也可以从模拟记录继续。计时不会暂停。</p>
       <button className="btn-primary" type="button" disabled={opening} onClick={() => void openExam()}>进入答卷</button>
     </Modal>}
   </section></div>;

@@ -4,7 +4,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type WrittenList = "bank" | "papers" | "knowledge" | "progress" | "assignments" | WrittenAttemptView;
 export type WrittenTarget =
   | { kind: "question"; id: number; version?: string }
-  | { kind: "attempt"; id: number };
+  | { kind: "attempt"; id: number }
+  | { kind: "exam"; id: number };
 export interface WrittenPosition {
   list: WrittenList;
   target: WrittenTarget | null;
@@ -32,6 +33,7 @@ export function readWrittenPosition(userId: number): WrittenPosition {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {
         if (target.kind === "attempt") return { list: value.list, target: { kind: "attempt", id: target.id } };
+        if (target.kind === "exam" && value.list === "papers") return { list: "papers", target: { kind: "exam", id: target.id } };
         if (target.kind === "question") {
           const version = typeof target.version === "string" && uuid.test(target.version) ? target.version : undefined;
           return { list: value.list, target: { kind: "question", id: target.id, version } };
