@@ -50,6 +50,8 @@ ASSIGNMENT_TABLES = {
     "written_assignment", "written_assignment_question", "written_assignment_member",
     "written_assignment_attempt",
 }
+EXAM_TARGET_REVISION = "u567b18d294f"
+EXAM_TABLES = {"written_exam", "written_exam_item"}
 BACKUP_COMPATIBILITY_STEPS = (
     (RECEIPT_TARGET_REVISION, {RECEIPT_TABLE}),
     (WRITTEN_TARGET_REVISION, WRITTEN_TABLES),
@@ -58,6 +60,7 @@ BACKUP_COMPATIBILITY_STEPS = (
     (HELP_TARGET_REVISION, {HELP_TABLE}),
     (KNOWLEDGE_TARGET_REVISION, KNOWLEDGE_TABLES),
     (ASSIGNMENT_TARGET_REVISION, ASSIGNMENT_TABLES),
+    (EXAM_TARGET_REVISION, EXAM_TABLES),
 )
 
 

@@ -18,7 +18,7 @@ function paperImages(question: WrittenPublishedQuestion) {
   return [...byPath, ...question.assets.filter((url) => !mappedUrls.has(url)).map((url) => [url, url])];
 }
 
-function useWrittenImages(question: WrittenPublishedQuestion) {
+export function useWrittenImages(question: WrittenPublishedQuestion) {
   const [attempt, setAttempt] = useState(0);
   const [files, setFiles] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState("");
@@ -49,7 +49,7 @@ function useWrittenImages(question: WrittenPublishedQuestion) {
   return { files, loading, error, retry: () => setAttempt((x) => x + 1) };
 }
 
-function answerText(answer: WrittenReferenceAnswer) {
+export function answerText(answer: WrittenReferenceAnswer) {
   if ("option_ids" in answer) return answer.option_ids.join("、");
   if ("accepted" in answer) return answer.accepted.map((value) => JSON.stringify(value)).join(" 或 ");
   if ("value" in answer) return typeof answer.value === "boolean"
@@ -64,7 +64,7 @@ function ScoreBadge({ correct }: { correct: boolean }) {
 
 export { ScoreBadge as WrittenScoreBadge };
 
-function WrittenAnswers({ question, response, onAnswer, imageSource }: {
+export function WrittenAnswers({ question, response, onAnswer, imageSource }: {
   question: WrittenPublishedQuestion;
   response: WrittenResponse | null;
   onAnswer: (response: WrittenResponse) => void;
@@ -111,7 +111,7 @@ function WrittenAnswers({ question, response, onAnswer, imageSource }: {
   </div>;
 }
 
-function hasAnswer(response: WrittenResponse | null, type: WrittenQuestionType) {
+export function hasAnswer(response: WrittenResponse | null, type: WrittenQuestionType) {
   if (!response) return false;
   if (type === "true_false") return response.kind === "boolean";
   if (type === "fill_blank") return response.kind === "text" && Boolean(response.value.trim());

@@ -570,6 +570,7 @@ export interface WrittenPaperQuestions {
     source_total_score: number | null;
     source_recorded_score: number | null;
     published_score: number;
+    mock_available: boolean;
   };
   items: (WrittenPublishedSummary & { number: string })[];
   has_more: boolean;
@@ -579,6 +580,35 @@ export interface WrittenPublishedQuestion extends WrittenPublishedSummary {
   options: { id: string; text: string }[];
   assets: string[];
   assets_by_path: Record<string, string>;
+}
+export interface WrittenExamSummary {
+  id: number;
+  title: string;
+  started_at: string;
+  deadline: string;
+  submitted_at: string | null;
+  server_time: string;
+  status: "working" | "expired" | "submitted";
+}
+export interface WrittenExamCard {
+  question_id: number;
+  number: string;
+  revision: number;
+  answered: boolean;
+  max_score: number;
+  earned_score: number | null;
+}
+export interface WrittenExam extends WrittenExamSummary {
+  items: WrittenExamCard[];
+  max_score: number;
+  earned_score: number | null;
+}
+export interface WrittenExamQuestion {
+  question: WrittenPublishedQuestion;
+  card: WrittenExamCard;
+  response: WrittenResponse | null;
+  answer?: WrittenReferenceAnswer;
+  explanation?: string;
 }
 export interface WrittenAssignmentSummary {
   id: number;
@@ -726,6 +756,16 @@ export const api = {
     get<{ items: WrittenPaperSummary[]; has_more: boolean }>(`/written/papers?offset=${offset}`, { signal }),
   writtenPaperQuestions: (batch: string, paper: string, offset: number, signal?: AbortSignal) =>
     get<WrittenPaperQuestions>(`/written/papers/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}?offset=${offset}`, { signal }),
+  writtenExams: (beforeId?: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamSummary[]; next_before_id: number | null }>(`/written/exams${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
+  startWrittenExam: (batch: string, paper: string, signal?: AbortSignal) =>
+    post<WrittenExam>(`/written/exams/start/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}`, undefined, { signal }),
+  writtenExam: (id: number, signal?: AbortSignal) => get<WrittenExam>(`/written/exams/${id}`, { signal }),
+  writtenExamQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
+    get<WrittenExamQuestion>(`/written/exams/${id}/questions/${questionId}`, { signal }),
+  saveWrittenExamAnswer: async (id: number, questionId: number, revision: number, response: WrittenResponse | null, signal?: AbortSignal) =>
+    readJson<WrittenExamCard>(await request(`/written/exams/${id}/questions/${questionId}`, { expected_revision: revision, response }, "PUT", { signal })),
+  submitWrittenExam: (id: number, signal?: AbortSignal) => post<WrittenExam>(`/written/exams/${id}/submit`, undefined, { signal }),
   writtenAssignments: (signal?: AbortSignal) => get<WrittenAssignmentSummary[]>("/written/assignments", { signal }),
   writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
   writtenAssignment: (id: number, signal?: AbortSignal) =>
@@ -750,7 +790,7 @@ export const api = {
     post<WrittenAttempt>("/written/attempts", body, { signal }),
   writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
     const path = url.slice(BASE.length);
-    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|assignments\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
+    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|(?:assignments|exams)\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
       throw new Error("题图链接无效，请重新打开题目。");
     }
     return getBlob(path, signal);

@@ -1,7 +1,7 @@
 """按原试卷组织当前可作答的已审核题目。"""
 
 from collections import Counter
-from math import fsum
+from math import fsum, isclose
 from typing import Annotated
 from uuid import UUID
 
@@ -85,7 +85,11 @@ async def paper_questions(
     user: CurrentUser, offset: PageOffset = 0,
 ):
     response.headers["Cache-Control"] = "no-store"
-    batch = str(batch_id)
+    paper, ordered = await paper_contents(session, str(batch_id), paper_id)
+    return {"paper": paper, "items": ordered[offset:offset + PAGE_SIZE], "has_more": len(ordered) > offset + PAGE_SIZE}
+
+
+async def paper_contents(session, batch: str, paper_id: str):
     rows = (await session.execute(
         visible_query().add_columns(WrittenCandidate.external_id).where(
             WrittenQuestionVersion.batch_id == batch, WrittenCandidate.paper_id == paper_id,
@@ -104,12 +108,16 @@ async def paper_questions(
         }
         for position, row in enumerate(original, 1) if row["id"] in available
     ]
-    return {
-        "paper": {
-            **paper_out(batch, paper, len(rows), len(original)),
-            **paper_metadata(paper),
-            "published_score": fsum(item["score"] for item in ordered),
-        },
-        "items": ordered[offset:offset + PAGE_SIZE],
-        "has_more": len(ordered) > offset + PAGE_SIZE,
+    metadata = {
+        **paper_out(batch, paper, len(rows), len(original)),
+        **paper_metadata(paper),
+        "published_score": fsum(item["score"] for item in ordered),
     }
+    total = metadata["source_total_score"]
+    recorded = metadata["source_recorded_score"]
+    metadata["mock_available"] = (
+        0 < len(ordered) == len(original) <= 120 and metadata["duration_minutes"] is not None
+        and total is not None and isclose(total, metadata["published_score"], abs_tol=1e-8)
+        and (recorded is None or isclose(total, recorded, abs_tol=1e-8))
+    )
+    return metadata, ordered

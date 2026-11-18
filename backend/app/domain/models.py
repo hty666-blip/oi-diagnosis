@@ -227,6 +227,36 @@ class WrittenAssignmentAttempt(Base):
     assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), index=True)
 
 
+class WrittenExam(Base):
+    __tablename__ = "written_exam"
+    __table_args__ = (
+        UniqueConstraint("student_id", "batch_id", "paper_id", name="uq_written_exam_paper"),
+        Index("ix_written_exam_student_order", "student_id", "id"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    paper_id: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(180))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    deadline: Mapped[datetime] = mapped_column(UTCDateTime())
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenExamItem(Base):
+    __tablename__ = "written_exam_item"
+    __table_args__ = (UniqueConstraint("exam_id", "position", name="uq_written_exam_position"),)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("written_exam.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    number: Mapped[str] = mapped_column(String(32))
+    max_score: Mapped[float] = mapped_column(Double)
+    response: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    earned_score: Mapped[float | None] = mapped_column(Double, nullable=True)
+
+
 class WrittenHelpTurn(Base):
     """一次追问、诊断交接和讲解，按照本人作答保存。"""
 

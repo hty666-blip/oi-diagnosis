@@ -12,8 +12,8 @@
     ]
   },
   "papers": [
-    {"id": "demo-j-paper", "title": "入门级自编演示卷", "level": "J", "source_kind": "original_demo", "total_score": 16},
-    {"id": "demo-s-paper", "title": "提高级自编演示卷", "level": "S", "source_kind": "original_demo", "total_score": 16}
+    {"id": "demo-j-paper", "title": "入门级自编演示卷", "level": "J", "source_kind": "original_demo", "total_score": 16, "duration_minutes": 10, "duration_source": "自编演示设定"},
+    {"id": "demo-s-paper", "title": "提高级自编演示卷", "level": "S", "source_kind": "original_demo", "total_score": 16, "duration_minutes": 10, "duration_source": "自编演示设定"}
   ],
   "question_groups": [
     {
