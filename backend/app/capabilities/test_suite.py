@@ -32,6 +32,10 @@ def load_package(pid: str, root: Path = PACKAGE_ROOT) -> tuple[dict, list[dict]]
     if not directory.is_relative_to(root.resolve()):
         raise SandboxError("题包路径超出配置目录")
     try:
+        if not (directory / "meta.yaml").resolve().is_relative_to(directory):
+            raise ValueError("元数据路径超出题包")
+        if (directory / "meta.yaml").stat().st_size > 100000:
+            raise ValueError("元数据文件过大")
         meta = yaml.safe_load((directory / "meta.yaml").read_text(encoding="utf-8-sig"))
         if not isinstance(meta, dict) or meta.get("id") != pid:
             raise ValueError("题包元数据编号不匹配")
@@ -45,10 +49,17 @@ def load_package(pid: str, root: Path = PACKAGE_ROOT) -> tuple[dict, list[dict]]
         if len(inputs) < (3 if level == "A" else 1):
             raise ValueError("题包测试点不足")
         cases = []
+        if len(inputs) > 100:
+            raise ValueError("题包测试点超过 100 个")
+        total_bytes = 0
         for source in inputs:
             answer = source.with_suffix(".ans")
             if any(not p.resolve().is_relative_to(directory) for p in (source, answer)):
                 raise ValueError("测试文件路径超出题包")
+            sizes = [p.stat().st_size for p in (source, answer)]
+            total_bytes += sum(sizes)
+            if max(sizes) > 1_000_000 or total_bytes > 2_000_000:
+                raise ValueError("题包测试文件超过大小限制")
             cases.append({
                 "name": source.stem,
                 "input": source.read_text(encoding="utf-8-sig"),
@@ -65,6 +76,8 @@ def load_package(pid: str, root: Path = PACKAGE_ROOT) -> tuple[dict, list[dict]]
 
 
 def load_suite(problem) -> JudgeSuite:
+    if hasattr(problem, "catalog_suite"):
+        return problem.catalog_suite
     scope = "samples"
     time_limit_ms, memory_limit_mb = 2000, 256
     if problem.has_testdata and problem.package_level in ("A", "B"):

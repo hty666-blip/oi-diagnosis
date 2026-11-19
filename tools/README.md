@@ -10,6 +10,7 @@
 | `luogu_import.py` | 抓取题面 + 样例 → `data/problems/<pid>.json` | 标准库 + `lxml` |
 | `luogu_tags.py` | 抓取标签 id→名称映射 → `data/tags.json`，并回填已抓题目 | 标准库 |
 | `check_package.py` | **校验收录题包**（结构/元数据/错因探针覆盖），不编译、不联网 | 标准库 |
+| `audit_written_bank.py` | **只读审计笔试候选数据**：哈希、关联、答案结构、去重风险和知识覆盖；不自动批准发布 | 标准库 |
 | `surface_lint.py` | **表层错误检查**：中文标点/全角空格/BOM/中文标识符 + GCC 报错翻译 + 一键修复 | 标准库 |
 | `probe_*.py` | 调研期的探测脚本（可删） | — |
 
@@ -25,6 +26,14 @@ python tools/check_package.py --dir problems/PTV-0001 # 校验单个
 `problems/PTV-0001/` 是一个可直接跑通的示例（求和 / M01 溢出探针）。
 
 ## 2. 用法
+
+笔试候选包可先离线审计，报告路径需位于输入目录之外：
+
+```powershell
+python -X utf8 tools/audit_written_bank.py --dir "D:\Py_Pj\DS_PROJECY\csp_bank\output" --report eval/written_bank/candidate_v1_audit.json
+```
+
+退出码 0 表示所检查的结构无错误，1 表示发现结构错误，2 表示无法读取或解析；警告写入报告。结构通过不代表答案正确、来源已经外部核验或题目可正式发布。`eligible_for_practice` 仅作为来源包的候选统计字段，不能替代人工审核和发布权限。去重风险、标签语义及来源边界的人工检查见 `docs/初赛题库候选数据验收.md`。
 
 ```bash
 # 1) 先建立标签映射（一次即可，之后抓题会自动套用）

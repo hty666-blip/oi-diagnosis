@@ -44,7 +44,8 @@ export function EvidencePanel({ items, loading, error, onRetry }: { items: Evide
         {presentFields.map(([key, label]) => <div key={key}><h4>{label}{payload[(key === "stdin" ? "input" : key) + "_truncated"] === true ? "（仅显示部分）" : ""}</h4><pre>{String(payload[key]) || "（无输出）"}</pre></div>)}
         {!presentFields.length && <pre>{JSON.stringify(payload, null, 2)}</pre>}
         {(item.reproducible === false || truncatedInput || escapedInput) && <p className="scope-note">{escapedInput ? "输入含已转义的不可见字符" + (truncatedInput ? "，且仅保存了部分内容" : "") + "，展示文本不能直接作为原始输入运行" : truncatedInput ? "保存的输入不完整，不能直接用这份记录复现" : "这条记录的输入无法直接用于复现"}；请联系教师获取原始测试数据。</p>}
-        {typeof payload.time_ms === "number" && payload.time_ms > 0 && <p className="dim">运行用时 {payload.time_ms} ms</p>}
+        {typeof payload.time_ms === "number" && payload.time_ms > 0 && <p className="dim">{payload.time_kind === "container_wall" ? "容器运行墙时" : "运行用时"} {payload.time_ms} ms{payload.time_kind === "container_wall" ? "（包含包装进程开销）" : ""}</p>}
+        {payload.time_kind === "container_wall" && payload.memory_kb === 0 && <p className="dim">此执行器未提供峰值内存测量。</p>}
       </details>;
     })}
   </div>;

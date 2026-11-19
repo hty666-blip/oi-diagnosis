@@ -8,7 +8,8 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
+
+from app.infra.sql_types import UTCDateTime
 
 revision: str = 'b2b335abf736'
 down_revision: str | None = None
@@ -23,16 +24,16 @@ def upgrade() -> None:
     sa.Column('pid', sa.String(length=32), nullable=False),
     sa.Column('title', sa.String(length=200), nullable=False),
     sa.Column('statement_md', sa.Text(), nullable=False),
-    sa.Column('samples', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('samples', sa.JSON(), nullable=False),
     sa.Column('difficulty', sa.String(length=32), nullable=False),
-    sa.Column('tags', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('knowledge_points', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('tags', sa.JSON(), nullable=False),
+    sa.Column('knowledge_points', sa.JSON(), nullable=False),
     sa.Column('package_level', sa.String(length=2), nullable=False),
     sa.Column('has_testdata', sa.Boolean(), nullable=False),
     sa.Column('source', sa.String(length=32), nullable=False),
     sa.Column('source_url', sa.String(length=500), nullable=False),
     sa.Column('license_note', sa.Text(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_problem_pid'), 'problem', ['pid'], unique=True)
@@ -46,11 +47,11 @@ def upgrade() -> None:
     sa.Column('verdict', sa.String(length=8), nullable=True),
     sa.Column('time_ms', sa.Integer(), nullable=True),
     sa.Column('memory_kb', sa.Integer(), nullable=True),
-    sa.Column('tests_passed', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('tests_passed', sa.JSON(), nullable=True),
     sa.Column('stage', sa.String(length=24), nullable=False),
     sa.Column('pipeline_ver', sa.String(length=32), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['problem_id'], ['problem.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -61,16 +62,16 @@ def upgrade() -> None:
     op.create_table('diagnosis',
     sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
     sa.Column('submission_id', sa.BigInteger(), nullable=False),
-    sa.Column('mechanism', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('cognition', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('nature', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('mechanism', sa.JSON(), nullable=False),
+    sa.Column('cognition', sa.JSON(), nullable=False),
+    sa.Column('nature', sa.JSON(), nullable=False),
     sa.Column('narrative', sa.Text(), nullable=False),
     sa.Column('confidence', sa.Double(), nullable=False),
     sa.Column('status', sa.String(length=16), nullable=False),
-    sa.Column('degraded', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('degraded', sa.JSON(), nullable=False),
     sa.Column('reviewer_id', sa.BigInteger(), nullable=True),
-    sa.Column('model_meta', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('model_meta', sa.JSON(), nullable=False),
+    sa.Column('created_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['submission_id'], ['submission.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('submission_id')
@@ -79,10 +80,10 @@ def upgrade() -> None:
     sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
     sa.Column('submission_id', sa.BigInteger(), nullable=False),
     sa.Column('type', sa.String(length=32), nullable=False),
-    sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('payload', sa.JSON(), nullable=False),
     sa.Column('reproducible', sa.Boolean(), nullable=False),
     sa.Column('digest', sa.String(length=64), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['submission_id'], ['submission.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -93,15 +94,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_index(op.f('ix_evidence_type'), table_name='evidence')
-    op.drop_index(op.f('ix_evidence_submission_id'), table_name='evidence')
     op.drop_table('evidence')
     op.drop_table('diagnosis')
-    op.drop_index(op.f('ix_submission_student_id'), table_name='submission')
-    op.drop_index(op.f('ix_submission_stage'), table_name='submission')
-    op.drop_index(op.f('ix_submission_problem_id'), table_name='submission')
-    op.drop_index(op.f('ix_submission_code_hash'), table_name='submission')
     op.drop_table('submission')
-    op.drop_index(op.f('ix_problem_pid'), table_name='problem')
     op.drop_table('problem')
     # ### end Alembic commands ###

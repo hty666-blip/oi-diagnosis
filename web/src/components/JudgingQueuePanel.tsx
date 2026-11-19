@@ -32,7 +32,7 @@ export default function JudgingQueuePanel() {
   }, [refresh]);
 
   const scopeLabel = snapshot?.scope.kind === "all" ? "全部授权记录"
-    : snapshot?.scope.kind === "class_and_own" ? (snapshot.scope.class_name || "本班") + "与本人记录" : "本人记录";
+    : snapshot?.scope.kind === "class_and_own" ? (snapshot.scope.class_name || "负责班级") + "与本人记录" : "本人记录";
   return <section className="card judging-queue" aria-label="判题队列状态">
     <div className="card-head"><h2>判题队列</h2><button className="ghost" disabled={loading} onClick={() => setRefresh((value) => value + 1)}>{loading ? "正在读取…" : "刷新判题状态"}</button></div>
     <ErrorNotice message={error ? "判题状态未更新：" + error : ""} onRetry={() => setRefresh((value) => value + 1)} />

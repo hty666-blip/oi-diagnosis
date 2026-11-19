@@ -8,6 +8,8 @@ export interface AuthUser {
   display_name: string;
   role: "student" | "teacher" | "admin";
   class_name: string;
+  class_id?: number | null;
+  must_change_password?: boolean;
 }
 
 interface SessionSnapshot { token: string; user: AuthUser; storedUser: string }
@@ -91,7 +93,7 @@ export function messageOf(error: unknown): string {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
     super(message);
     this.name = "ApiError";
   }
@@ -106,13 +108,25 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
     window.dispatchEvent(new Event("oi-session-expired"));
     throw new ApiError("登录已过期，请重新登录；本机代码草稿已保留。", 401);
   }
+  if (login && res.status === 503) {
+    throw new Error("登录服务暂时不可用，请确认数据库和后端已经启动。");
+  }
   if (!res.ok) {
     let detail = "";
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail.message === "string") {
+        detail = body.detail.message;
+        if (typeof body.detail.code === "string") code = body.detail.code;
+      }
       else if (Array.isArray(body.detail)) {
-        detail = body.detail.map((item: { msg?: string }) => item.msg ?? "").filter(Boolean).join("；");
+        detail = body.detail.map((item: { msg?: string; loc?: (string | number)[] }) => {
+          const labels: Record<string, string> = { problems: "题目", rows: "数据行", samples: "样例", cases: "正式测试", input: "输入", output: "预期输出", license_note: "许可说明", reviewer: "审核人", statement_md: "题面", source: "来源", pid: "题号", title: "标题" };
+          const path = (item.loc ?? []).filter((v) => v !== "body").map((v) => typeof v === "number" ? String(v + 1) : labels[v] ?? v).join(" / ");
+          return (path ? path + "：" : "") + (item.msg ?? "请求字段无效");
+        }).filter(Boolean).join("；");
       }
     } catch { /* 不把服务器 HTML 或内部错误堆栈显示给学生。 */ }
     if (snapshot) assertSession(snapshot);
@@ -121,12 +135,12 @@ async function checkResponse(res: Response, snapshot: SessionSnapshot | null, lo
       404: "记录不存在，或当前账号无权访问。",
       429: "操作过于频繁，请稍后重试。",
       503: "判题服务暂时不可用，代码已保留，请稍后再次提交。",
-    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status);
+    } as Record<number, string>)[res.status] || "服务暂时无法完成请求，请重试（" + res.status + "）。", res.status, code);
   }
   return res;
 }
 
-interface RequestOptions { signal?: AbortSignal; headers?: Record<string, string>; anonymous?: boolean }
+interface RequestOptions { signal?: AbortSignal; headers?: Record<string, string>; anonymous?: boolean; rawBody?: Blob }
 interface RequestResult { response: Response; snapshot: SessionSnapshot | null; signal?: AbortSignal }
 
 async function request(url: string, body?: unknown, method = "GET", options: RequestOptions = {}): Promise<RequestResult> {
@@ -138,7 +152,7 @@ async function request(url: string, body?: unknown, method = "GET", options: Req
       method,
       headers: { ...(snapshot ? { Authorization: "Bearer " + snapshot.token } : {}),
         ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...options.headers },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: options.rawBody ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal: options.signal,
     });
   } catch {
@@ -166,6 +180,14 @@ async function post<T>(url: string, body?: unknown, options?: RequestOptions): P
   return readJson<T>(await request(url, body, "POST", options));
 }
 
+async function getBlob(url: string, signal?: AbortSignal): Promise<Blob> {
+  const { response, snapshot } = await request(url, undefined, "GET", { signal });
+  const blob = await response.blob();
+  if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+  if (snapshot) assertSession(snapshot);
+  return blob;
+}
+
 export interface Problem {
   pid: string;
   title: string;
@@ -174,6 +196,7 @@ export interface Problem {
   samples: number;
   package_level: string;
   source: string;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface ProblemDetail {
@@ -186,7 +209,12 @@ export interface ProblemDetail {
   source: string;
   source_url: string;
   package_level: string;
-  time_limit_ms: number;
+  time_limit_ms: number | null;
+  memory_limit_mb?: number | null;
+  license_note?: string;
+  revision?: number;
+  version_id?: number | null;
+  verification_scope?: "package" | "samples" | "unknown";
 }
 
 export interface NatureTag {
@@ -208,6 +236,8 @@ export interface TestSummary {
 
 export interface SubmissionResult {
   id: number;
+  training_id?: number | null;
+  problem_version_id?: number | null;
   parent_submission_id?: number | null;
   stage: string;
   verdict: string | null;
@@ -215,6 +245,7 @@ export interface SubmissionResult {
   problem_pid?: string;
   problem_title?: string;
   code?: string;
+  language: SubmissionLanguage;
   job?: JudgeJob | null;
   diagnosis?: {
     narrative: string;
@@ -223,6 +254,7 @@ export interface SubmissionResult {
     nature: NatureTag[];
     mechanism: DiagResult["mechanism"];
     degraded?: string[];
+    collaboration?: AgentCollaboration | null;
     review_revision?: number;
     reviewer_id?: number | null;
     reviewed_at?: string | null;
@@ -241,6 +273,15 @@ export interface JudgeJob {
   lease_expires_at: string | null;
 }
 
+export interface AgentCollaboration {
+  version: "collaboration-v1";
+  mode: "multi_agent" | "rules" | "degraded";
+  rounds: number;
+  human_review_required: boolean;
+  steps: { agent: string; method: string; status: string; round: number; summary: string;
+    evidence_ids: number[]; feedback: string[] }[];
+}
+
 export interface DiagResult {
   submission_id: number;
   verdict: string | null;
@@ -252,6 +293,7 @@ export interface DiagResult {
   nature: NatureTag[];
   mechanism: { code: string; confidence: number; evidence_ids?: number[]; explain?: string }[];
   degraded?: string[];
+  collaboration?: AgentCollaboration | null;
   review_revision?: number;
   reviewer_id?: number | null;
   reviewed_at?: string | null;
@@ -271,14 +313,19 @@ export interface SessionReply {
   level: number;
   action: string;
   reply: string;
-  verified_submission_id?: number;
+  verified_submission_id?: number | null;
   verdict?: string | null;
+  accepted?: boolean;
+  replayed?: boolean;
 }
 
 export interface SessionHistory {
   session_id: number;
   status: string;
   level: number;
+  submission_id: number;
+  verified_submission_id?: number | null;
+  verdict?: string | null;
   turns: { role: "tutor" | "student"; level: number; content: string }[];
 }
 
@@ -294,10 +341,13 @@ export interface MySubmission {
   problem_title?: string;
   stage?: string;
   tests_passed?: TestSummary | null;
+  language: SubmissionLanguage;
   diagnosis_status?: string | null;
   review_revision?: number;
   reviewer_id?: number | null;
 }
+
+export type SubmissionLanguage = "c11" | "cpp17" | "java17" | "python3";
 
 export interface CoachItem {
   diagnosis_id: number;
@@ -345,6 +395,7 @@ export interface LineageItem {
   id: number;
   parent_submission_id: number | null;
   code: string;
+  language: SubmissionLanguage;
   verdict: string | null;
   stage: string;
   tests_passed: TestSummary | null;
@@ -372,20 +423,585 @@ export interface JudgingQueue {
   }[];
 }
 
+export interface TrainingInput {
+  title: string; class_name: string; objective: string; description: string; due_at: string;
+  problems: { pid: string; required: boolean }[];
+  student_ids?: number[] | null;
+  source_training_id?: number | null;
+}
+export interface Training extends TrainingInput {
+  id: number; teacher_id: number; status: "draft" | "published"; published_at: string | null;
+}
+export interface TrainingDetail extends Training {
+  problems: { pid: string; required: boolean; title: string; package_level: string }[];
+  rows: { student_id: number; name: string; complete: boolean; cells: (null | {
+    id: number; stage: string; verdict: string | null; tests_passed: TestSummary | null;
+    state: "complete" | "pending" | "failed" | "cancelled"; passed: boolean; late: boolean; attempts: number;
+  })[] }[];
+  summary: { students: number; participated: number; completed: number; late_submissions: number };
+  observed_at: string;
+}
+
+export interface TrainingAnalysis {
+  summary: TrainingDetail["summary"];
+  basis_digest: string; observed_at: string;
+  problems: { pid: string; title: string; required: boolean; students: number;
+    counts: Record<string, number>; repaired: number; unclassified: number }[];
+  issues: { pid: string; code: string; label: string; source: "teacher" | "automatic";
+    students: number; submission_ids: number[] }[];
+  examples: { submission_id: number; pid: string; language: string; verdict: string | null;
+    code: string; code_truncated: boolean; narrative: string;
+    evidence: { id: number; type: string; excerpt: string }[] }[];
+}
+export interface TrainingLesson {
+  published: { revision: number; content: string; published_at: string } | null;
+  draft?: { revision: number; content: string; source: "ai" | "facts" | "manual";
+    basis_digest: string; created_at: string; stale: boolean } | null;
+  history?: NonNullable<TrainingLesson["draft"]>[];
+  analysis?: TrainingAnalysis;
+}
+
+export interface StudentFeedback {
+  id: number; content: string; author: string; created_at: string; read_at: string | null;
+  submission_id: number | null; source_pid: string | null;
+  followup: { has_new_submission: boolean; passed: boolean; latest_submission_id: number | null };
+}
+export interface FeedbackHistory {
+  student: { id: number; name: string }; items: StudentFeedback[]; truncated: boolean; observed_at: string;
+}
+export interface StudentProfile {
+  student: { id: number; name: string; class_name: string };
+  summary: { trainings: number; completed: number; remedial: number };
+  truncated: boolean; observed_at: string;
+  written: {
+    attempt_count: number; full_score_count: number; pending_count: number; attempt_limit: number; exam_limit: number;
+    exams: {
+      id: number; title: string; submitted_at: string; earned_score: number; max_score: number;
+      missed_count: number; corrected_count: number;
+    }[];
+  };
+  items: (Omit<Training, "problems"> & { complete: boolean; feedback_count: number; latest_feedback: StudentFeedback | null;
+    problems: { pid: string; title: string; required: boolean; cell: TrainingDetail["rows"][number]["cells"][number] }[] })[];
+}
+
+export interface WrittenBatch {
+  id: string; status: "preview" | "staged"; created_at: string; expires_at: string; staged_at: string | null;
+  summary: { questions: number; papers: number; groups: number; assets: number; knowledge_nodes: number; knowledge_leaves: number; source_canonical_count: number; candidate_count: number; published_count: number; approved_count?: number; withdrawn_count?: number; flags: Record<string, number> };
+}
+export interface WrittenDraft {
+  stem: string; shared_stem: string; question_type: "single_choice" | "multiple_choice" | "true_false" | "fill_blank" | "short_answer";
+  level: "J" | "S" | null; options: { id: string; text: string }[]; answer: Record<string, unknown>; score: number;
+  scoring_rule: "all_or_nothing" | "exact_text" | "teacher_rubric" | "unconfirmed"; primary_knowledge_point_id: string | null;
+  secondary_knowledge_point_ids: string[]; explanation: string; answer_reference: string;
+}
+export interface WrittenPublication { id: number; revision: number; catalog_version: number; is_active: boolean }
+export interface WrittenReviewState {
+  revision: number; status: "needs_review" | "approved" | "withdrawn"; draft: WrittenDraft;
+  resolutions: Record<string, string>; source_flags: string[]; reviewed_by: number | null; reviewed_at: string | null;
+  publication: WrittenPublication | null;
+}
+export interface WrittenReviewInput {
+  expected_revision: number; request_id: string; action: "save" | "approve" | "withdraw" | "reopen";
+  note: string; draft?: WrittenDraft; rights_confirmed: boolean; resolutions: Record<string, string>;
+}
+export interface WrittenRow {
+  external_id: string; paper_id: string; question_type: string; level: string | null; stem: string;
+  review_status: string; answer_status: string; issues: string[];
+}
+export interface WrittenPage {
+  batch: WrittenBatch; items: WrittenRow[]; total: number; has_more: boolean; papers: { id: string; title: string }[];
+}
+export interface WrittenDetail {
+  record: { id: string; stem: string; shared_stem?: string | null; options?: { id: string; text: string }[] | null; answer: unknown; answer_status?: string; answer_source_id?: string; answer_alternatives?: { raw?: string; option_ids?: string[]; value?: boolean; source_id?: string; note?: string }[]; source_ids?: string[]; source_locator?: string; primary_knowledge_point_id?: string | null; secondary_knowledge_point_ids?: string[]; asset_paths?: string[] };
+  normalized: { independent_id: string; related_question_id: string | null; issues: string[]; knowledge_suggestions: { id: string; name: string; basis: string }[] };
+  group: { shared_stem: string; asset_paths?: string[] } | null;
+  sources: { id: string; title: string; url?: string; license?: string }[];
+  knowledge_points: { id: string; name: string; is_leaf?: boolean }[];
+  review: WrittenReviewState | null;
+}
+
+export type WrittenQuestionType = WrittenDraft["question_type"];
+export type WrittenResponse =
+  | { kind: "option" | "options"; option_ids: string[] }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "text"; value: string };
+export type WrittenReferenceAnswer = WrittenResponse
+  | { kind: "text"; accepted: string[]; normalization: "exact" | "trim_outer_whitespace" }
+  | WrittenRubricAnswer;
+export interface WrittenRubricAnswer {
+  kind: "rubric"; reference: string; rubric: { criterion: string; points: number }[];
+}
+export interface WrittenTeacherGrade { points: number[]; feedback: string; graded_at: string }
+export interface WrittenShortSuggestion {
+  awards: { points: number; quote: string; reason: string }[];
+  review_note: string;
+}
+export interface WrittenShortReview {
+  question: WrittenPublishedQuestion;
+  response: string;
+  answer: WrittenRubricAnswer;
+  grade: WrittenTeacherGrade | null;
+  read_only: boolean;
+  can_suggest: boolean;
+  suggestion: WrittenShortSuggestion | null;
+}
+export type WrittenAttemptView = "history" | "wrong" | "corrected";
+export type WrittenPracticePick = Pick<WrittenPublishedSummary, "id" | "version_id">;
+
+export interface WrittenProgressRow {
+  batch_id: string;
+  level: "J" | "S";
+  point: { id: string; name: string; prerequisites: string[] };
+  status: "practiced" | "needs_review" | "reviewed";
+  attempt_count: number;
+  latest_attempt_id: number;
+  last_error_id: number | null;
+  review_attempt_id: number | null;
+  next_question: WrittenPracticePick | null;
+}
+export interface WrittenCoverageRow {
+  id: string;
+  name: string;
+  pending_j: number;
+  pending_s: number;
+  pending_unclassified: number;
+  published_j: number;
+  published_s: number;
+  article_revision: number | null;
+}
+
+export interface WrittenPublishedSummary {
+  id: number;
+  revision: number;
+  version_id: string;
+  stem: string;
+  question_type: WrittenQuestionType;
+  level: "J" | "S";
+  score: number;
+}
+export interface WrittenPaperSummary {
+  batch_id: string;
+  id: string;
+  title: string;
+  level: "J" | "S" | null;
+  year: number | null;
+  source_kind: "official_paper" | "simulation" | "original_demo" | null;
+  published_count: number;
+  candidate_count: number;
+}
+export interface WrittenPaperQuestions {
+  paper: WrittenPaperSummary & {
+    duration_minutes: number | null;
+    duration_source: string | null;
+    source_total_score: number | null;
+    source_recorded_score: number | null;
+    published_score: number;
+    mock_available: boolean;
+  };
+  items: (WrittenPublishedSummary & { number: string })[];
+  has_more: boolean;
+}
+export interface WrittenPublishedQuestion extends WrittenPublishedSummary {
+  shared_stem: string;
+  options: { id: string; text: string }[];
+  assets: string[];
+  assets_by_path: Record<string, string>;
+}
+export interface WrittenExamSummary {
+  id: number;
+  title: string;
+  started_at: string;
+  deadline: string;
+  submitted_at: string | null;
+  server_time: string;
+  status: "working" | "expired" | "submitted";
+}
+export interface WrittenExamCard {
+  question_id: number;
+  number: string;
+  revision: number;
+  answered: boolean;
+  max_score: number;
+  earned_score: number | null;
+}
+export interface WrittenExam extends WrittenExamSummary {
+  items: WrittenExamCard[];
+  max_score: number;
+  earned_score: number | null;
+}
+export interface WrittenExamQuestion {
+  question: WrittenPublishedQuestion;
+  card: WrittenExamCard;
+  response: WrittenResponse | null;
+  answer?: WrittenReferenceAnswer;
+  explanation?: string;
+}
+export interface WrittenExamReviewItem {
+  question_id: number;
+  number: string;
+  version_id: string;
+  answered: boolean;
+  available: boolean;
+  latest_attempt: { id: number; correct: boolean } | null;
+}
+export interface WrittenExamStudyTopic {
+  point: { id: string; name: string };
+  level: "J" | "S" | null;
+  numbers: string[];
+  article: { id: number; title: string } | null;
+  next_question: WrittenPracticePick | null;
+}
+export interface WrittenClassExamResults {
+  items: {
+    id: number;
+    student_name: string;
+    title: string;
+    submitted_at: string;
+    earned_score: number;
+    max_score: number;
+    missed_count: number;
+    corrected_count: number;
+  }[];
+  next_before_id: number | null;
+}
+export interface WrittenClassExamQuestions {
+  title: string;
+  submitted_count: number;
+  items: {
+    question_id: number;
+    version_id: string;
+    number: string;
+    revision: number;
+    answer_count: number;
+    correct_count: number;
+    wrong_count: number;
+    blank_count: number;
+    corrected_count: number;
+    practice_question: WrittenPublishedSummary | null;
+  }[];
+}
+export interface WrittenAssignmentSummary {
+  id: number;
+  class_id: number;
+  class_name: string;
+  title: string;
+  due_at: string;
+  is_closed: boolean;
+}
+export interface WrittenAssignmentDetail extends WrittenAssignmentSummary {
+  questions: (WrittenPublishedSummary & { is_available: boolean })[];
+  rows: {
+    student_id: number;
+    name: string;
+    cells: ({ id: number; correct: boolean | null; earned_score: number | null } | null)[];
+    submitted_count: number;
+    correct_count: number;
+  }[];
+  summary: { students: number; submitted_all: number; correct_all: number };
+}
+export interface WrittenAssignmentInput {
+  class_id: number;
+  title: string;
+  due_at: string;
+  request_id: string;
+  questions: { id: number; version_id: string }[];
+  student_ids?: number[];
+}
+export interface WrittenAttemptResult {
+  id: number;
+  question_id: number;
+  version_id: string;
+  revision: number;
+  correct: boolean | null;
+  earned_score: number | null;
+  max_score: number;
+  submitted_at: string;
+}
+export interface WrittenAttemptSummary extends WrittenAttemptResult {
+  stem: string;
+  question_type: WrittenQuestionType;
+  level: "J" | "S";
+  is_available: boolean;
+}
+export interface WrittenAttempt extends WrittenAttemptResult {
+  assignment_id: number | null;
+  exam_id?: number;
+  response: WrittenResponse;
+  answer: WrittenReferenceAnswer | null;
+  explanation: string;
+  question: WrittenPublishedQuestion;
+  teacher_grade?: WrittenTeacherGrade;
+  replayed?: boolean;
+}
+export type WrittenHelpReference = "attempt" | "review" | "knowledge" | "prior_practice";
+interface WrittenHelpSource {
+  source: "model" | "reviewed";
+  references: WrittenHelpReference[];
+  reason: string;
+}
+export interface WrittenHelpTurn {
+  id: number;
+  request_id: string;
+  question: string;
+  created_at: string;
+  comparison: string;
+  diagnosis: WrittenHelpSource & { hypothesis: string | null; focus: string };
+  tutor: WrittenHelpSource & { reply: string };
+  knowledge: { id: string; entry_id?: number; revision: number; title: string; body: string; source?: string; excerpt?: boolean } | null;
+  prior_practice?: {
+    attempt_id: number;
+    question_id: number;
+    revision: number;
+    question_type: WrittenQuestionType;
+    correct: boolean;
+  }[];
+  replayed?: boolean;
+}
+export interface WrittenHelpHistory {
+  items: WrittenHelpTurn[];
+  before_id: number | null;
+  pending: { request_id: string; message: string; retry_at: string } | null;
+}
+export type WrittenHelpTarget = number | { examId: number; questionId: number };
+
+function writtenHelpPath(target: WrittenHelpTarget) {
+  return typeof target === "number" ? `/written/attempts/${target}/help`
+    : `/written/exams/${target.examId}/questions/${target.questionId}/help`;
+}
+export interface KnowledgeArticle {
+  title: string;
+  body: string;
+  source: string;
+}
+export interface KnowledgeSummary {
+  id: number;
+  point_id: string;
+  point_name: string;
+  title: string;
+  revision: number;
+  published_at: string;
+}
+export interface PublishedKnowledge extends KnowledgeSummary, KnowledgeArticle {
+  related_questions?: WrittenPublishedSummary[];
+}
+export interface AdminKnowledgeSummary {
+  id: number;
+  batch_id: string;
+  point_id: string;
+  point_name: string;
+  title: string;
+  edit_version: number;
+  published_revision: number;
+  is_active: boolean;
+}
+export interface AdminKnowledge extends AdminKnowledgeSummary {
+  article: KnowledgeArticle;
+  editions: { revision: number; title: string; published_at: string }[];
+}
+export interface WrittenCatalogFilter {
+  q: string;
+  level: "" | WrittenPublishedSummary["level"];
+  question_type: "" | WrittenQuestionType;
+}
+
 export const api = {
+  writtenKnowledge: (q: string, offset: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ q, offset: String(offset) });
+    return get<{ items: KnowledgeSummary[]; has_more: boolean }>(`/written/knowledge?${params}`, { signal });
+  },
+  writtenKnowledgeArticle: (id: number, signal?: AbortSignal) => get<PublishedKnowledge>(`/written/knowledge/${id}`, { signal }),
+  adminWrittenKnowledge: (q: string, offset: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ q, offset: String(offset) });
+    return get<{ items: AdminKnowledgeSummary[]; has_more: boolean }>(`/admin/written-knowledge?${params}`, { signal });
+  },
+  writtenKnowledgeTopics: (batchId: string, signal?: AbortSignal) =>
+    get<{ items: { id: string; name: string }[] }>(`/admin/written-knowledge/topics?batch_id=${encodeURIComponent(batchId)}`, { signal }),
+  adminKnowledgeArticle: (id: number, signal?: AbortSignal) => get<AdminKnowledge>(`/admin/written-knowledge/${id}`, { signal }),
+  adminKnowledgeEdition: (id: number, revision: number, signal?: AbortSignal) =>
+    get<PublishedKnowledge & { review_note: string }>(`/admin/written-knowledge/${id}/versions/${revision}`, { signal }),
+  createKnowledgeArticle: (body: { batch_id: string; point_id: string; article: KnowledgeArticle }) =>
+    post<AdminKnowledge>("/admin/written-knowledge", body),
+  editKnowledgeArticle: (id: number, body: { expected_version: number; action: "save" | "publish" | "unpublish"; article?: KnowledgeArticle; review_note?: string }) =>
+    post<AdminKnowledge>(`/admin/written-knowledge/${id}`, body),
+  writtenCatalog: (offset: number, filters: WrittenCatalogFilter, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ offset: String(offset) });
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value);
+    }
+    return get<{ items: WrittenPublishedSummary[]; has_more: boolean }>(`/written/questions?${params}`, { signal });
+  },
+  writtenPublishedQuestion: (id: number, signal?: AbortSignal) => get<WrittenPublishedQuestion>(`/written/questions/${id}`, { signal }),
+  writtenPapers: (offset: number, signal?: AbortSignal) =>
+    get<{ items: WrittenPaperSummary[]; has_more: boolean }>(`/written/papers?offset=${offset}`, { signal }),
+  writtenPaperQuestions: (batch: string, paper: string, offset: number, signal?: AbortSignal) =>
+    get<WrittenPaperQuestions>(`/written/papers/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}?offset=${offset}`, { signal }),
+  writtenExams: (beforeId?: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamSummary[]; next_before_id: number | null }>(`/written/exams${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
+  writtenClassExamResults: (classId: number, beforeId?: number, signal?: AbortSignal) =>
+    get<WrittenClassExamResults>(`/written/exams/classes/${classId}/results${beforeId ? `?before_id=${beforeId}` : ""}`, { signal }),
+  writtenClassExamQuestions: (classId: number, examId: number, signal?: AbortSignal) =>
+    get<WrittenClassExamQuestions>(`/written/exams/classes/${classId}/results/${examId}/questions`, { signal }),
+  writtenExamPendingStudents: (classId: number, examId: number, versionIds: string[], signal?: AbortSignal) => {
+    const query = new URLSearchParams(versionIds.map((version) => ["version_ids", version]));
+    return get<{ student_ids: number[] }>(`/written/exams/classes/${classId}/results/${examId}/pending-students?${query}`, { signal });
+  },
+  startWrittenExam: (batch: string, paper: string, signal?: AbortSignal) =>
+    post<WrittenExam>(`/written/exams/start/${encodeURIComponent(batch)}/${encodeURIComponent(paper)}`, undefined, { signal }),
+  writtenExam: (id: number, signal?: AbortSignal) => get<WrittenExam>(`/written/exams/${id}`, { signal }),
+  writtenExamQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
+    get<WrittenExamQuestion>(`/written/exams/${id}/questions/${questionId}`, { signal }),
+  writtenExamReview: (id: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamReviewItem[] }>(`/written/exams/${id}/review`, { signal }),
+  writtenExamStudy: (id: number, signal?: AbortSignal) =>
+    get<{ items: WrittenExamStudyTopic[] }>(`/written/exams/${id}/study`, { signal }),
+  writtenExamRetryQuestion: (id: number, questionId: number, signal?: AbortSignal) =>
+    get<WrittenPublishedQuestion>(`/written/exams/${id}/review/${questionId}`, { signal }),
+  saveWrittenExamAnswer: async (id: number, questionId: number, revision: number, response: WrittenResponse | null, signal?: AbortSignal) =>
+    readJson<WrittenExamCard>(await request(`/written/exams/${id}/questions/${questionId}`, { expected_revision: revision, response }, "PUT", { signal })),
+  submitWrittenExam: (id: number, signal?: AbortSignal) => post<WrittenExam>(`/written/exams/${id}/submit`, undefined, { signal }),
+  writtenAssignments: (signal?: AbortSignal) => get<WrittenAssignmentSummary[]>("/written/assignments", { signal }),
+  writtenAssignmentClasses: (signal?: AbortSignal) => get<{ id: number; name: string }[]>("/written/assignments/classes", { signal }),
+  writtenAssignmentStudents: (classId: number, signal?: AbortSignal) =>
+    get<{ id: number; name: string; username: string }[]>(`/written/assignments/classes/${classId}/students`, { signal }),
+  writtenAssignment: (id: number, signal?: AbortSignal) =>
+    get<WrittenAssignmentDetail>(`/written/assignments/${id}`, { signal }),
+  writtenShortReview: (assignmentId: number, attemptId: number, signal?: AbortSignal) =>
+    get<WrittenShortReview>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}`, { signal }),
+  suggestWrittenShortReview: (assignmentId: number, attemptId: number, signal?: AbortSignal) =>
+    post<WrittenShortSuggestion>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}/suggestion`, {}, { signal }),
+  confirmWrittenShortReview: (assignmentId: number, attemptId: number, body: { points: number[]; feedback: string }, signal?: AbortSignal) =>
+    post<WrittenTeacherGrade>(`/written/assignments/${assignmentId}/short-reviews/${attemptId}`, body, { signal }),
+  publishWrittenAssignment: (body: WrittenAssignmentInput, signal?: AbortSignal) =>
+    post<WrittenAssignmentSummary & { replayed: boolean }>("/written/assignments", body, { signal }),
+  writtenAssignmentQuestion: (assignmentId: number, id: number, signal?: AbortSignal) =>
+    get<WrittenPublishedQuestion>(`/written/assignments/${assignmentId}/questions/${id}`, { signal }),
+  writtenAttempt: (id: number, signal?: AbortSignal) => get<WrittenAttempt>(`/written/attempts/${id}`, { signal }),
+  writtenProgress: (signal?: AbortSignal) =>
+    get<{ items: WrittenProgressRow[]; attempt_limit: number }>("/written/progress", { signal }),
+  writtenHelpHistory: (target: WrittenHelpTarget, before?: number, signal?: AbortSignal) =>
+    get<WrittenHelpHistory>(`${writtenHelpPath(target)}${before ? `?before_id=${before}` : ""}`, { signal }),
+  askWrittenHelp: (target: WrittenHelpTarget, body: { request_id: string; message: string; after_id: number | null }, signal?: AbortSignal) =>
+    post<WrittenHelpTurn>(writtenHelpPath(target), body, { signal }),
+  writtenAttempts: (view: WrittenAttemptView, beforeId?: number, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ view });
+    if (beforeId !== undefined) params.set("before_id", String(beforeId));
+    return get<{ items: WrittenAttemptSummary[]; has_more: boolean; next_before_id: number | null }>(`/written/attempts?${params}`, { signal });
+  },
+  submitWrittenAttempt: (body: { question_id: number; version_id: string; request_id: string; response: WrittenResponse; assignment_id?: number; exam_id?: number }, signal?: AbortSignal) =>
+    post<WrittenAttempt>("/written/attempts", body, { signal }),
+  writtenPublishedAsset: (url: string, signal?: AbortSignal) => {
+    const path = url.slice(BASE.length);
+    if (!url.startsWith(BASE) || !/^\/written\/(?:questions\/[1-9]\d*\/assets\/\d+\?version_id=[a-f0-9-]{36}|attempts\/[1-9]\d*\/assets\/\d+|(?:assignments|exams)\/[1-9]\d*\/questions\/[1-9]\d*\/assets\/\d+|assignments\/[1-9]\d*\/short-reviews\/[1-9]\d*\/assets\/\d+)$/i.test(path)) {
+      throw new Error("题图链接无效，请重新打开题目。");
+    }
+    return getBlob(path, signal);
+  },
+  writtenBatches: (signal?: AbortSignal) => get<{ items: WrittenBatch[]; has_more: boolean }>("/admin/written-bank/batches", { signal }),
+  writtenPreview: async (file: Blob, signal?: AbortSignal) => readJson<WrittenBatch & { replayed: boolean }>(await request("/admin/written-bank/imports/preview", undefined, "POST", { rawBody: file, headers: { "Content-Type": "application/zip" }, signal })),
+  writtenStage: (id: string) => post<WrittenBatch & { replayed: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/stage`),
+  writtenQuestions: (id: string, offset = 0, q = "", paper = "", flagged = false, signal?: AbortSignal, state = "all", source?: { pointId?: string; answerStatus?: string }) => {
+    const point = source?.pointId ? `&point_id=${encodeURIComponent(source.pointId)}` : "";
+    const answer = source?.answerStatus ? `&answer_status=${encodeURIComponent(source.answerStatus)}` : "";
+    return get<WrittenPage>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions?offset=${offset}&q=${encodeURIComponent(q)}&paper_id=${encodeURIComponent(paper)}&flagged=${flagged}&state=${encodeURIComponent(state)}${point}${answer}`, { signal });
+  },
+  writtenCoverage: (id: string, signal?: AbortSignal) =>
+    get<{ items: WrittenCoverageRow[]; unmapped_pending: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/coverage`, { signal }),
+  writtenQuestion: (id: string, question: string, signal?: AbortSignal) => get<WrittenDetail>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}`, { signal }),
+  writtenReview: (id: string, question: string, body: WrittenReviewInput) => post<WrittenDetail & { replayed: boolean; applied_revision: number }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/review`, body),
+  writtenReviewHistory: (id: string, question: string, before?: number, signal?: AbortSignal) => get<{ items: { revision: number; actor_id: number; action: string; note: string; created_at: string }[]; has_more: boolean }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history${before == null ? "" : `?before=${before}`}`, { signal }),
+  writtenHistoricalReview: (id: string, question: string, revision: number, signal?: AbortSignal) => get<{ revision: number; action: string; actor_id: number; note: string; snapshot: { draft: WrittenDraft } }>(`/admin/written-bank/batches/${encodeURIComponent(id)}/questions/${encodeURIComponent(question)}/history/${revision}`, { signal }),
+  writtenPublicationState: (id: number, expected_version: number, is_active: boolean) => post<WrittenPublication>(`/admin/written-bank/published/${id}/state`, { expected_version, is_active }),
+  writtenAsset: (id: string, path: string, signal?: AbortSignal) =>
+    getBlob(`/admin/written-bank/batches/${encodeURIComponent(id)}/asset?path=${encodeURIComponent(path)}`, signal),
+  runtimeJudging: (state = "all", q = "", offset = 0) => get<RuntimeJudging>(`/admin/runtime/judging?state=${state}&q=${encodeURIComponent(q)}&offset=${offset}`),
+  runtimeJobAction: (id: number, action: "retry" | "cancel", job: RuntimeJob) => post(`/admin/runtime/judging/${id}/${action}`, { status: job.status, attempts: job.attempts, manual_retries: job.manual_retries }),
+  runtimeJudgeCheck: (language: string) => post<{ ok: boolean; language: string; backend: string; checked_at: string }>(`/admin/runtime/judge-check?language=${language}`),
+  runtimeAI: () => get<RuntimeAI>("/admin/runtime/ai"),
+  runtimeAICheck: (body: { expected_version: number; base_url: string; model: string; api_key: string }) => post<{ check_id: string; ok: boolean; error: string; latency_ms: number | null; expires_at: string }>("/admin/runtime/ai/check", body),
+  runtimeAIActivate: (check_id: string) => post<RuntimeAI>("/admin/runtime/ai/activate", { check_id }),
+  runtimeAIDisable: (expected_version: number) => post<RuntimeAI>("/admin/runtime/ai/disable", { expected_version }),
+  runtimeBackups: () => get<RuntimeBackups>("/admin/runtime/backups"),
+  runtimeBackup: (action: "create" | "verify", request_id: string, artifactId?: string) => post<MaintenanceTask>(`/admin/runtime/backups/${action}${artifactId ? `?artifact_id=${artifactId}` : ""}`, { request_id }),
+  runtimeMaintenanceRetry: (id: string) => post<MaintenanceTask>(`/admin/runtime/maintenance/${id}/retry`),
+  runtimeDownload: async (id: string) => {
+    const { response, snapshot, signal } = await request(`/admin/runtime/backups/${id}/download`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = `oi-backup-${id}.oibak`; document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  catalogProblems: (q = "", offset = 0, state = "all") => get<{ items: CatalogProblem[]; has_more: boolean }>(`/admin/problems?q=${encodeURIComponent(q)}&offset=${offset}&state=${state}`),
+  catalogLocalPackages: () => get<{ pid: string; title: string; valid: boolean; cases: number; package_level: string }[]>("/admin/problems/local-packages"),
+  catalogPreview: (problems: unknown[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/import/preview", { problems, rights_confirmed }),
+  catalogLocalPreview: (pids: string[], rights_confirmed: boolean) => post<CatalogPreview>("/admin/problems/local-packages/preview", { pids, rights_confirmed }),
+  catalogConfirm: (preview_id: string) => post<{ items: { id: number; pid: string; revision: number; changed: boolean; is_active: boolean }[]; replayed: boolean }>("/admin/problems/import/confirm", { preview_id }),
+  catalogState: (id: number, expected_version: number, is_active: boolean) => post<CatalogProblem>(`/admin/problems/${id}/state`, { expected_version, is_active }),
+  catalogHistory: (id: number) => get<{ items: CatalogVersion[]; truncated: boolean }>(`/admin/problems/${id}/versions`),
+  catalogVersion: (id: number, versionId: number) => get<{ problem: Record<string, unknown>; revision: number; snapshot_available: boolean }>(`/admin/problems/${id}/versions/${versionId}`),
+  adminOverview: () => get<AdminOverview>("/admin/overview"),
+  adminUsers: (q = "", offset = 0, groupId?: number) => get<{ items: AdminAccount[]; has_more: boolean }>(`/admin/users?q=${encodeURIComponent(q)}&offset=${offset}${groupId == null ? "" : `&group_id=${groupId}`}`),
+  adminTeachers: () => get<{ id: number; name: string; enabled: boolean }[]>("/admin/teachers"),
+  adminClasses: () => get<AdminClass[]>("/admin/classes"),
+  adminAudit: (before?: number) => get<{ items: AdminAudit[]; has_more: boolean }>("/admin/audit" + (before ? `?before_id=${before}` : "")),
+  createAccount: (body: AccountInput) => post<AdminAccount>("/admin/users", body),
+  editAccount: async (id: number, body: { expected_version: number; display_name: string; role: AuthUser["role"]; enabled: boolean }) => readJson<AdminAccount>(await request(`/admin/users/${id}`, body, "PATCH")),
+  resetPassword: (id: number, body: { expected_version: number; password: string }) => post<AdminAccount>(`/admin/users/${id}/password`, body),
+  transferPreview: (id: number, body: { expected_version: number; class_id: number | null }) => post<TransferImpact>(`/admin/users/${id}/transfer/preview`, body),
+  transferStudent: (id: number, body: { expected_version: number; class_id: number | null }) => post<AdminAccount>(`/admin/users/${id}/transfer`, body),
+  createClass: (name: string, teacher_ids: number[] = [], student_accounts: AccountInput[] = []) => post<{ id: number }>("/admin/classes", { name, teacher_ids, student_accounts }),
+  editClass: async (id: number, body: { name: string; expected_version: number; archived: boolean; teacher_ids: number[]; transfer_to: number | null }) => readJson<{ transferred: number }>(await request(`/admin/classes/${id}`, body, "PATCH")),
+  importPreview: (rows: AccountInput[]) => post<{ rows: { row: number; username: string; display_name: string; role: string; class_id: number | null }[]; errors: { row: number; message: string }[] }>("/admin/users/import/preview", { rows }),
+  importAccounts: (rows: AccountInput[]) => post<AdminAccount[]>("/admin/users/import", { rows }),
+  changePassword: (current_password: string, new_password: string) => post<{ access_token: string; user: AuthUser }>("/auth/password", { current_password, new_password }),
+  trainings: () => get<Training[]>("/trainings"),
+  training: (id: number) => get<TrainingDetail>("/trainings/" + id),
+  trainingRoster: () => get<{ id: number; name: string; class_name: string }[]>("/trainings/roster"),
+  saveTraining: (body: TrainingInput, id?: number) => post<TrainingDetail>(id ? `/trainings/${id}/draft` : "/trainings", body),
+  publishTraining: (id: number) => post<TrainingDetail>(`/trainings/${id}/publish`),
+  trainingLesson: (id: number) => get<TrainingLesson>(`/trainings/${id}/lesson`),
+  generateTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/generate`, { expected_revision: revision }),
+  saveTrainingLesson: (id: number, revision: number, content: string, digest: string) =>
+    post<TrainingLesson>(`/trainings/${id}/lesson/draft`, { expected_revision: revision, content, basis_digest: digest }),
+  publishTrainingLesson: (id: number, revision: number) => post<TrainingLesson>(`/trainings/${id}/lesson/publish`, { expected_revision: revision }),
+  studentProfile: (id: number) => get<StudentProfile>(`/students/${id}/profile`),
+  trainingFeedback: (trainingId: number, studentId: number) => get<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`),
+  sendTrainingFeedback: (trainingId: number, studentId: number, content: string, requestId: string, submissionId?: number | null) =>
+    post<FeedbackHistory>(`/trainings/${trainingId}/students/${studentId}/feedback`, { content, request_id: requestId, submission_id: submissionId ?? null }),
+  markFeedbackRead: (trainingId: number, feedbackId: number) => post<FeedbackHistory>(`/trainings/${trainingId}/feedback/${feedbackId}/read`),
+  downloadStudentProfile: async (id: number) => {
+    const { response, snapshot, signal } = await request(`/students/${id}/profile/report`);
+    const blob = await response.blob();
+    if (signal?.aborted) throw new DOMException("页面已切换", "AbortError");
+    if (snapshot) assertSession(snapshot);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; link.download = `学生训练档案-${id}.md`;
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
   demoAccounts: () => get<{ username: string; password: string; role: string; name: string }[]>("/auth/demo-accounts", { anonymous: true }),
   login: (username: string, password: string) =>
     post<{ access_token: string; user: AuthUser }>("/auth/login", { username, password }, { anonymous: true }),
+  registerStudent: (body: { username: string; display_name: string; password: string; invite_code: string }) =>
+    post<{ access_token: string; user: AuthUser }>("/auth/register", body, { anonymous: true }),
+  studentInvites: (classId: number, signal?: AbortSignal) =>
+    get<{ archived: boolean; items: StudentInvite[] }>(`/admin/classes/${classId}/student-invites`, { signal }),
+  issueStudentInvite: (classId: number, signal?: AbortSignal) =>
+    post<StudentInvite & { code: string }>(`/admin/classes/${classId}/student-invites`, undefined, { signal }),
+  revokeStudentInvite: (classId: number, inviteId: number, signal?: AbortSignal) =>
+    post<StudentInvite>(`/admin/classes/${classId}/student-invites/${inviteId}/revoke`, undefined, { signal }),
   me: () => get<AuthUser>("/auth/me"),
   problems: () => get<Problem[]>("/problems?limit=200"),
-  getProblem: (pid: string) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid)),
-  submit: (pid: string, code: string, parentId?: number | null) =>
+  getProblem: (pid: string, trainingId?: number, submissionId?: number) => get<ProblemDetail>("/problems/" + encodeURIComponent(pid) + (trainingId ? `?training_id=${trainingId}` : submissionId ? `?submission_id=${submissionId}` : "")),
+  submit: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null) =>
     post<SubmissionResult>("/submissions", {
-      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
     }),
-  submitAsync: (pid: string, code: string, parentId?: number | null, signal?: AbortSignal) =>
+  submitAsync: (pid: string, code: string, language: SubmissionLanguage, parentId?: number | null, signal?: AbortSignal, trainingId?: number, problemVersionId?: number | null) =>
     post<SubmissionResult>("/submissions", {
-      problem_pid: pid, code, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      problem_pid: pid, code, language, ...(parentId == null ? {} : { parent_submission_id: parentId }),
+      ...(trainingId === undefined ? {} : { training_id: trainingId }),
+      ...(problemVersionId == null ? {} : { problem_version_id: problemVersionId }),
     }, { signal, headers: { Prefer: "respond-async" } }),
   retrySubmission: (id: number, signal?: AbortSignal) =>
     post<SubmissionResult>("/submissions/" + id + "/retry", undefined, { signal }),
@@ -403,12 +1019,12 @@ export const api = {
   createSession: (submissionId: number) =>
     post<SessionReply>("/sessions", { submission_id: submissionId }),
   getSession: (id: number) => get<SessionHistory>("/sessions/" + id),
-  sendMessage: (sessionId: number, content: string) =>
-    post<SessionReply>("/sessions/" + sessionId + "/messages", { content }),
+  sendMessage: (sessionId: number, content: string, requestId?: string) =>
+    post<SessionReply>("/sessions/" + sessionId + "/messages", { content, ...(requestId ? { request_id: requestId } : {}) }),
   verifySession: (sessionId: number, submissionId: number) =>
     post<SessionReply>("/sessions/" + sessionId + "/verify", { submission_id: submissionId }),
-  mySubmissions: () => get<MySubmission[]>("/me/submissions"),
-  coachQueue: () => get<CoachItem[]>("/coach/queue"),
+  mySubmissions: (beforeId?: number) => get<MySubmission[]>("/me/submissions" + (beforeId ? `?before_id=${beforeId}` : "")),
+  coachQueue: (beforeId?: number) => get<CoachItem[]>("/coach/queue" + (beforeId ? `?before_id=${beforeId}` : "")),
   coachOverview: () => get<Overview>("/coach/overview"),
   coachJudging: (signal?: AbortSignal) => get<JudgingQueue>("/coach/judging", { signal }),
   downloadCard: async (id: number) => {
@@ -425,3 +1041,74 @@ export const api = {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 };
+
+export interface AdminAccount extends AuthUser {
+  enabled: boolean; token_version: number; must_change_password: boolean;
+}
+export interface AccountInput {
+  username: string; display_name: string; role: AuthUser["role"]; password: string; class_id: number | null;
+}
+export interface StudentInvite {
+  id: number;
+  created_at: string;
+  expires_at: string;
+  state: "active" | "used" | "expired" | "revoked";
+}
+export interface AdminClass {
+  id: number; name: string; archived: boolean; version: number; teacher_ids: number[]; students: number;
+  training_owners: { teacher_id: number; count: number }[];
+}
+export interface AdminAudit {
+  id: number; actor: string; action: string; target: string; before: Record<string, unknown>; after: Record<string, unknown>; created_at: string;
+}
+export interface TransferImpact { student: string; from: string; to: string; affected_trainings: number; notice: string }
+export interface AdminOverview {
+  observed_at: string; database: string; accounts: Record<AuthUser["role"], number>; disabled: number;
+  unassigned_students: number; classes_without_teacher: { id: number; name: string }[]; active_classes: number;
+  llm_enabled: boolean; worker_status: "online" | "unknown"; judging: JudgingQueue;
+}
+
+export interface RuntimeWorkers {
+  observed_at: string; stale_after_seconds: number; api_judge_enabled: boolean; maintenance_enabled: boolean;
+  items: { id: string; kind: string; state: string; current_job: string | null; seen_at: string; age_seconds: number; online: boolean }[];
+}
+export interface RuntimeJob {
+  id: number; status: string; attempts: number; max_attempts: number; manual_retries: number;
+  retryable: boolean; cancelable: boolean; last_error: string | null; lease_expires_at: string | null;
+}
+export interface RuntimeJudging {
+  items: { job: RuntimeJob; submission_id: number; stage: string; student: string; pid: string; title: string; protected: boolean; problem_version_id: number | null; created_at: string }[];
+  has_more: boolean; summary: JudgingQueue; workers: RuntimeWorkers; backend: string;
+  last_check: { ok: boolean; language: string; backend: string; checked_at: string } | null;
+}
+export interface RuntimeAI {
+  version: number; enabled: boolean; configured: boolean; environment_allowed: boolean; key_configured: boolean;
+  base_url: string; model: string; source: string; checked_at: string | null; observed_at: string;
+  last_check: { ok: boolean; error: string; created_at: string; base_url: string; model: string; latency_ms: number | null } | null;
+  usage: { observed_records: number; external_calls: number; prompt_tokens: number | null; completion_tokens: number | null; unknown_usage: number };
+  events: { id: number; feature: string; model: string; called: boolean; used_model: boolean; error: string; latency_ms: number | null; prompt_tokens: number | null; completion_tokens: number | null; created_at: string }[];
+}
+export interface MaintenanceTask {
+  id: string; kind: string; artifact_id: string; status: string; attempts: number; error: string;
+  result: Record<string, unknown>; created_at: string; finished_at: string | null;
+}
+export interface RuntimeBackups {
+  items: { id: string; sha256: string; size: number; counts: Record<string, number>; revision: string; created_at: string; verified_at: string | null }[];
+  tasks: MaintenanceTask[]; verify_configured: boolean; workers: RuntimeWorkers;
+}
+
+export interface CatalogProblem {
+  id: number; pid: string; title: string; revision: number; catalog_version: number; is_active: boolean;
+  package_level: string; source: string; source_url: string; license_note: string;
+  samples: number; cases: number | null; scope: string | null; notes: string[];
+}
+export interface CatalogVersion {
+  id: number; revision: number; title: string; source: string; digest: string; reviewer: string;
+  created_by: number | null; created_at: string; cases: number | null;
+}
+export interface CatalogPreview {
+  preview_id: string; expires_at: string; notice: string;
+  rows: { pid: string; title: string; existing_revision: number | null; action: "create" | "new_version" | "unchanged";
+    package_level: string; scope: string; cases: number; samples: number; source: string; source_url: string;
+    license_note: string; reviewer: string; digest: string; notice: string }[];
+}

@@ -29,7 +29,7 @@ def downgrade() -> None:
     )
     if has_wide_verdict:
         raise RuntimeError("现有提交包含新版判定，无法无损缩短 verdict；请保留当前迁移版本。")
-    op.drop_index("ix_hint_session_verified_submission_id", table_name="hint_session")
     op.drop_constraint("fk_hint_session_verified_submission", "hint_session", type_="foreignkey")
+    op.drop_index("ix_hint_session_verified_submission_id", table_name="hint_session")
     op.drop_column("hint_session", "verified_submission_id")
     op.alter_column("submission", "verdict", existing_type=sa.String(16), type_=sa.String(8))

@@ -57,7 +57,8 @@ async def test_model_probe_respects_disabled_setting_and_teacher_role(api_contex
         raise AssertionError("禁用模型时不得产生外部调用")
 
     monkeypatch.setattr("app.gateway.llm.LLMClient.ping", forbidden)
-    state = await ctx.client.get("/api/v1/system/llm")
+    assert (await ctx.client.get("/api/v1/system/llm")).status_code == 401
+    state = await ctx.client.get("/api/v1/system/llm", headers=ctx.headers())
     assert state.json()["enabled"] is False
     assert state.json()["available"] is False
     assert (await ctx.client.post("/api/v1/system/llm/ping", headers=ctx.headers())).status_code == 403

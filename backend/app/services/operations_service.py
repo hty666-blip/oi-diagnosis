@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.domain.models import JudgeJob, Problem, Submission, User
+from app.domain.models import ClassTeacher, JudgeJob, Problem, Submission, User
+from app.infra.sql_types import elapsed_seconds
 from app.services.access import submission_scope
 from app.services.job_service import ERROR_MESSAGES
 
@@ -30,7 +31,7 @@ class OperationsService:
             raise HTTPException(status_code=403, detail="只有教师或管理员可以查看判题队列")
         observed_at = await self.session.scalar(select(func.clock_timestamp()))
         status_counts = [
-            func.count(JudgeJob.id).filter(JudgeJob.status == status).label(status)
+            func.count(case((JudgeJob.status == status, JudgeJob.id))).label(status)
             for status in JOB_STATUSES
         ]
         running = JudgeJob.status == "running"
@@ -39,18 +40,15 @@ class OperationsService:
         aggregation = (await self.session.execute(
             select(
                 *status_counts,
-                func.max(func.greatest(
-                    func.extract("epoch", observed_at - JudgeJob.available_at), 0
-                )).filter(JudgeJob.status == "queued").label("oldest_wait"),
-                func.count(JudgeJob.id).filter(
-                    running, has_lease, JudgeJob.lease_expires_at > observed_at
-                ).label("active_leases"),
-                func.count(JudgeJob.id).filter(
-                    running, has_lease, JudgeJob.lease_expires_at <= observed_at
-                ).label("expired_leases"),
-                func.count(JudgeJob.id).filter(
-                    running, or_(~has_owner, JudgeJob.lease_expires_at.is_(None))
-                ).label("missing_leases"),
+                func.max(case((JudgeJob.status == "queued", func.greatest(
+                    elapsed_seconds(observed_at, JudgeJob.available_at), 0
+                )))).label("oldest_wait"),
+                func.count(case((and_(running, has_lease, JudgeJob.lease_expires_at > observed_at),
+                                 JudgeJob.id))).label("active_leases"),
+                func.count(case((and_(running, has_lease, JudgeJob.lease_expires_at <= observed_at),
+                                 JudgeJob.id))).label("expired_leases"),
+                func.count(case((and_(running, or_(~has_owner, JudgeJob.lease_expires_at.is_(None))),
+                                 JudgeJob.id))).label("missing_leases"),
             )
             .select_from(JudgeJob)
             .join(Submission, Submission.id == JudgeJob.submission_id)
@@ -65,11 +63,12 @@ class OperationsService:
             .join(Problem, Problem.id == Submission.problem_id)
             .outerjoin(student_user, student_user.id == Submission.student_id)
             .where(JudgeJob.status == "failed", submission_scope(self.user))
-            .order_by(JudgeJob.finished_at.desc().nulls_last(), JudgeJob.id.desc())
+            .order_by(JudgeJob.finished_at.is_(None), JudgeJob.finished_at.desc(), JudgeJob.id.desc())
             .limit(5)
         )).all()
+        managed = await self.session.scalar(select(ClassTeacher.class_id).where(ClassTeacher.teacher_id == self.user.id).limit(1)) if self.user.role == "teacher" else None
         kind = "all" if self.user.role == "admin" else (
-            "class_and_own" if (self.user.class_name or "").strip() else "own"
+            "class_and_own" if managed or (self.user.class_name or "").strip() else "own"
         )
         return {
             "observed_at": observed_at.isoformat(),

@@ -46,6 +46,16 @@ def test_compiles_but_wrong_goes_full_pipeline():
 def test_ac_routes_none():
     r = triage(GOOD, verdict="AC")
     assert r.route == "none"
+    assert "样例" not in r.summary and "题包" not in r.summary
+    assert "测试范围" in r.summary
+
+
+def test_finished_execution_summary_does_not_claim_pending_work_or_teacher_action():
+    for verdict in ("WA", "TLE", "MLE", "RE", "OLE"):
+        result = triage("int main(){return 0;}", verdict=verdict)
+        assert result.route == "full_pipeline"
+        assert "正在" not in result.summary and "已记录给老师" not in result.summary
+        assert "执行证据" in result.summary
 
 
 def test_unmatched_ce_goes_human():

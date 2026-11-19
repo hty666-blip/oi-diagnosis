@@ -2,7 +2,7 @@ import time
 
 import jwt
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.api.deps import get_current_user
@@ -10,6 +10,8 @@ from app.api.v1.auth import LoginIn, demo_accounts
 from app.core.config import settings
 from app.core.security import (
     MAX_USER_ID,
+    TOKEN_AUDIENCE,
+    TOKEN_ISSUER,
     create_access_token,
     decode_token,
     hash_password,
@@ -27,7 +29,8 @@ def signing_settings(monkeypatch):
 
 def signed_claims(**updates):
     now = int(time.time())
-    payload = {"sub": "1", "role": "student", "username": "中文账号", "iat": now, "exp": now + 600}
+    payload = {"sub": "1", "role": "student", "username": "中文账号", "iat": now, "exp": now + 600,
+               "iss": TOKEN_ISSUER, "aud": TOKEN_AUDIENCE, "jti": "auth-test-token"}
     payload.update(updates)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
 
@@ -40,9 +43,9 @@ def test_current_password_hashes_and_chinese_usernames_remain_compatible(signing
     assert decode_token(token)["username"] == "中文账号"
 
 
-@pytest.mark.parametrize("missing", ["sub", "role", "username", "iat", "exp"])
+@pytest.mark.parametrize("missing", ["sub", "role", "username", "iat", "exp", "iss", "aud", "jti"])
 def test_signed_token_requires_existing_session_claims(signing_settings, missing):
-    payload = jwt.decode(signed_claims(), settings.jwt_secret, algorithms=[settings.jwt_alg])
+    payload = jwt.decode(signed_claims(), settings.jwt_secret, algorithms=[settings.jwt_alg], audience=TOKEN_AUDIENCE)
     del payload[missing]
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
     assert decode_token(token) is None
@@ -59,6 +62,13 @@ def test_malformed_or_out_of_range_subject_is_rejected_before_database(signing_s
     {"exp": int(time.time()) - 1}, {"iat": int(time.time()) + 3600},
 ])
 def test_bad_claim_types_and_lifetimes_are_rejected(signing_settings, updates):
+    assert decode_token(signed_claims(**updates)) is None
+
+
+@pytest.mark.parametrize("updates", [
+    {"iss": "another-service"}, {"aud": "another-client"}, {"jti": ""}, {"jti": 1},
+])
+def test_tokens_are_scoped_to_this_issuer_client_and_session(signing_settings, updates):
     assert decode_token(signed_claims(**updates)) is None
 
 
@@ -135,7 +145,7 @@ async def test_invalid_subject_never_reaches_database(signing_settings):
             raise AssertionError("非法 subject 不应送入数据库")
 
     with pytest.raises(HTTPException) as error:
-        await get_current_user(NeverDatabase(), "Bearer " + signed_claims(sub=str(MAX_USER_ID + 1)))
+        await get_current_user(NeverDatabase(), Request({"type": "http"}), "Bearer " + signed_claims(sub=str(MAX_USER_ID + 1)))
     assert error.value.status_code == 401
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import USER_ROLES, decode_token
@@ -16,6 +16,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 async def get_current_user(
     session: SessionDep,
+    request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> User:
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -32,6 +33,11 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="用户不存在")
     if user.role not in USER_ROLES:
         raise HTTPException(status_code=401, detail="无效的账号状态")
+    if not user.enabled or type(payload.get("ver", 0)) is not int or payload.get("ver", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail="账号已停用或登录已撤销，请重新登录")
+    if user.must_change_password and request.url.path not in {"/api/v1/auth/me", "/api/v1/auth/password"}:
+        raise HTTPException(status_code=403, detail="请先修改临时密码，再使用系统")
+    request.state.token_version = user.token_version
     return user
 
 
@@ -49,3 +55,4 @@ def require_role(*roles: str):
 
 TeacherUser = Annotated[User, Depends(require_role("teacher", "admin"))]
 StudentUser = Annotated[User, Depends(require_role("student", "teacher", "admin"))]
+AdminUser = Annotated[User, Depends(require_role("admin"))]

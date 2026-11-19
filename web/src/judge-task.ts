@@ -18,7 +18,7 @@ export function taskLabel(record: Pick<SubmissionResult, "stage" | "job">): stri
   return record.job?.last_error ? "正在等待自动重试" : "已接收，等待判题";
 }
 
-export function pendingKey(userId: number, problemPid: string): string {
+export function pendingKey(userId: number | string, problemPid: string): string {
   return "oi-pending-submission:" + userId + ":" + problemPid;
 }
 

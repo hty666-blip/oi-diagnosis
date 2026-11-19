@@ -16,22 +16,34 @@ import hashlib
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.capabilities.ce_classify import classify_runtime
 from app.capabilities.docker_runner import DockerRunner
+from app.capabilities.languages import language_spec
 from app.capabilities.sandbox import CommandResult, CompileResult, SandboxClient, SandboxError
 from app.capabilities.test_suite import JudgeSuite, load_suite
 from app.capabilities.triage import TriageFinding, TriageResult, triage
 from app.core.config import settings
 from app.domain.judging import outputs_equal
-from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission
+from app.domain.models import (
+    Diagnosis,
+    Evidence,
+    JudgeJob,
+    Problem,
+    ProblemVersion,
+    Submission,
+    TrainingProblem,
+)
+from app.infra.db_lock import acquire_submission_lock
+from app.services.admin_service import management_lock
 from app.services.evidence_text import has_escaped_input, prepare_evidence_payload
 from app.services.job_service import JobLease, require_lease
+from app.services.problem_versions import capture_current, resolve_problem, snapshot
 
 # 改动判题/诊断逻辑时必须递增：它是缓存键的一部分（同码同题会直接复用结果）
-PIPELINE_VER = "v6"
+PIPELINE_VER = "v9"
 logger = logging.getLogger(__name__)
 
 
@@ -45,8 +57,9 @@ def normalize_code(code: str) -> str:
     return code.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def code_digest(code: str) -> str:
-    return hashlib.sha256(normalize_code(code).encode("utf-8")).hexdigest()
+def code_digest(code: str, language: str = "cpp17") -> str:
+    normalized = normalize_code(code)
+    return hashlib.sha256(f"{language}\0{normalized}".encode()).hexdigest()
 
 
 @dataclass
@@ -111,38 +124,64 @@ class SubmissionService:
         self.lease = lease
 
     async def create(self, problem_pid: str, code: str, student_id: int = 0,
-                     parent_submission_id: int | None = None, *, background: bool = False) -> Submission:
+                     parent_submission_id: int | None = None, *, language: str = "cpp17",
+                     background: bool = False, training_id: int | None = None,
+                     expected_problem_version_id: int | None = None) -> Submission:
+        language_spec(language)
         self.was_created = False
+        await management_lock(self.session)
         problem = (
             await self.session.execute(select(Problem).where(Problem.pid == problem_pid))
         ).scalar_one_or_none()
         if problem is None:
             raise ValueError(f"题目不存在: {problem_pid}")
+        version = None
+        if training_id is not None:
+            from app.services.training_service import validate_training_submission
+            await validate_training_submission(self.session, student_id, training_id, problem.id)
+            item = await self.session.get(TrainingProblem, (training_id, problem.id))
+            version = await self.session.get(ProblemVersion, item.problem_version_id) if item.problem_version_id else None
         if parent_submission_id is not None:
             parent = await self.session.get(Submission, parent_submission_id)
             if parent is None or parent.student_id != student_id:
                 raise ValueError("上次提交不存在或不属于当前账号")
             if parent.problem_id != problem.id:
                 raise ValueError("上次提交必须属于同一道题")
+            if parent.training_id != training_id:
+                raise ValueError("上次提交必须属于同一次训练或自由练习")
+            if training_id is None and parent.problem_version_id:
+                version = await self.session.get(ProblemVersion, parent.problem_version_id)
+
+        if version is None:
+            if not problem.is_active and training_id is None and parent_submission_id is None:
+                from fastapi import HTTPException
+                raise HTTPException(409, "题目已下架，请选择其他题目；原训练和历史修改仍可继续")
+            version = await capture_current(self.session, problem)
+        if expected_problem_version_id is not None and expected_problem_version_id != version.id:
+            from fastapi import HTTPException
+            raise HTTPException(409, "题目版本已变化，请重新加载题面后提交；当前代码已保留")
+        problem = snapshot(problem, version, with_suite=True)
 
         normalized = normalize_code(code)
         if not normalized.strip():
             raise ValueError("代码不能为空")
-        digest = code_digest(normalized)
+        digest = code_digest(normalized, language)
         suite = load_suite(problem)
         # 题面、数据或资源限制变化后旧结果不可复用；保持 pipeline_ver 在原字段长度内。
         pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
         # 短事务内串行化同一请求；执行器运行时不占用数据库锁。
         lock_key = hashlib.sha256(
-            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}".encode()
+            f"{student_id}:{problem.id}:{digest}:{pipeline_ver}:{parent_submission_id}:{training_id}".encode()
         ).digest()[:8]
-        await self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"),
-                                   {"key": int.from_bytes(lock_key, "big", signed=True)})
+        await acquire_submission_lock(self.session, int.from_bytes(lock_key, "big", signed=True))
 
         cached = select(Submission).where(
             Submission.problem_id == problem.id,
+            Submission.problem_version_id == version.id,
             Submission.code_hash == digest,
+            Submission.lang == language,
             Submission.student_id == student_id,
+            Submission.training_id == training_id,
             Submission.pipeline_ver == pipeline_ver,
             Submission.parent_submission_id == parent_submission_id,
             Submission.stage.in_(("RECEIVED", "QUEUED", "COMPILING", "RUNNING", "READY")),
@@ -161,12 +200,15 @@ class SubmissionService:
 
         sub = Submission(
             problem_id=problem.id,
+            problem_version_id=version.id,
             student_id=student_id,
             code=normalized,
             code_hash=digest,
+            lang=language,
             pipeline_ver=pipeline_ver,
             stage="QUEUED" if background else "RECEIVED",
             parent_submission_id=parent_submission_id,
+            training_id=training_id,
         )
         self.session.add(sub)
         if background:
@@ -239,16 +281,18 @@ class SubmissionService:
                     logger.warning("判题连接关闭失败", exc_info=False)
 
     async def _run(self, submission: Submission) -> VerdictResult:
-        problem = (
-            await self.session.execute(select(Problem).where(Problem.id == submission.problem_id))
-        ).scalar_one()
+        configure_language = getattr(self.sandbox, "set_language", None)
+        if configure_language:
+            configure_language(submission.lang)
+        problem = await resolve_problem(self.session, submission.problem_id, submission.problem_version_id, with_suite=True)
         suite = load_suite(problem)
         submission.pipeline_ver = f"{PIPELINE_VER}:{suite.digest[:24]}"
 
         # 1) Triage 前置：先做确定性的字符扫描
-        pre = triage(submission.code)
+        pre = triage(submission.code, language=submission.lang)
         await self._add_evidence(submission.id, "static_alert", {
             "kind": "surface_lint",
+            "language": submission.lang,
             "stage": "pre_compile",
             "route": pre.route,
             "count": len(pre.findings),
@@ -264,11 +308,15 @@ class SubmissionService:
 
         await self._add_evidence(submission.id, "compile_log", {
             "ok": comp.ok,
+            "language": submission.lang,
             "stderr": comp.stderr[:20000],
         })
 
         if not comp.ok:
-            tr = triage(submission.code, compile_stderr=comp.stderr, verdict="CE")
+            tr = triage(
+                submission.code, compile_stderr=comp.stderr,
+                verdict="CE", language=submission.lang,
+            )
             result = decide_verdict(comp, [], scope=suite.scope)
             await self._finalize(submission, result, tr, suite)
             return result
@@ -297,6 +345,7 @@ class SubmissionService:
                            and outputs_equal(res.stdout, sample["output"]),
                 "exit_code": res.exit_code,
                 "time_ms": res.time_ms,
+                "time_kind": res.time_kind,
                 "memory_kb": res.memory_kb,
                 "stdout": res.stdout[:4000],
                 "stdout_truncated": len(res.stdout) > 4000,
@@ -309,7 +358,7 @@ class SubmissionService:
         result.suite_digest = suite.digest
 
         # 4) 运行期错因（RE/TLE/MLE 才有意义）
-        tr = triage(submission.code, verdict=result.verdict)
+        tr = triage(submission.code, verdict=result.verdict, language=submission.lang)
         if result.verdict in ("RE", "TLE", "MLE") and runs:
             bad = next((r for _, r in runs if r.status != "Accepted"), runs[-1][1])
             for f in classify_runtime(bad.stderr, result.verdict).findings:
@@ -333,6 +382,12 @@ class SubmissionService:
         submission.tests_passed = {"passed": result.passed, "total": result.total,
                                    "scope": suite.scope, "suite_digest": suite.digest}
         submission.stage = "READY"
+        traces = (await self.session.execute(select(Evidence).where(
+            Evidence.submission_id == submission.id, Evidence.type == "run_trace"))).scalars().all()
+        times = [(e.payload or {}).get("time_ms") for e in traces]
+        memories = [(e.payload or {}).get("memory_kb") for e in traces]
+        submission.time_ms = max((v for v in times if type(v) is int and v > 0), default=None)
+        submission.memory_kb = max((v for v in memories if type(v) is int and v > 0), default=None)
 
         mechanism = [
             {"code": f.code, "conf": f.confidence, "line": f.line}
@@ -364,6 +419,7 @@ class SubmissionService:
             "route": tr.route,
             "autofixable": tr.autofixable,
             "pipeline_ver": PIPELINE_VER,
+            "language": submission.lang,
         }
         diag.degraded = tr.notes
         self.session.add(diag)

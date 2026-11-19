@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
 from app.domain.models import Base
+from app.infra.db import configure_database_engine, database_engine_options
 
 config = context.config
 if config.config_file_name is not None:
@@ -40,7 +41,8 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    engine = create_async_engine(DB_URL, poolclass=pool.NullPool)
+    engine = create_async_engine(DB_URL, poolclass=pool.NullPool, **database_engine_options(DB_URL))
+    configure_database_engine(engine)
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await engine.dispose()

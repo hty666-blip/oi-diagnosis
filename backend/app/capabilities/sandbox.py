@@ -15,9 +15,9 @@ from urllib.parse import quote
 
 import httpx
 
+from app.capabilities.languages import language_spec
 from app.core.config import settings
 
-CPP_STD = "c++17"
 EXECUTION_STATUSES = {
     "Accepted", "Memory Limit Exceeded", "Time Limit Exceeded", "Output Limit Exceeded",
     "Non Zero Exit Status", "Nonzero Exit Status", "Signalled", "Dangerous Syscall",
@@ -34,6 +34,7 @@ class CommandResult:
     stderr: str = ""
     error: str | None = None
     file_ids: dict[str, str] = field(default_factory=dict)
+    time_kind: str = "cpu"
 
     @property
     def time_ms(self) -> int:
@@ -57,10 +58,16 @@ class SandboxError(RuntimeError):
 
 
 class SandboxClient:
-    def __init__(self, base_url: str | None = None, token: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, token: str | None = None,
+                 language: str = "cpp17") -> None:
         self.base_url = (base_url or settings.judge_url).rstrip("/")
         self.token = token if token is not None else settings.judge_token
         self._client: httpx.AsyncClient | None = None
+        self.set_language(language)
+
+    def set_language(self, language: str) -> None:
+        self.language = language
+        self.spec = language_spec(language)
 
     async def __aenter__(self) -> SandboxClient:
         await self.start()
@@ -138,19 +145,16 @@ class SandboxClient:
         self,
         code: str,
         *,
-        filename: str = "main.cpp",
+        filename: str | None = None,
         sanitize: bool = False,
         cpu_limit_ns: int = 10_000_000_000,
     ) -> CompileResult:
-        flags = ["-O2", f"-std={CPP_STD}", "-Wall", "-o", "main", filename]
-        if sanitize:
-            # ASan 会让内存占用涨 2~3 倍，调用方要相应放宽 memory_limit
-            flags = ["-O1", "-g", f"-std={CPP_STD}", "-fsanitize=address,undefined",
-                     "-fno-omit-frame-pointer", "-o", "main", filename]
+        filename = filename or self.spec.filename
+        command = self.spec.compile_command(filename, sanitize=sanitize)
 
         payload = {
             "cmd": [{
-                "args": ["/usr/bin/g++", *flags],
+                "args": command,
                 "env": ["PATH=/usr/bin:/bin", "LANG=C.UTF-8"],
                 "files": [
                     {"content": ""},
@@ -163,20 +167,20 @@ class SandboxClient:
                 "procLimit": 64,
                 "copyIn": {filename: {"content": code}},
                 "copyOut": ["stdout", "stderr"],
-                # 编译失败时 main 不存在是正常现象，不应触发 File Error。
-                "copyOutCached": ["main?"],
+                # 编译失败时产物不存在是正常现象，不应触发 File Error。
+                "copyOutCached": [f"{self.spec.artifact}?"],
             }],
         }
         res = await self._run(payload)
         ok = res.exit_code == 0 and res.status == "Accepted"
-        if ok and not res.file_ids.get("main"):
+        if ok and not res.file_ids.get(self.spec.artifact):
             raise SandboxError("judge 编译成功但缺少可执行产物")
         if not ok and res.status not in ("Non Zero Exit Status", "Accepted"):
             raise SandboxError(f"judge 编译验证未完成: {res.status}")
         return CompileResult(
             ok=ok,
             stderr=res.stderr,
-            artifact_id=res.file_ids.get("main"),
+            artifact_id=res.file_ids.get(self.spec.artifact),
             raw=res,
         )
 
@@ -196,7 +200,7 @@ class SandboxClient:
             raise SandboxError("执行限制必须为正数")
         payload = {
             "cmd": [{
-                "args": ["main", *(extra_args or [])],
+                "args": [*self.spec.run_command(memory_limit_mb), *(extra_args or [])],
                 "env": ["PATH=/usr/bin:/bin"],
                 "files": [
                     {"content": stdin},
@@ -206,8 +210,9 @@ class SandboxClient:
                 "cpuLimit": time_limit_ms * 1_000_000,
                 "clockLimit": (time_limit_ms + 2000) * 1_000_000,
                 "memoryLimit": memory_limit_mb * 1024 * 1024,
-                "procLimit": 1,
-                "copyIn": {"main": {"fileId": artifact_id}},
+                # JVM 的运行时线程也计入进程上限，单进程限制会在启动阶段失败。
+                "procLimit": 64 if self.language == "java17" else 1,
+                "copyIn": {self.spec.artifact: {"fileId": artifact_id}},
                 "copyOut": ["stdout", "stderr"],
             }],
         }

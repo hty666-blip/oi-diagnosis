@@ -60,6 +60,31 @@ async def test_missing_binary_after_success_is_executor_failure(runner, monkeypa
     assert list(runner.run_root.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    ("language", "artifact_name", "compiler"),
+    [
+        ("cpp17", "main", "/usr/bin/g++"),
+        ("c11", "main", "/usr/bin/gcc"),
+        ("java17", "main.jar", "/bin/bash"),
+        ("python3", "main.py", "/usr/bin/python3"),
+    ],
+)
+async def test_compile_uses_selected_language(runner, monkeypatch, language, artifact_name, compiler):
+    runner.set_language(language)
+    seen = {}
+
+    async def compile_command(work, cmd, **kwargs):
+        seen["cmd"] = cmd
+        (work / artifact_name).write_bytes(b"artifact")
+        return 0, "", ""
+
+    monkeypatch.setattr(runner, "_docker", compile_command)
+    result = await runner.compile("source")
+    assert result.ok
+    assert seen["cmd"][0] == compiler
+    await runner.cleanup(result.artifact_id)
+
+
 @pytest.mark.parametrize("rc", [125, 126, 127])
 async def test_docker_environment_failure_is_not_student_runtime_error(runner, monkeypatch, rc):
     work = artifact(runner)

@@ -1,4 +1,4 @@
-"""PostgreSQL 判题工作器，可由 API 生命周期或 python -m app.worker 运行。"""
+"""带数据库租约和独立进程心跳的判题工作器。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.domain.models import Submission
 from app.infra.db import SessionLocal, dispose_engine
 from app.services.job_service import JobLease, JobService, LeaseLost
+from app.services.worker_monitor import WorkerMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 class JudgeWorker:
     def __init__(self, session_factory=None) -> None:
         self.session_factory = session_factory or SessionLocal
+        self.monitor = WorkerMonitor(self.session_factory, "judge")
 
     async def _execute_owned(self, lease: JobLease) -> None:
         from app.services.submission_service import SubmissionService
@@ -57,6 +59,7 @@ class JudgeWorker:
             lease = await JobService(session).claim()
         if lease is None:
             return False
+        self.monitor.state, self.monitor.current_job = "busy", str(lease.job_id)
         lost = asyncio.Event()
         execution = asyncio.create_task(self._execute_owned(lease))
         heartbeat = asyncio.create_task(self._heartbeat(lease, execution, lost))
@@ -81,9 +84,29 @@ class JudgeWorker:
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat
+            self.monitor.state, self.monitor.current_job = "idle", None
         return True
 
     async def run_forever(self) -> None:
+        pulse = asyncio.create_task(self._pulse_loop())
+        try:
+            await self._run_loop()
+        finally:
+            pulse.cancel()
+            with suppress(asyncio.CancelledError):
+                await pulse
+            self.monitor.state, self.monitor.current_job = "stopped", None
+            with suppress(Exception):
+                await self.monitor.pulse()
+
+    async def _pulse_loop(self):
+        while True:
+            with suppress(Exception):
+                await self.monitor.pulse()
+            await asyncio.sleep(settings.judge_worker_heartbeat_seconds)
+
+    async def _run_loop(self):
+        self.monitor.state = "idle"
         while True:
             try:
                 processed = await self.run_once()

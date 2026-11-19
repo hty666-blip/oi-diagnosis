@@ -1,24 +1,21 @@
-"""真实 PostgreSQL 回归：二进制输出可展示，原始判定与失败恢复保持可靠。"""
+"""真实 MySQL 回归：二进制输出可展示，原始判定与失败恢复保持可靠。"""
 
 import hashlib
 import json
 import os
 from types import SimpleNamespace
-from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
-from sqlalchemy.schema import CreateSchema, DropSchema
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.capabilities.docker_runner import DockerRunner
 from app.capabilities.sandbox import CommandResult, CompileResult
 from app.capabilities.test_suite import JudgeSuite
 from app.core.config import settings
 from app.core.security import create_access_token
-from app.domain.models import Base, Diagnosis, Evidence, JudgeJob, Problem, Submission, User
+from app.domain.models import Diagnosis, Evidence, JudgeJob, Problem, Submission, User
 from app.infra.db import get_session
 from app.main import app
 from app.services.job_service import JobService, LeaseLost
@@ -31,19 +28,12 @@ PRIVATE_ERROR = "private-output-recovery-detail"
 
 
 @pytest.fixture
-async def output_context(api_context):
+async def output_context(api_context, isolated_database):
     """工作器需要独立连接与真实提交，单测结束删除本测试独占 schema。"""
-    schema = "binary_output_" + uuid4().hex
-    engine = create_async_engine(
-        os.environ["TEST_DATABASE_URL"], poolclass=NullPool,
-        execution_options={"schema_translate_map": {None: schema}},
-    )
+    engine = isolated_database
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     previous = app.dependency_overrides.get(get_session)
     try:
-        async with engine.begin() as connection:
-            await connection.execute(CreateSchema(schema))
-            await connection.run_sync(Base.metadata.create_all)
         async with sessions() as session:
             student = User(username="binary_student", role="student", password_hash="unused")
             problem = Problem(pid="BINARY-TEST", title="输出存储测试", samples=[])
@@ -70,9 +60,7 @@ async def output_context(api_context):
             app.dependency_overrides.pop(get_session, None)
         else:
             app.dependency_overrides[get_session] = previous
-        async with engine.begin() as connection:
-            await connection.execute(DropSchema(schema, cascade=True, if_exists=True))
-        await engine.dispose()
+
 
 
 class OutputRunner:
@@ -188,7 +176,7 @@ async def test_normal_unicode_and_literal_escape_text_remain_unchanged(output_co
     assert trace["matched"] is True
     assert "escaped_fields" not in trace
     assert rows["run_trace"]["reproducible"] is True
-    assert rows["compile_log"]["payload"] == {"ok": True, "stderr": "普通警告\n"}
+    assert rows["compile_log"]["payload"] == {"ok": True, "stderr": "普通警告\n", "language": "cpp17"}
 
 
 @pytest.mark.parametrize("mode", ["inline", "background"])

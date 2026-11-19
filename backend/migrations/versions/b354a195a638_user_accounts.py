@@ -9,6 +9,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+from app.infra.sql_types import UTCDateTime
+
 revision: str = 'b354a195a638'
 down_revision: str | None = '8d576abc592d'
 branch_labels: str | Sequence[str] | None = None
@@ -24,7 +26,7 @@ def upgrade() -> None:
     sa.Column('role', sa.String(length=16), nullable=False),
     sa.Column('password_hash', sa.String(length=256), nullable=False),
     sa.Column('class_name', sa.String(length=64), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', UTCDateTime(), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_app_user_username'), 'app_user', ['username'], unique=True)

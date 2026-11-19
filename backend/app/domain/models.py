@@ -11,23 +11,30 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
+    Double,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.infra.sql_types import UTCDateTime
+
 
 class Base(DeclarativeBase):
-    pass
+    # MySQL 不提供 INSERT RETURNING；在异步 flush 内读取服务器默认值。
+    __mapper_args__ = {"eager_defaults": True}
 
 
 class Problem(Base):
@@ -36,23 +43,339 @@ class Problem(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     pid: Mapped[str] = mapped_column(String(32), unique=True, index=True)  # P1046 / PTV-0001
     title: Mapped[str] = mapped_column(String(200), default="")
-    statement_md: Mapped[str] = mapped_column(Text, default="")
-    samples: Mapped[list] = mapped_column(JSONB, default=list)
+    statement_md: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), default="")
+    samples: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
     difficulty: Mapped[str] = mapped_column(String(32), default="")
-    tags: Mapped[list] = mapped_column(JSONB, default=list)
-    knowledge_points: Mapped[list] = mapped_column(JSONB, default=list)
+    tags: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    knowledge_points: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
 
     # A/B/C/D：决定这道题能支撑到哪一级诊断（架构 §9.6）
     package_level: Mapped[str] = mapped_column(String(2), default="C")
     has_testdata: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    catalog_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     source: Mapped[str] = mapped_column(String(32), default="")
     source_url: Mapped[str] = mapped_column(String(500), default="")
     license_note: Mapped[str] = mapped_column(Text, default="")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
     submissions: Mapped[list[Submission]] = relationship(back_populates="problem")
+
+
+class ProblemVersion(Base):
+    __tablename__ = "problem_version"
+    __table_args__ = (UniqueConstraint("problem_id", "revision", name="uq_problem_revision"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    data: Mapped[dict] = mapped_column(JSON)
+    suite: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewer: Mapped[str] = mapped_column(String(100), default="")
+    digest: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class ProblemImportDraft(Base):
+    __tablename__ = "problem_import_draft"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    records: Mapped[list] = mapped_column(JSON)
+    result: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+
+
+class WrittenImportBatch(Base):
+    __tablename__ = "written_import_batch"
+    __table_args__ = (UniqueConstraint("actor_id", "digest", name="uq_written_actor_digest"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="preview", index=True)
+    summary: Mapped[dict] = mapped_column(JSON)
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    staged_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenCandidate(Base):
+    __tablename__ = "written_candidate"
+    __table_args__ = (UniqueConstraint("batch_id", "external_id", name="uq_written_candidate"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    external_id: Mapped[str] = mapped_column(String(80))
+    paper_id: Mapped[str] = mapped_column(String(80))
+    question_type: Mapped[str] = mapped_column(String(24))
+    level: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    review_status: Mapped[str] = mapped_column(String(24), default="needs_review")
+    search_text: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"))
+    record: Mapped[dict] = mapped_column(JSON)
+    normalized: Mapped[dict] = mapped_column(JSON)
+    issues: Mapped[list] = mapped_column(JSON)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    draft_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenReviewRevision(Base):
+    __tablename__ = "written_review_revision"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", "revision", name="uq_written_review_revision"),
+        UniqueConstraint("candidate_id", "request_id", name="uq_written_review_request"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("written_candidate.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    action: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str] = mapped_column(Text)
+    snapshot_metadata: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenQuestion(Base):
+    __tablename__ = "written_question"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("written_candidate.id"), unique=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    catalog_version: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    public_metadata: Mapped[dict] = mapped_column(JSON)
+
+
+class WrittenQuestionVersion(Base):
+    __tablename__ = "written_question_version"
+    __table_args__ = (UniqueConstraint("question_id", "revision", name="uq_written_question_version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), index=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    review_revision: Mapped[int] = mapped_column(Integer)
+    snapshot_metadata: Mapped[dict] = mapped_column(JSON)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenAttempt(Base):
+    """学生签收的规则评分，绑定提交当时的题面与审核答案。"""
+
+    __tablename__ = "written_attempt"
+    __table_args__ = (
+        UniqueConstraint("student_id", "request_id", name="uq_written_attempt_request"),
+        Index("ix_written_attempt_student_order", "student_id", "id"),
+        Index("ix_written_attempt_student_question", "student_id", "question_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"))
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON)
+    question_summary: Mapped[dict] = mapped_column(JSON)
+    correct: Mapped[bool | None] = mapped_column(Boolean)
+    earned_score: Mapped[float | None] = mapped_column(Double)
+    max_score: Mapped[float] = mapped_column(Double)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenShortGrade(Base):
+    """人工确认的一次简答评分；学生作答与评分要点保留原版本。"""
+
+    __tablename__ = "written_short_grade"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    points: Mapped[list[int]] = mapped_column(JSON)
+    feedback: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenShortDraft(Base):
+    """持久化简答草评的处理租约和有效建议。"""
+
+    __tablename__ = "written_short_draft"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    claim: Mapped[str] = mapped_column(String(36))
+    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
+    suggestion: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+
+
+class WrittenAssignment(Base):
+    __tablename__ = "written_assignment"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "request_id", name="uq_written_assignment_request"),
+        Index("ix_written_assignment_class", "class_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"))
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    title: Mapped[str] = mapped_column(String(120))
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    request_id: Mapped[str] = mapped_column(String(36))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenAssignmentQuestion(Base):
+    __tablename__ = "written_assignment_question"
+
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[dict] = mapped_column(JSON)
+
+
+class WrittenAssignmentMember(Base):
+    __tablename__ = "written_assignment_member"
+
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class WrittenAssignmentAttempt(Base):
+    __tablename__ = "written_assignment_attempt"
+
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("written_assignment.id"), index=True)
+
+
+class WrittenExam(Base):
+    __tablename__ = "written_exam"
+    __table_args__ = (
+        UniqueConstraint("student_id", "batch_id", "paper_id", name="uq_written_exam_paper"),
+        Index("ix_written_exam_student_order", "student_id", "id"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    paper_id: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(180))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    deadline: Mapped[datetime] = mapped_column(UTCDateTime())
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WrittenExamItem(Base):
+    __tablename__ = "written_exam_item"
+    __table_args__ = (UniqueConstraint("exam_id", "position", name="uq_written_exam_position"),)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("written_exam.id"), primary_key=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("written_question.id"), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("written_question_version.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    number: Mapped[str] = mapped_column(String(32))
+    max_score: Mapped[float] = mapped_column(Double)
+    response: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    earned_score: Mapped[float | None] = mapped_column(Double, nullable=True)
+
+
+class WrittenExamAttempt(Base):
+    """将普通练习回执与已交答卷关联，单独记录复练。"""
+
+    __tablename__ = "written_exam_attempt"
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"), primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("written_exam.id"), index=True)
+
+
+class WrittenHelpTurnFields:
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(36))
+    question: Mapped[str] = mapped_column(Text)
+    claim_token: Mapped[str] = mapped_column(String(36))
+    lease_until: Mapped[datetime] = mapped_column(UTCDateTime())
+    result: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenHelpTurn(WrittenHelpTurnFields, Base):
+    """一次追问、诊断交接和讲解，按照本人作答保存。"""
+
+    __tablename__ = "written_help_turn"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "request_id", name="uq_written_help_request"),
+        Index("ix_written_help_order", "attempt_id", "id"),
+    )
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("written_attempt.id"))
+
+
+class WrittenExamHelpTurn(WrittenHelpTurnFields, Base):
+    """原卷错题的答疑独立保存。"""
+
+    __tablename__ = "written_exam_help_turn"
+    __table_args__ = (
+        ForeignKeyConstraint(["exam_id", "question_id"], ["written_exam_item.exam_id", "written_exam_item.question_id"],
+                             name="fk_written_exam_help_item"),
+        UniqueConstraint("exam_id", "question_id", "request_id", name="uq_written_exam_help_request"),
+        Index("ix_written_exam_help_order", "exam_id", "question_id", "id"),
+    )
+    exam_id: Mapped[int] = mapped_column(BigInteger)
+    question_id: Mapped[int] = mapped_column(BigInteger)
+
+
+class WrittenKnowledgeEntry(Base):
+    """同一批次的叶子知识点只有一条编辑稿和一个当前公开版本。"""
+
+    __tablename__ = "written_knowledge_entry"
+    __table_args__ = (UniqueConstraint("batch_id", "point_id", name="uq_written_knowledge_point"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id"))
+    point_id: Mapped[str] = mapped_column(String(80))
+    point_name: Mapped[str] = mapped_column(String(160))
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(500))
+    edit_version: Mapped[int] = mapped_column(Integer, default=1)
+    published_revision: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+
+
+class WrittenKnowledgeVersion(Base):
+    __tablename__ = "written_knowledge_version"
+    __table_args__ = (
+        UniqueConstraint("entry_id", "revision", name="uq_written_knowledge_revision"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("written_knowledge_entry.id"))
+    revision: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(500))
+    review_note: Mapped[str] = mapped_column(String(400))
+    reviewer_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class WrittenImportAsset(Base):
+    __tablename__ = "written_import_asset"
+    __table_args__ = (UniqueConstraint("batch_id", "path", name="uq_written_asset"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    path: Mapped[str] = mapped_column(String(240))
+    media_type: Mapped[str] = mapped_column(String(40))
+    digest: Mapped[str] = mapped_column(String(64))
+
+
+class WrittenImportChunk(Base):
+    __tablename__ = "written_import_chunk"
+    __table_args__ = (UniqueConstraint("batch_id", "key", "position", name="uq_written_chunk"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("written_import_batch.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(240))
+    position: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
 
 
 class Submission(Base):
@@ -60,27 +383,29 @@ class Submission(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id", ondelete="CASCADE"), index=True)
+    problem_version_id: Mapped[int | None] = mapped_column(ForeignKey("problem_version.id"), nullable=True, index=True)
     student_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)  # user 表后续补
+    training_id: Mapped[int | None] = mapped_column(ForeignKey("training.id"), nullable=True, index=True)
     parent_submission_id: Mapped[int | None] = mapped_column(
         ForeignKey("submission.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    code: Mapped[str] = mapped_column(Text, default="")
+    code: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), default="")
     code_hash: Mapped[str] = mapped_column(String(64), index=True, default="")
     lang: Mapped[str] = mapped_column(String(16), default="cpp17")
 
     verdict: Mapped[str | None] = mapped_column(String(16), nullable=True)
     time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_kb: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tests_passed: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tests_passed: Mapped[dict | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
     # 状态机（架构 §5.3）
     stage: Mapped[str] = mapped_column(String(24), default="RECEIVED", index=True)
     pipeline_ver: Mapped[str] = mapped_column(String(32), default="v1")
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), server_default=func.now(), onupdate=func.now()
     )
 
     problem: Mapped[Problem] = relationship(back_populates="submissions")
@@ -110,11 +435,92 @@ class JudgeJob(Base):
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     manual_retries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     owner_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), index=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class WorkerHeartbeat(Base):
+    __tablename__ = "worker_heartbeat"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    state: Mapped[str] = mapped_column(String(16))
+    current_job: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class AIConfiguration(Base):
+    __tablename__ = "ai_configuration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    base_url: Mapped[str] = mapped_column(String(500))
+    model: Mapped[str] = mapped_column(String(100))
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class AIConfigurationCheck(Base):
+    __tablename__ = "ai_configuration_check"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    base_version: Mapped[int] = mapped_column(Integer)
+    base_url: Mapped[str] = mapped_column(String(500))
+    model: Mapped[str] = mapped_column(String(100))
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str] = mapped_column(String(64), default="")
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class AICallEvent(Base):
+    __tablename__ = "ai_call_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    feature: Mapped[str] = mapped_column(String(24))
+    model: Mapped[str] = mapped_column(String(100))
+    called: Mapped[bool] = mapped_column(Boolean)
+    used_model: Mapped[bool] = mapped_column(Boolean)
+    error: Mapped[str] = mapped_column(String(64))
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now(), index=True)
+
+
+class BackupArtifact(Base):
+    __tablename__ = "backup_artifact"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String(100), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    revision: Mapped[str] = mapped_column(String(32), default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class MaintenanceTask(Base):
+    __tablename__ = "maintenance_task"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(36), unique=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    artifact_id: Mapped[str] = mapped_column(ForeignKey("backup_artifact.id"))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    actor_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    owner: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    error: Mapped[str] = mapped_column(String(64), default="")
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
 
 class Evidence(Base):
@@ -126,10 +532,10 @@ class Evidence(Base):
     )
     # compile_log | run_trace | sanitizer | counterexample | timing_curve | static_alert
     type: Mapped[str] = mapped_column(String(32), index=True)
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    payload: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
     reproducible: Mapped[bool] = mapped_column(Boolean, default=True)
     digest: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
     submission: Mapped[Submission] = relationship(back_populates="evidence")
 
@@ -143,23 +549,23 @@ class Diagnosis(Base):
     )
 
     # 机制轴：[{"code":"M01","conf":0.91,"evidence_ids":[1,2]}]
-    mechanism: Mapped[list] = mapped_column(JSONB, default=list)
+    mechanism: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
     # 认知轴：[{"code":"C4","conf":0.62,"basis":"inferred"}]
-    cognition: Mapped[list] = mapped_column(JSONB, default=list)
+    cognition: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
     # 性质轴（错因体系 v2）：[{"p":"P0","line":3,"col":12,"code":"P0-FULLWIDTH"}]
-    nature: Mapped[list] = mapped_column(JSONB, default=list)
+    nature: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
 
     narrative: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[float] = mapped_column(default=0.0)
     status: Mapped[str] = mapped_column(String(16), default="draft")  # draft/confirmed/needs_human/rejected
-    degraded: Mapped[list] = mapped_column(JSONB, default=list)
+    degraded: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
     reviewer_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # 自动重诊断和人工审定均递增，用于拒绝基于旧内容的写入。
     review_revision: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    model_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    reviewed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    model_meta: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=dict)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
     submission: Mapped[Submission] = relationship(back_populates="diagnosis")
 
@@ -186,10 +592,10 @@ class DiagnosisReview(Base):
     revision: Mapped[int] = mapped_column(Integer)
     decision: Mapped[str] = mapped_column(String(16))
     narrative: Mapped[str] = mapped_column(Text)
-    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    before: Mapped[dict] = mapped_column(JSONB)
-    after: Mapped[dict] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    evidence_ids: Mapped[list] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), default=list)
+    before: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    after: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class HintSession(Base):
@@ -210,9 +616,9 @@ class HintSession(Base):
     status: Mapped[str] = mapped_column(String(16), default="open")  # open/resolved/escalated/blocked
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
     cheat_flags: Mapped[int] = mapped_column(Integer, default=0)  # 索要答案的次数
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+        UTCDateTime(), server_default=func.now(), onupdate=func.now())
 
     turns: Mapped[list[HintTurn]] = relationship(
         back_populates="session", cascade="all, delete-orphan")
@@ -227,9 +633,27 @@ class HintTurn(Base):
     role: Mapped[str] = mapped_column(String(8), default="tutor")   # tutor | student
     level: Mapped[int] = mapped_column(Integer, default=0)
     content: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
     session: Mapped[HintSession] = relationship(back_populates="turns")
+
+
+class HintMessageReceipt(Base):
+    """已提交消息的事务回执；摘要避免请求编号受到数据库排序规则影响。"""
+
+    __tablename__ = "hint_message_receipt"
+    __table_args__ = (
+        UniqueConstraint("session_id", "request_hash", name="uq_hint_message_request"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("hint_session.id", ondelete="CASCADE"), index=True)
+    request_hash: Mapped[str] = mapped_column(String(64))
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class Mastery(Base):
@@ -242,7 +666,46 @@ class Mastery(Base):
     value: Mapped[float] = mapped_column(default=0.3)
     uncertainty: Mapped[float] = mapped_column(default=0.5)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+        UTCDateTime(), server_default=func.now(), onupdate=func.now())
+
+
+class SchoolClass(Base):
+    __tablename__ = "school_class"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class ClassTeacher(Base):
+    __tablename__ = "class_teacher"
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"), primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class StudentInvite(Base):
+    """班级的一次性注册凭据，只存摘要。"""
+
+    __tablename__ = "student_invite"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("school_class.id"), index=True)
+    code_digest: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    used_by_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+
+
+class AdminAudit(Base):
+    __tablename__ = "admin_audit"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    action: Mapped[str] = mapped_column(String(64))
+    target: Mapped[str] = mapped_column(String(100))
+    before: Mapped[dict] = mapped_column(JSON)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
 
 
 class User(Base):
@@ -256,4 +719,92 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="student")  # student|teacher|admin
     password_hash: Mapped[str] = mapped_column(String(256), default="")
     class_name: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("school_class.id"), nullable=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class SubmissionLock(Base):
+    """MySQL 的事务去重锁；行由事务写锁保护，提交或回滚时自动释放。"""
+
+    __tablename__ = "submission_lock"
+
+    lock_key: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+
+
+class Training(Base):
+    __tablename__ = "training"
+    __table_args__ = (CheckConstraint("status IN ('draft', 'published')", name="ck_training_status"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    original_teacher_id: Mapped[int | None] = mapped_column(ForeignKey("app_user.id"), nullable=True)
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("school_class.id"), nullable=True, index=True)
+    class_name: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(120))
+    objective: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    student_ids: Mapped[list | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    source_training_id: Mapped[int | None] = mapped_column(ForeignKey("training.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft", server_default="draft")
+    due_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingProblem(Base):
+    __tablename__ = "training_problem"
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
+    problem_id: Mapped[int] = mapped_column(ForeignKey("problem.id"), primary_key=True)
+    problem_version_id: Mapped[int | None] = mapped_column(ForeignKey("problem_version.id"), nullable=True)
+    position: Mapped[int] = mapped_column(Integer)
+    required: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class TrainingMember(Base):
+    __tablename__ = "training_member"
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id", ondelete="CASCADE"), primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), primary_key=True)
+
+
+class TrainingLessonRevision(Base):
+    """每次保存追加版本，生成草稿不会覆盖教师原文。"""
+    __tablename__ = "training_lesson_revision"
+    __table_args__ = (UniqueConstraint("training_id", "revision", name="uq_training_lesson_revision"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16))
+    basis_digest: Mapped[str] = mapped_column(String(64))
+    basis: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"))
+    created_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingLessonPublication(Base):
+    __tablename__ = "training_lesson_publication"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    lesson_revision_id: Mapped[int] = mapped_column(ForeignKey("training_lesson_revision.id"), unique=True)
+    published_by: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())
+
+
+class TrainingFeedback(Base):
+    """个别指导追加保存；学生查看仅记录明确标记，不代表理解。"""
+    __tablename__ = "training_feedback"
+    __table_args__ = (UniqueConstraint("training_id", "student_id", "request_id", name="uq_training_feedback_request"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    training_id: Mapped[int] = mapped_column(ForeignKey("training.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("app_user.id"))
+    author_name: Mapped[str] = mapped_column(String(64))
+    content: Mapped[str] = mapped_column(Text)
+    submission_id: Mapped[int | None] = mapped_column(ForeignKey("submission.id"), nullable=True)
+    after_submission_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    request_id: Mapped[str] = mapped_column(String(36))
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), server_default=func.now())

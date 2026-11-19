@@ -4,6 +4,7 @@ Revision ID: f0d26c31a8b4
 Revises: e9c15b20f7a3
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "f0d26c31a8b4"
@@ -20,13 +21,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # 旧版本无法理解 cancelled，明确拒绝有取消数据时静默降级，避免篡改终态。
-    op.execute("""
-        DO $$ BEGIN
-            IF EXISTS (SELECT 1 FROM judge_job WHERE status = 'cancelled') THEN
-                RAISE EXCEPTION 'cannot downgrade while cancelled judge jobs exist';
-            END IF;
-        END $$
-    """)
+    if op.get_bind().scalar(sa.text("SELECT EXISTS (SELECT 1 FROM judge_job WHERE status = 'cancelled')")):
+        raise RuntimeError("cannot downgrade while cancelled judge jobs exist")
     op.drop_constraint("ck_judge_job_status", "judge_job", type_="check")
     op.create_check_constraint("ck_judge_job_status", "judge_job",
                                "status IN ('queued', 'running', 'succeeded', 'failed')")

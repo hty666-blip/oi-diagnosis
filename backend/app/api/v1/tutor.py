@@ -24,6 +24,7 @@ class SessionCreate(BaseModel):
 
 class MessageIn(BaseModel):
     content: StorageText = Field(..., min_length=1, max_length=4000)
+    request_id: StorageText | None = Field(default=None, min_length=1, max_length=100)
 
 
 class VerificationIn(BaseModel):
@@ -44,7 +45,7 @@ async def create_session(payload: SessionCreate, session: SessionDep, user: Curr
 async def send_message(session_id: ObjectPathId, payload: MessageIn, session: SessionDep,
                        user: CurrentUser) -> dict:
     try:
-        return await TutorService(session, user).reply(session_id, payload.content)
+        return await TutorService(session, user).reply(session_id, payload.content, payload.request_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 

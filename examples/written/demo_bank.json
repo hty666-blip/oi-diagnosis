@@ -1,0 +1,186 @@
+{
+  "knowledge_points": {
+    "nodes": [
+      {"id": "DEMO-BITS", "name": "二进制位权与无符号范围", "is_leaf": true},
+      {"id": "DEMO-TREE", "name": "二叉树层数与节点数", "is_leaf": true},
+      {"id": "DEMO-LINEAR", "name": "栈与队列", "is_leaf": true},
+      {"id": "DEMO-OS", "name": "进程状态与存储", "is_leaf": true},
+      {"id": "DEMO-PREFIX", "name": "前缀和与区间端点", "is_leaf": true},
+      {"id": "DEMO-DAG", "name": "有向无环图与拓扑序", "is_leaf": true, "prerequisites": ["DEMO-LINEAR"]},
+      {"id": "DEMO-SEARCH", "name": "二分查找的左边界", "is_leaf": true},
+      {"id": "DEMO-COMPLEXITY", "name": "循环次数与渐近复杂度", "is_leaf": true}
+    ]
+  },
+  "papers": [
+    {"id": "demo-j-paper", "title": "入门级自编演示卷", "level": "J", "source_kind": "original_demo", "total_score": 16, "duration_minutes": 10, "duration_source": "自编演示设定"},
+    {"id": "demo-s-paper", "title": "提高级自编演示卷", "level": "S", "source_kind": "original_demo", "total_score": 16, "duration_minutes": 10, "duration_source": "自编演示设定"}
+  ],
+  "question_groups": [
+    {
+      "id": "demo-prefix-group",
+      "paper_id": "demo-s-paper",
+      "shared_stem": "阅读下面的前缀和预处理。下标从 1 开始，a[1..5] 依次为 3、-2、4、0、7。\n\n```cpp\np[0] = 0;\nfor (int i = 1; i <= 5; ++i) {\n    p[i] = p[i - 1] + a[i];\n}\n```",
+      "subquestion_ids": ["demo-s-prefix-sum", "demo-s-prefix-index"]
+    }
+  ],
+  "questions": [
+    {
+      "id": "demo-j-bits-max", "level": "J", "question_type": "single_choice",
+      "stem": "用 5 个二进制位表示无符号整数，最大可以表示多少？",
+      "primary_knowledge_point_id": "DEMO-BITS",
+      "options": [{"id": "A", "text": "16"}, {"id": "B", "text": "31"}, {"id": "C", "text": "32"}, {"id": "D", "text": "63"}],
+      "answer": {"kind": "option", "option_ids": ["B"]},
+      "explanation": "最大值对应五位全部为 1，位权相加是 16 + 8 + 4 + 2 + 1 = 31。共有 32 种编码，最小值是 0。"
+    },
+    {
+      "id": "demo-j-bits-value", "level": "J", "question_type": "fill_blank",
+      "stem": "将二进制 10110 转成十进制。请填一个整数。",
+      "primary_knowledge_point_id": "DEMO-BITS",
+      "answer": {"kind": "text", "accepted": ["22"], "normalization": "trim_outer_whitespace"},
+      "explanation": "从右往左的位权为 1、2、4、8、16。为 1 的位置贡献 16、4 和 2，合计 22。"
+    },
+    {
+      "id": "demo-j-tree-bounds", "level": "J", "question_type": "multiple_choice",
+      "stem": "一棵二叉树的根在第 1 层，最深的节点在第 5 层。下列哪些说法正确？",
+      "primary_knowledge_point_id": "DEMO-TREE",
+      "options": [
+        {"id": "A", "text": "第 5 层最多有 16 个节点。"},
+        {"id": "B", "text": "整棵树最多有 31 个节点。"},
+        {"id": "C", "text": "任何符合条件的树都恰有 31 个节点。"},
+        {"id": "D", "text": "整棵树至少有 5 个节点。"}
+      ],
+      "answer": {"kind": "options", "option_ids": ["A", "B", "D"]},
+      "explanation": "各层上限是 1、2、4、8、16，最后一层上限 16，整棵树上限 31。连到第 5 层的一条路径至少经过 5 个节点。每层仅有一个节点时正好达到这个下限。"
+    },
+    {
+      "id": "demo-j-tree-depth", "level": "J", "question_type": "true_false",
+      "stem": "一棵二叉树恰有 10 个节点。规定根在第 1 层，则最深的节点一定在第 4 层。",
+      "primary_knowledge_point_id": "DEMO-TREE",
+      "answer": {"kind": "boolean", "value": false},
+      "explanation": "三层最多只有 7 个节点，所以至少需要四层。每个非叶节点只有一个孩子时，10 个节点也能排成一条 10 层的链。"
+    },
+    {
+      "id": "demo-j-linear-out", "level": "J", "question_type": "single_choice",
+      "stem": "把元素 A、B、C 依次加入初始为空的结构，然后连续取出三个元素。若分别使用栈和先进先出队列，取出顺序是什么？",
+      "primary_knowledge_point_id": "DEMO-LINEAR",
+      "options": [
+        {"id": "A", "text": "栈 A、B、C。队列 C、B、A。"},
+        {"id": "B", "text": "两种结构均为 A、B、C。"},
+        {"id": "C", "text": "栈 C、B、A。队列 A、B、C。"},
+        {"id": "D", "text": "两种结构均为 C、B、A。"}
+      ],
+      "answer": {"kind": "option", "option_ids": ["C"]},
+      "explanation": "栈从最近加入的一端取出，所以顺序是 C、B、A。先进先出队列先取最早进入的元素，所以顺序是 A、B、C。"
+    },
+    {
+      "id": "demo-j-linear-pop", "level": "J", "question_type": "fill_blank",
+      "stem": "一个栈初始为空。依次压入 4、压入 9、弹出、压入 2、弹出、弹出。第 2 次弹出得到哪个整数？",
+      "primary_knowledge_point_id": "DEMO-LINEAR",
+      "answer": {"kind": "text", "accepted": ["2"], "normalization": "trim_outer_whitespace"},
+      "explanation": "第一次弹出 9，留下 4。压入 2 后，栈顶是 2，第二次弹出 2。最后一次才弹出 4。"
+    },
+    {
+      "id": "demo-j-os-ready", "level": "J", "question_type": "true_false",
+      "stem": "在单核 CPU 上，进程 A 等待磁盘读取而进入阻塞态，进程 B 已在就绪态。操作系统可以安排 B 使用 CPU。",
+      "primary_knowledge_point_id": "DEMO-OS",
+      "answer": {"kind": "boolean", "value": true},
+      "explanation": "阻塞的 A 在等磁盘事件，暂时无法继续计算。B 已具备运行条件，调度器可让 B 使用 CPU，等读取完成后再让 A 进入就绪队列。"
+    },
+    {
+      "id": "demo-j-os-memory", "level": "J", "question_type": "multiple_choice",
+      "stem": "一台电脑使用普通易失性 DRAM 和固态硬盘。文件甲已写入固态硬盘并确认落盘，临时数组乙只存于 DRAM。断电且无休眠或其他备份时，哪些说法正确？",
+      "primary_knowledge_point_id": "DEMO-OS",
+      "options": [
+        {"id": "A", "text": "断电会丢失 DRAM 中乙的工作数据。"},
+        {"id": "B", "text": "通常可从固态硬盘重新读取已落盘的甲。"},
+        {"id": "C", "text": "甲和乙都会因为关机而必然丢失。"},
+        {"id": "D", "text": "CPU 寄存器会永久保存乙。"}
+      ],
+      "answer": {"kind": "options", "option_ids": ["A", "B"]},
+      "explanation": "DRAM 需要供电保留数据。固态硬盘提供非易失性存储，正常情况下已落盘的文件能在重新上电后读出。普通 CPU 寄存器也依赖供电。"
+    },
+    {
+      "id": "demo-s-prefix-sum", "level": "S", "question_type": "fill_blank",
+      "group_id": "demo-prefix-group",
+      "stem": "a[2] 到 a[4] 的总和是多少？请填一个整数。",
+      "primary_knowledge_point_id": "DEMO-PREFIX",
+      "answer": {"kind": "text", "accepted": ["2"], "normalization": "trim_outer_whitespace"},
+      "explanation": "前缀 p[4] 为 5，p[1] 为 3。减去下标 2 之前的前缀，得到 p[4] - p[1] = 2，也可直接算 -2 + 4 + 0。"
+    },
+    {
+      "id": "demo-s-prefix-index", "level": "S", "question_type": "multiple_choice",
+      "group_id": "demo-prefix-group",
+      "stem": "按共用程序计算 p，下列哪些说法正确？",
+      "primary_knowledge_point_id": "DEMO-PREFIX",
+      "options": [
+        {"id": "A", "text": "p[5] - p[2] 等于 11。"},
+        {"id": "B", "text": "p[3] - p[0] 等于 5。"},
+        {"id": "C", "text": "p[4] - p[3] 等于 a[4]。"},
+        {"id": "D", "text": "p[4] - p[2] 等于 a[2] + a[3] + a[4]。"}
+      ],
+      "answer": {"kind": "options", "option_ids": ["A", "B", "C"]},
+      "explanation": "p[0..5] 依次是 0、3、1、5、5、12。减去 p[2] 时，a[2] 同时被减掉，所以 p[4] - p[2] 只保留 a[3] 和 a[4]。"
+    },
+    {
+      "id": "demo-s-dag-order", "level": "S", "question_type": "single_choice",
+      "stem": "有向图只有 A→C、B→C、C→D 三条边。哪个序列是它的拓扑序？",
+      "primary_knowledge_point_id": "DEMO-DAG",
+      "options": [
+        {"id": "A", "text": "B、A、C、D"},
+        {"id": "B", "text": "D、A、B、C"},
+        {"id": "C", "text": "C、B、A、D"},
+        {"id": "D", "text": "A、C、B、D"}
+      ],
+      "answer": {"kind": "option", "option_ids": ["A"]},
+      "explanation": "检查每条边的起点是否都排在终点之前。A 和 B 都要在 C 之前，C 要在 D 之前，A 和 B 的相对顺序可以交换。"
+    },
+    {
+      "id": "demo-s-dag-cycle", "level": "S", "question_type": "true_false",
+      "stem": "有向图含 A→C、B→C、C→D、D→A 四条边。这个图不存在拓扑序。",
+      "primary_knowledge_point_id": "DEMO-DAG",
+      "answer": {"kind": "boolean", "value": true},
+      "explanation": "A→C→D→A 形成有向环。如果沿每条边起点都要排在终点之前，A 必须排在自己前面，因此无法排列。"
+    },
+    {
+      "id": "demo-s-search-first", "level": "S", "question_type": "single_choice",
+      "stem": "已升序排列的数组是 [1, 3, 3, 3, 8, 12]，下标从 0 开始。查找第一个大于或等于 3 的元素，应返回哪个下标？",
+      "primary_knowledge_point_id": "DEMO-SEARCH",
+      "options": [{"id": "A", "text": "0"}, {"id": "B", "text": "1"}, {"id": "C", "text": "3"}, {"id": "D", "text": "4"}],
+      "answer": {"kind": "option", "option_ids": ["B"]},
+      "explanation": "下标 0 的值是 1，仍小于 3。下标 1 的值已经等于 3，所以它是最靠左的可选位置。找到中间重复项时还需要查看左侧。"
+    },
+    {
+      "id": "demo-s-search-end", "level": "S", "question_type": "true_false",
+      "stem": "在升序数组里找第一个不小于 x 的下标。初始 lo=0、hi=n。每次以中点 mid 比较，若 a[mid]<x 则 lo=mid+1，否则 hi=mid。循环到 lo=hi 返回 lo。当所有元素都小于 x 时，返回 n。",
+      "primary_knowledge_point_id": "DEMO-SEARCH",
+      "answer": {"kind": "boolean", "value": true},
+      "explanation": "每次比较都排除 mid 和它左侧的位置，只抬高 lo。hi 始终保持初始的 n，最后 lo 与 hi 在 n 相遇，表示没有元素满足条件。"
+    },
+    {
+      "id": "demo-s-complex-log", "level": "S", "question_type": "single_choice",
+      "stem": "外循环运行 n 次。每次都让 j 从 1 开始，在 j≤n 时执行一次常量时间操作并把 j 翻倍。假设整数容量充足，整个程序的时间复杂度是多少？",
+      "primary_knowledge_point_id": "DEMO-COMPLEXITY",
+      "options": [
+        {"id": "A", "text": "Θ(log n)"},
+        {"id": "B", "text": "Θ(n)"},
+        {"id": "C", "text": "Θ(n log n)"},
+        {"id": "D", "text": "Θ(n²)"}
+      ],
+      "answer": {"kind": "option", "option_ids": ["C"]},
+      "explanation": "一次外循环中，j 依次等于 1、2、4 等，内循环约运行 log₂n 次。每次外循环都重新从 1 开始，重复 n 次。"
+    },
+    {
+      "id": "demo-s-complex-triangle", "level": "S", "question_type": "multiple_choice",
+      "stem": "外循环 i 从 1 到 n。第 i 次让内循环做 i 次常量时间操作。程序只使用固定数量的整数变量。下列哪些说法正确？",
+      "primary_knowledge_point_id": "DEMO-COMPLEXITY",
+      "options": [
+        {"id": "A", "text": "内循环累计执行 n(n+1)/2 次。"},
+        {"id": "B", "text": "时间复杂度是 Θ(n²)。"},
+        {"id": "C", "text": "时间复杂度是 Θ(n)。"},
+        {"id": "D", "text": "在常用竞赛模型下额外空间为 O(1)。"}
+      ],
+      "answer": {"kind": "options", "option_ids": ["A", "B", "D"]},
+      "explanation": "内循环次数相加得到 1+2+…+n，即 n(n+1)/2，增长量级为 n²。循环变量及其他中间值的个数不随 n 增长。"
+    }
+  ]
+}

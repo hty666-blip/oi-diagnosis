@@ -7,6 +7,8 @@ Revises: d8b04a19e6f2
 import sqlalchemy as sa
 from alembic import op
 
+from app.infra.sql_types import UTCDateTime
+
 revision = "e9c15b20f7a3"
 down_revision = "d8b04a19e6f2"
 branch_labels = None
@@ -23,11 +25,11 @@ def upgrade() -> None:
         sa.Column("max_attempts", sa.Integer(), server_default="3", nullable=False),
         sa.Column("manual_retries", sa.Integer(), server_default="0", nullable=False),
         sa.Column("owner_token", sa.String(32), nullable=True),
-        sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("available_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("lease_expires_at", UTCDateTime(), nullable=True),
+        sa.Column("available_at", UTCDateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("last_error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", UTCDateTime(), server_default=sa.func.now(), nullable=False),
+        sa.Column("finished_at", UTCDateTime(), nullable=True),
         sa.CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed')", name="ck_judge_job_status"),
         sa.CheckConstraint("attempts >= 0 AND max_attempts > 0", name="ck_judge_job_attempts"),
     )

@@ -7,12 +7,13 @@ M4 阶段先做**确定性版本**（规则/模板），LLM 版本通过同一�
 
 from __future__ import annotations
 
+import json
 import math
 import re
 
 from app.agents.contracts import CauseClaim, DiagnosisDraft, NatureTag
 from app.agents.tutor import safe_output
-from app.capabilities.ce_classify import classify_compile, classify_runtime
+from app.capabilities.ce_classify import classify_runtime
 from app.capabilities.triage import triage
 from app.domain.judging import outputs_equal
 
@@ -47,7 +48,8 @@ def failure_summary(evidence: list[dict]) -> str:
     return ""
 
 
-def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> DiagnosisDraft:
+def diagnose(evidence: list[dict], verdict: str | None, code: str = "", *,
+             language: str = "cpp17") -> DiagnosisDraft:
     nature: list[NatureTag] = []
     mechanism: list[CauseClaim] = []
     cognition: list[CauseClaim] = []
@@ -70,9 +72,9 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
         stderr = _payload(ev).get("stderr", "")
         if not stderr:
             continue
-        for f in classify_compile(stderr).findings:
+        for f in triage("", compile_stderr=stderr, language=language).findings:
             nature.append(NatureTag(
-                p=f.nature, code=f.code, line=f.line, col=f.col,
+                p=f.p, code=f.code, line=f.line, col=f.col,
                 message=f.message, hint=f.hint,
             ))
             if f.code.startswith("M"):
@@ -93,7 +95,7 @@ def diagnose(evidence: list[dict], verdict: str | None, code: str = "") -> Diagn
 
     # --- 4) 兜底：用 triage 的规则再扫一遍源码（防止证据不全）---
     if not nature and code:
-        tr = triage(code, verdict=verdict)
+        tr = triage(code, verdict=verdict, language=language)
         for f in tr.findings:
             nature.append(NatureTag(p=f.p, code=f.code, line=f.line, col=f.col,
                                     message=f.message, hint=f.hint))
@@ -211,15 +213,24 @@ def _evidence_digest(evidence: list[dict]) -> str:
 
 
 async def llm_hypothesis(draft: DiagnosisDraft, evidence: list[dict], verdict: str | None,
-                         code: str, llm) -> DiagnosisDraft | None:
+                         code: str, llm, *, language: str = "cpp17", context: dict | None = None,
+                         feedback: list[str] | None = None,
+                         previous: DiagnosisDraft | None = None) -> DiagnosisDraft | None:
     """规则判不了时，让模型提假设——但结论仍必须绑定证据，置信度封顶 0.6。"""
     if llm is None or not getattr(llm, "available", False) or not evidence:
         return None
 
-    user = (f"判题结果: {verdict}\n\n证据:\n{_evidence_digest(evidence)}\n\n"
-            f"学生代码（截断）:\n```cpp\n{code[:2500]}\n```")
+    fence = {"c11": "c", "cpp17": "cpp", "java17": "java", "python3": "python"}.get(language, "text")
+    user = (f"提交语言: {language}\n判题结果: {verdict}\n\n证据:\n{_evidence_digest(evidence)}\n\n"
+            f"学生代码（截断）:\n```{fence}\n{code[:2500]}\n```")
+    if context is not None:
+        user += "\n证据分析 Agent 的交接材料（不是已确认的根因）：\n" + json.dumps(context, ensure_ascii=False)
+    if feedback:
+        user += "\n独立审查 Agent 要求重新检查，须逐项响应这些意见而不是重复原结论：\n" + json.dumps(feedback, ensure_ascii=False)
+        if previous is not None:
+            user += "\n上一轮候选解释：\n" + previous.narrative[:1800]
     try:
-        data = await llm.chat_json(SYSTEM_PROMPT, user)
+        data = await llm.chat_json(SYSTEM_PROMPT, user, max_tokens=900, retries=0)
     except Exception:  # 模型服务失败不能掩盖已保存的判题证据。
         return None
     if not isinstance(data, dict):
