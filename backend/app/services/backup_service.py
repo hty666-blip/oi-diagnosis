@@ -7,7 +7,10 @@ import io
 import json
 import os
 import re
+import signal
+import subprocess
 import sys
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,7 +18,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import inspect, select, text, tuple_
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+from sqlalchemy.exc import ArgumentError, OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -30,6 +33,7 @@ EXCLUDED = {"worker_heartbeat", "ai_configuration", "ai_configuration_check", "a
 MAGIC = b"OI-BACKUP-1\x00"
 MAX_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE = 32 * 1024 * 1024
+RESTORE_MIGRATION_TIMEOUT = 120
 # 显式声明兼容的增量版本；新增表只能补空，不为旧数据伪造历史。
 RECEIPT_SOURCE_REVISION = "m7e93da8152b"
 RECEIPT_TARGET_REVISION = "n8fa0416c2de"
@@ -89,6 +93,59 @@ def added_backup_tables(source_revision: str, target_revision: str) -> set[str]:
 
 class BackupError(Exception):
     pass
+
+
+async def stop_restore_migration(process):
+    with suppress(ProcessLookupError):
+        if os.name == "nt":
+            # Windows 虚拟环境可能由启动器再派生真实 Python，终止启动器会留下迁移进程。
+            with suppress(OSError, subprocess.TimeoutExpired):
+                await asyncio.to_thread(subprocess.run, ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+            if process.returncode is None:
+                process.kill()
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    await process.wait()
+
+
+async def migrate_restore_schema(target):
+    env = {**os.environ, "DATABASE_URL": target.render_as_string(hide_password=False), "LLM_ENABLED": "false",
+           "JUDGE_WORKER_ENABLED": "false", "MAINTENANCE_WORKER_ENABLED": "false"}
+    group = {"start_new_session": True} if os.name != "nt" else {}
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "alembic", "upgrade", "head", cwd=ROOT / "backend", env=env,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, **group)
+    try:
+        if await asyncio.wait_for(process.wait(), RESTORE_MIGRATION_TIMEOUT) != 0:
+            raise BackupError("restore_migration_failed")
+    except TimeoutError as exc:
+        raise BackupError("restore_migration_timeout") from exc
+    finally:
+        if process.returncode is None:
+            await stop_restore_migration(process)
+
+
+async def cleanup_restore_schema(conn):
+    try:
+        await conn.execute(text("SET SESSION lock_wait_timeout = 3"))
+        for attempt in range(3):
+            try:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+                await conn.commit()
+                if not await conn.run_sync(lambda sync: inspect(sync).get_table_names()):
+                    return
+            except OperationalError as exc:
+                # 连接终止后，MySQL 还可能正在收尾刚收到的 DDL。
+                if attempt == 2 or exc.orig.args[0] not in (1205, 1684, 3730):
+                    raise
+            await conn.rollback()
+            if attempt < 2:
+                await asyncio.sleep(0.5)
+    except Exception as exc:
+        raise BackupError("verify_cleanup_failed") from exc
+    raise BackupError("verify_cleanup_failed")
 
 
 def encoded(value):
@@ -293,20 +350,7 @@ class BackupIO:
                         raise BackupError("verify_target_not_empty")
                     created = True
                     # 必须执行迁移，create_all 不会创建教师复核的只追加触发器。
-                    env = os.environ.copy()
-                    env.update(DATABASE_URL=target.render_as_string(hide_password=False), LLM_ENABLED="false",
-                               JUDGE_WORKER_ENABLED="false", MAINTENANCE_WORKER_ENABLED="false")
-                    process = await asyncio.create_subprocess_exec(
-                        sys.executable, "-m", "alembic", "upgrade", "head", cwd=ROOT / "backend", env=env,
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-                    try:
-                        await asyncio.wait_for(process.wait(), 90)
-                        if process.returncode != 0:
-                            raise BackupError("restore_migration_failed")
-                    finally:
-                        if process.returncode is None:
-                            process.kill()
-                            await process.wait()
+                    await migrate_restore_schema(target)
                     await conn.commit()
                     async with conn.begin():
                         for table in tables():
@@ -334,14 +378,11 @@ class BackupIO:
                             "restored_revision": current_revision()}
                 finally:
                     await conn.rollback()
-                    if created and (not keep or not successful):
-                        try:
-                            await conn.run_sync(Base.metadata.drop_all)
-                            await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
-                            await conn.commit()
-                        except Exception as exc:
-                            raise BackupError("verify_cleanup_failed") from exc
-                    await conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
+                    try:
+                        if created and (not keep or not successful):
+                            await cleanup_restore_schema(conn)
+                    finally:
+                        await conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
         finally:
             await engine.dispose()
 

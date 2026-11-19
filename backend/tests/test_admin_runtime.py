@@ -3,6 +3,7 @@ import asyncio
 import copy
 import json
 import os
+import sys
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -10,8 +11,8 @@ import httpx
 import pytest
 from sqlalchemy import inspect, select, text, update
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.core.config import settings
@@ -31,6 +32,7 @@ from app.domain.models import (
 )
 from app.gateway.llm import LLMClient
 from app.maintenance_worker import MaintenanceWorker
+from app.services import backup_service
 from app.services.backup_service import MAGIC, BackupError, BackupIO
 from app.services.problem_versions import version_digest
 from app.services.runtime_ai import decrypt_key, observe_call, runtime_client
@@ -323,5 +325,65 @@ async def test_restore_bad_rows_clean_target(api_context, isolated_database, res
     try:
         async with engine.connect() as conn:
             assert await conn.run_sync(lambda c: inspect(c).get_table_names()) == []
+    finally:
+        await engine.dispose()
+
+
+async def test_migration_timeout_stops_the_child_process(tmp_path, monkeypatch):
+    heartbeat = tmp_path / "migration-worker.txt"
+    child = (
+        "from pathlib import Path; import sys, time\n"
+        "for i in range(120):\n"
+        "    Path(sys.argv[1]).write_text(str(i))\n"
+        "    time.sleep(0.05)\n"
+    )
+    parent = "import subprocess, sys; subprocess.run([sys.executable, '-c', sys.argv[1], sys.argv[2]])"
+    create_process = asyncio.create_subprocess_exec
+
+    async def launch(*args, **options):
+        process = await create_process(sys.executable, "-c", parent, child, str(heartbeat), **options)
+        async with asyncio.timeout(10):
+            while not heartbeat.exists():
+                await asyncio.sleep(0.05)
+        return process
+
+    monkeypatch.setattr(backup_service.asyncio, "create_subprocess_exec", launch)
+    monkeypatch.setattr(backup_service, "RESTORE_MIGRATION_TIMEOUT", 0.1)
+    with pytest.raises(BackupError, match="restore_migration_timeout"):
+        await backup_service.migrate_restore_schema(make_url("mysql+asyncmy://localhost/test_restore_timeout"))
+    saved = heartbeat.read_text()
+    await asyncio.sleep(0.25)
+    assert heartbeat.read_text() == saved
+
+
+async def test_restore_timeout_cleans_partial_tables_and_releases_lock(api_context, restore_target, monkeypatch):
+    engine = create_async_engine(restore_target)
+    run_sync = AsyncConnection.run_sync
+    cleanups = 0
+
+    async def migrate(target):
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE alembic_version (version_num VARCHAR(32))"))
+            await conn.execute(text("CREATE TABLE school_class (id BIGINT PRIMARY KEY)"))
+        raise BackupError("restore_migration_timeout")
+
+    async def transient_ddl(conn, operation, *args, **kwargs):
+        nonlocal cleanups
+        if operation.__name__ == "drop_all":
+            cleanups += 1
+            if cleanups <= 2:
+                code = (1684, 3730)[cleanups - 1]
+                raise OperationalError(None, None, Exception(code, "迁移连接仍在收尾"))
+        return await run_sync(conn, operation, *args, **kwargs)
+
+    monkeypatch.setattr(backup_service, "migrate_restore_schema", migrate)
+    monkeypatch.setattr(AsyncConnection, "run_sync", transient_ddl)
+    try:
+        for _ in range(2):
+            with pytest.raises(BackupError, match="restore_migration_timeout"):
+                await BackupIO().restore({"tables": {}}, restore_target)
+            async with engine.connect() as conn:
+                assert await conn.run_sync(lambda sync: inspect(sync).get_table_names()) == []
+        assert cleanups == 4
     finally:
         await engine.dispose()

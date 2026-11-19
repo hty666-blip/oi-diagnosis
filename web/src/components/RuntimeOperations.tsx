@@ -13,6 +13,7 @@ const errors: Record<string, string> = {
   permission_changed: "发起人的权限已变化，请管理员核对后重试。", attempts_exhausted: "已达到三次尝试上限，请排查后重新发起。",
   roundtrip_mismatch: "恢复后内容比对不一致。", schema_mismatch: "备份版本与当前程序不兼容。", version_integrity_failed: "题目版本完整性校验失败。",
   task_timeout: "任务执行超时，请检查数据库连接及磁盘后重试。", verify_cleanup_failed: "验证库清理失败，请部署人员检查后再使用。", restore_migration_failed: "恢复库结构初始化失败，请检查部署权限。",
+  restore_migration_timeout: "初始化恢复库超时，已清理本次验证产生的表。请稍后重试。",
 };
 const failure = (code: string) => errors[code] ?? (code.startsWith("http_") ? `模型服务返回 ${code.slice(5)}，请检查地址、模型及凭据。` : "本次未完成，请核对服务配置后重试。");
 
