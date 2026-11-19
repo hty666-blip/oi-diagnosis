@@ -960,6 +960,7 @@ textarea.code { min-height: 340px; padding: 20px; background: #161616; color: #f
 .written-task-picked li > button { margin-left: 8px; }
 .written-task-editor .btn-primary { width: auto; }
 .written-practice-paper { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.written-exam-question { display: grid; gap: 16px; scroll-margin-top: 72px; }
 .written-paper-content, .written-paper-answer { min-width: 0; overflow-wrap: anywhere; }
 .written-paper-content figure { margin: 16px 0; }
 .written-paper-answer > h2 { margin: 0 0 16px; }

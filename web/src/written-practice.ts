@@ -14,6 +14,19 @@ export interface WrittenPosition {
 
 const positionKey = (userId: number) => `oi-written-position:${userId}`;
 const entryKey = (userId: number) => `oi-written-open:${userId}`;
+const examQuestionKey = (userId: number, examId: number) => `oi-written-exam-question:${userId}:${examId}`;
+
+export function readExamQuestion(userId: number, examId: number): number | undefined {
+  try {
+    const value = Number(sessionStorage.getItem(examQuestionKey(userId, examId)));
+    if (Number.isSafeInteger(value) && value > 0) return value;
+  } catch { /* 无存储时从第一题打开。 */ }
+}
+
+export function rememberExamQuestion(userId: number, examId: number, questionId: number) {
+  try { sessionStorage.setItem(examQuestionKey(userId, examId), String(questionId)); }
+  catch { /* 无存储时仍可切换题目。 */ }
+}
 
 export function wasWrittenOpen(userId: number): boolean {
   try { return sessionStorage.getItem(entryKey(userId)) === "1"; } catch { return false; }

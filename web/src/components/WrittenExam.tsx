@@ -4,6 +4,7 @@ import {
   type WrittenExamReviewItem, type WrittenExamSummary, type WrittenPracticePick, type WrittenResponse,
 } from "../api";
 import Markdown from "../Markdown";
+import { readExamQuestion, rememberExamQuestion } from "../written-practice";
 import Modal from "./Modal";
 import { ErrorNotice } from "./RecordUI";
 import WrittenExamStudy from "./WrittenExamStudy";
@@ -70,7 +71,10 @@ export default function WrittenExamView({ userId, initial, onBack, onAnswerPendi
   onStudyPractice: (question: WrittenPracticePick) => void;
 }) {
   const [exam, setExam] = useState(initial);
-  const [selected, setSelected] = useState(initial.items[0]?.question_id);
+  const [selected, setSelected] = useState(() => {
+    const saved = readExamQuestion(userId, initial.id);
+    return initial.items.find((item) => item.question_id === saved)?.question_id ?? initial.items[0]?.question_id;
+  });
   const [question, setQuestion] = useState<WrittenExamQuestion>();
   const [draft, setDraft] = useState<WrittenResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,11 +93,23 @@ export default function WrittenExamView({ userId, initial, onBack, onAnswerPendi
   const [remaining, setRemaining] = useState(() => Math.max(0, Math.ceil(startMs / 1000)));
   const lifetime = useRef<AbortController>();
   const automatic = useRef(false);
+  const questionPanel = useRef<HTMLElement>(null);
   const working = exam.status === "working" && remaining > 0 && !closedByServer;
   const finished = exam.status === "submitted";
   const normalized = question && hasAnswer(draft, question.question.question_type) ? draft : null;
   const dirty = Boolean(question && !sameAnswer(normalized, question.response));
   const answerPending = !finished && (dirty || saving);
+
+  function selectQuestion(id: number) {
+    rememberExamQuestion(userId, exam.id, id);
+    setSelected(id);
+  }
+
+  function openOriginal(id: number) {
+    selectQuestion(id);
+    questionPanel.current?.focus({ preventScroll: true });
+    questionPanel.current?.scrollIntoView({ block: "start" });
+  }
 
   useLayoutEffect(() => {
     if (!answerPending) return;
@@ -208,7 +224,7 @@ export default function WrittenExamView({ userId, initial, onBack, onAnswerPendi
       {submitError && !confirm && <ErrorNotice message={submitError} />}
       <nav className="admin-tabs" aria-label="答题卡">
         {exam.items.map((item) => <button key={item.question_id} className="ghost" type="button" aria-pressed={selected === item.question_id}
-          disabled={working && (dirty || saving)} onClick={() => setSelected(item.question_id)}>
+          disabled={working && (dirty || saving)} onClick={() => selectQuestion(item.question_id)}>
           {item.number} · {finished ? `${item.earned_score}/${item.max_score} 分` : item.answered ? "已答" : "未答"}
         </button>)}
       </nav>
@@ -219,17 +235,19 @@ export default function WrittenExamView({ userId, initial, onBack, onAnswerPendi
     </section>
     {finished && missed > 0 && <>
       <WrittenExamStudy examId={exam.id} onPractice={onStudyPractice} />
-      <ExamReview id={exam.id} count={missed} onReviewQuestion={setSelected} onRetry={onRetry} onAttempt={onAttempt} />
+      <ExamReview id={exam.id} count={missed} onReviewQuestion={openOriginal} onRetry={onRetry} onAttempt={onAttempt} />
     </>}
-    {loading && <p role="status">正在读取题面…</p>}
-    {loadError && <ErrorNotice message={loadError} onRetry={() => setReload((value) => value + 1)} />}
-    {!loading && question?.card.question_id === selected && question && <>
-      <ExamQuestion value={question} draft={draft} disabled={!working || submitting || conflict}
-        onChange={(response) => { setDraft(response); setSaveError(""); }} />
-      {finished && question.answer && question.response && question.card.earned_score !== null
-        && question.card.earned_score < question.card.max_score && <WrittenHelp key={question.card.question_id} userId={userId}
-          target={{ examId: exam.id, questionId: question.card.question_id }} />}
-    </>}
+    <section ref={questionPanel} tabIndex={-1} className="written-exam-question" aria-label="当前试卷题目">
+      {loading && <p role="status">正在读取题面…</p>}
+      {loadError && <ErrorNotice message={loadError} onRetry={() => setReload((value) => value + 1)} />}
+      {!loading && question?.card.question_id === selected && question && <>
+        <ExamQuestion value={question} draft={draft} disabled={!working || submitting || conflict}
+          onChange={(response) => { setDraft(response); setSaveError(""); }} />
+        {finished && question.answer && question.response && question.card.earned_score !== null
+          && question.card.earned_score < question.card.max_score && <WrittenHelp key={question.card.question_id} userId={userId}
+            target={{ examId: exam.id, questionId: question.card.question_id }} />}
+      </>}
+    </section>
     {confirm && working && <Modal title="确认交卷" busy={submitting} error={submitError} onClose={() => { setConfirm(false); setSubmitError(""); }}>
       <p>已答 {answered} 题，未答 {exam.items.length - answered} 题。交卷后可查看成绩和解析。</p>
       <button className="btn-primary" type="button" disabled={submitting} onClick={() => void submit()}>确认交卷</button>
