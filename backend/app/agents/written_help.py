@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -165,8 +166,10 @@ class WrittenEvidence:
         }
 
 
-def reviewed_reply(evidence: WrittenEvidence, message: str, history: list[dict]) -> str:
+def reviewed_reply(evidence: WrittenEvidence, message: str, history: list[dict]) -> tuple[str, list[Reference]]:
+    references: list[Reference] = ["review"]
     if evidence.knowledge and evidence.knowledge["id"] == TREE["id"] and history:
+        references.append("knowledge")
         question = message.casefold()
         if (
             any(word in question for word in ("叶", "孩子", "边", "为什么"))
@@ -177,13 +180,13 @@ def reviewed_reply(evidence: WrittenEvidence, message: str, history: list[dict])
                 "现在给任意一个叶节点添一个孩子：边增加一条，原叶节点变成单孩子节点，新孩子补成叶节点。"
                 "所以单孩子节点不会改变叶节点与双孩子节点的数量差。\n\n"
                 + evidence.explanation[:1500]
-            )
+            ), references
         return (
             "先画三层：第 1 层画 1 个节点，第 2 层每个父节点画 2 个孩子，第 3 层同样画。"
             "最下面一层有 4 个节点，整棵树则有 1+2+4=7 个节点。"
             "沿根一直走到第 3 层，只经过 2 条边。把这个例子里的三种数量分别带回本题。"
             "\n\n" + evidence.explanation[:1500]
-        )
+        ), references
     heading = evidence.comparison()
     if history and evidence.question_type in {"single_choice", "multiple_choice"}:
         involved = set(evidence.response["option_ids"]) ^ set(evidence.answer["option_ids"])
@@ -193,14 +196,18 @@ def reviewed_reply(evidence: WrittenEvidence, message: str, history: list[dict])
             if option["id"] in involved
         )
         heading = "先只看本次选错或漏选的条目：" + choices + "。再对照下方解析逐项核对。"
-    elif history and evidence.question_type == "true_false":
-        heading += "先找题干的条件和结论。若要证明它不成立，找一个满足条件却不满足结论的例子。"
-    elif history and evidence.question_type == "fill_blank":
-        heading += "按题目规定保留有效空白，再从左到右对照参考答案，定位第一个不同的字符。"
-    if history and evidence.knowledge:
-        excerpt = evidence.knowledge["body"][:420]
-        heading += f"\n\n可对照《{evidence.knowledge['title']}》中的讲解：{excerpt}"
-    return f"{heading}\n\n{evidence.explanation[:1800]}"
+    blocks = [heading, evidence.explanation[:1800]]
+    wants_example = any(term in message for term in ("例子", "举例", "不会", "没懂", "不懂", "换一种"))
+    if evidence.knowledge and (history or wants_example):
+        references.append("knowledge")
+        title = evidence.knowledge["title"]
+        article = evidence.knowledge["body"]
+        example = re.search(r"(?:^|[。！？])\s*((?:例如|比如|举例|示例)[^。！？\n]+[。！？]?)", article, re.MULTILINE)
+        if wants_example and example and len(example[1]) <= 420:
+            blocks.insert(0, f"可以看《{title}》里的这个例子。\n\n{example[1]}")
+        else:
+            blocks.append(f"可对照《{title}》中的讲解。\n\n{article[:420]}")
+    return "\n\n".join(block for block in blocks if block), references
 
 
 ModelObserver = Callable[[str, bool, str], Awaitable[None]]
@@ -267,6 +274,7 @@ async def explain(
     tutor, tutor_failure = await _run_role(
         client, EXPLAIN, {**packet, "diagnosis": handoff}, ModelReply, "written_tutor", observe
     )
+    reply, references = (tutor.reply, tutor.references) if tutor else reviewed_reply(evidence, question, history)
     return {
         "comparison": evidence.comparison(),
         "diagnosis": {
@@ -275,10 +283,8 @@ async def explain(
             "reason": diagnose_failure,
         },
         "tutor": {
-            "reply": tutor.reply if tutor else reviewed_reply(evidence, question, history),
-            "references": tutor.references
-            if tutor
-            else (["review", "knowledge"] if evidence.knowledge and history else ["review"]),
+            "reply": reply,
+            "references": references,
             "source": "model" if tutor else "reviewed",
             "reason": tutor_failure,
         },

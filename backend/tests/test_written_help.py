@@ -13,6 +13,7 @@ from test_written_bank_import import make_records, make_zip, preview
 from test_written_progress import publish as publish_candidate
 from test_written_review import approval, detail, review, staged
 
+from app.agents.written_help import WrittenEvidence, reviewed_reply
 from app.api.v1 import written_help
 from app.domain.models import User, WrittenAttempt, WrittenHelpTurn, WrittenQuestionVersion
 from app.gateway.llm import LLMClient
@@ -30,6 +31,30 @@ async def wrong_attempt(ctx, question=None):
 
 def request_body(message="请讲一下我这道题为什么答错。", after_id=None):
     return {"request_id": str(uuid4()), "after_id": after_id, "message": message}
+
+
+def test_reviewed_example_uses_published_material_and_skips_character_check():
+    explanation = "把为 1 的位权相加，得到 16 + 4 + 2 = 22。"
+    snapshot = {"question_type": "fill_blank", "stem": "把 10110 转为十进制。", "explanation": explanation,
+                "answer": {"accepted": ["22"], "normalization": "trim_outer_whitespace"}}
+    knowledge = {"id": "bits", "title": "二进制位权", "body": "从右侧位权 1 开始。比如二进制 101 等于 4 + 1 = 5。"}
+    evidence = WrittenEvidence.from_snapshot(snapshot, {"kind": "text", "value": "0"}, 0, 2, knowledge=knowledge)
+    reply, references = reviewed_reply(evidence, "我不会，能举例吗？", [])
+    assert reply.startswith("可以看《二进制位权》里的这个例子。\n\n比如二进制 101 等于 4 + 1 = 5。")
+    assert explanation in reply
+    assert references == ["review", "knowledge"]
+    followup, _ = reviewed_reply(evidence, "为什么填 0 不对？", [{"reply": reply}])
+    assert explanation in followup and "第一个不同的字符" not in followup
+
+
+def test_reviewed_true_statement_uses_the_approved_reason():
+    explanation = "每个非根节点恰有一条父子边，所以边数比节点数少一。"
+    snapshot = {"question_type": "true_false", "stem": "一棵树的边数等于节点数减一。", "explanation": explanation,
+                "answer": {"value": True}}
+    evidence = WrittenEvidence.from_snapshot(snapshot, {"kind": "boolean", "value": False}, 0, 2)
+    reply, references = reviewed_reply(evidence, "还是不懂", [{"reply": "上一轮讲解"}])
+    assert reply == f"你判为「错误」，审核答案判为「正确」。\n\n{explanation}"
+    assert references == ["review"]
 
 
 async def test_submitted_mock_wrong_answer_has_own_agent_thread(api_context, monkeypatch):
