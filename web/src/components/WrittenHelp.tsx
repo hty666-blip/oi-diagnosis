@@ -9,6 +9,7 @@ import { emptyQuestionDraft, questionDraftStore, type QuestionDraft } from "../q
 import { ErrorNotice } from "./RecordUI";
 
 const starter = "请讲一下我这道题为什么答错。";
+const pendingPollMs = 2000;
 const storage = { getItem: readLocal, setItem: writeLocal, removeItem: removeLocal };
 const references: Record<WrittenHelpReference, string> = {
   attempt: "本次作答", review: "审核答案与解析", knowledge: "知识卡", prior_practice: "同知识点作答",
@@ -68,30 +69,41 @@ export default function WrittenHelp({ userId, target }: { userId: number; target
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [clock, setClock] = useState(Date.now);
   const readRequest = useRef<AbortController>();
   const sendRequest = useRef<AbortController>();
   const textarea = useRef<HTMLTextAreaElement>(null);
 
-  async function load(before?: number) {
+  async function load(before?: number, background = false) {
+    if (background && readRequest.current) return;
     readRequest.current?.abort();
     const request = new AbortController();
     readRequest.current = request;
-    setLoading(true);
+    if (!background) setLoading(true);
     try {
       const value = await api.writtenHelpHistory(target, before, request.signal);
       if (request.signal.aborted) return;
       if (before) {
         setHistory((current) => ({ ...current, before_id: value.before_id, items: [...value.items, ...current.items] }));
       } else {
-        setHistory(value);
+        setHistory((current) => {
+          if (!background || !value.items.length) return value;
+          const earlier = current.items.filter((item) => item.id < value.items[0].id);
+          return earlier.length ? { ...value, items: [...earlier, ...value.items], before_id: current.before_id } : value;
+        });
+        if (background && !value.pending) setError("");
         for (const turn of value.items) store.acknowledge(turn.request_id);
         setDraft((current) => value.items.some((turn) => turn.request_id === current.id) ? emptyQuestionDraft : current);
       }
       setHydrated(true);
     } catch (failure) {
-      if (!request.signal.aborted) setError(messageOf(failure));
+      if (!request.signal.aborted && !background) setError(messageOf(failure));
     } finally {
-      if (!request.signal.aborted) setLoading(false);
+      if (!request.signal.aborted) {
+        readRequest.current = undefined;
+        setClock(Date.now());
+        if (!background) setLoading(false);
+      }
     }
   }
 
@@ -105,6 +117,8 @@ export default function WrittenHelp({ userId, target }: { userId: number; target
 
   async function ask(value: QuestionDraft) {
     if (sendRequest.current || loading || !value.content.trim() || !value.id) return;
+    readRequest.current?.abort();
+    readRequest.current = undefined;
     const request = new AbortController();
     sendRequest.current = request;
     setSending(true);
@@ -145,7 +159,22 @@ export default function WrittenHelp({ userId, target }: { userId: number; target
   }
 
   const pending = history.pending;
+  const pendingId = pending?.request_id;
+  const retryAt = pending ? Date.parse(pending.retry_at) : 0;
+  const waiting = Boolean(pending && retryAt > clock);
+  const composerDraft = draft.id === pendingId ? emptyQuestionDraft : draft;
+
+  useEffect(() => {
+    if (!pendingId || !waiting || loading || sending) return;
+    const timer = window.setInterval(() => {
+      setClock(Date.now());
+      void load(undefined, true);
+    }, pendingPollMs);
+    return () => window.clearInterval(timer);
+  }, [key, pendingId, waiting, loading, sending]);
+
   const disabled = loading || sending || !hydrated;
+  const sendDisabled = disabled || waiting;
   return <section className="card written-help" aria-label="错题答疑">
     <div className="card-head"><h2>错题答疑</h2>
       <button type="button" className="ghost" disabled={loading || sending}
@@ -159,28 +188,29 @@ export default function WrittenHelp({ userId, target }: { userId: number; target
       {history.items.map((turn) => <DiscussionTurn key={turn.id} turn={turn} />)}
     </div>}
     {pending && <div className="written-help-pending">
-      <p>等待回复：{pending.message}</p>
-      <button type="button" className="ghost" disabled={disabled}
-        onClick={() => void ask({ id: pending.request_id, content: pending.message })}>继续上次追问</button>
+      <p role="status">{waiting ? "正在生成讲解，结果会自动出现。" : "上次追问尚未完成。"}</p>
+      <p className="muted">{pending.message}</p>
+      {!waiting && <button type="button" className="ghost" disabled={disabled}
+        onClick={() => void ask({ id: pending.request_id, content: pending.message })}>继续上次追问</button>}
     </div>}
     {sending && <p role="status">正在分析作答并准备讲解…</p>}
     {hydrated && !history.items.length && !pending && !draft.content && <button type="button"
       className="btn-primary" disabled={disabled} onClick={start}>讲解这道错题</button>}
     {hydrated && <form className="composer written-help-composer" onSubmit={(event) => {
       event.preventDefault();
-      void ask(draft);
+      if (!sendDisabled) void ask(composerDraft);
     }}>
       <label>追问
-        <textarea ref={textarea} rows={2} value={draft.content} maxLength={1200} disabled={sending}
+        <textarea ref={textarea} rows={2} value={composerDraft.content} maxLength={1200} disabled={sending}
           onChange={(event) => { setDraft(store.write(event.target.value)); setError(""); }}
           onKeyDown={(event) => {
             if (shouldSendMessage(event.nativeEvent)) {
               event.preventDefault();
-              if (!disabled) void ask(draft);
+              if (!sendDisabled) void ask(composerDraft);
             }
           }} />
       </label>
-      <button type="submit" className="btn-primary" disabled={disabled || !draft.content.trim()}>发送问题</button>
+      <button type="submit" className="btn-primary" disabled={sendDisabled || !composerDraft.content.trim()}>发送问题</button>
     </form>}
   </section>;
 }
