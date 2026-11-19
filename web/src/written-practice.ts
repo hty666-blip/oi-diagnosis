@@ -6,7 +6,8 @@ type ExamOrigin = { examId?: number; returnExamId?: number };
 export type WrittenTarget =
   | ({ kind: "question"; id: number; version?: string } & ExamOrigin)
   | ({ kind: "attempt"; id: number } & ExamOrigin)
-  | { kind: "exam"; id: number };
+  | { kind: "exam"; id: number }
+  | { kind: "assignment"; id: number };
 export interface WrittenPosition {
   list: WrittenList;
   target: WrittenTarget | null;
@@ -42,7 +43,11 @@ export function rememberWrittenOpen(userId: number, open: boolean) {
 export function readWrittenPosition(userId: number): WrittenPosition {
   try {
     const value = JSON.parse(sessionStorage.getItem(positionKey(userId)) ?? "null");
-    if (value?.list === "assignments") return { list: "assignments", target: null };
+    if (value?.list === "assignments") {
+      const target = value.target;
+      return { list: "assignments", target: target?.kind === "assignment" && Number.isSafeInteger(target.id) && target.id > 0
+        ? { kind: "assignment", id: target.id } : null };
+    }
     if (value && ["bank", "papers", "knowledge", "progress", "history", "wrong", "corrected"].includes(value.list)) {
       const target = value.target;
       if (target && Number.isSafeInteger(target.id) && target.id > 0) {

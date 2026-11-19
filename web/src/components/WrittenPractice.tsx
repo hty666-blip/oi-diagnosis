@@ -20,13 +20,12 @@ const emptyMessages: Record<"bank" | WrittenAttemptView, string> = {
   corrected: "暂无已订正的题目。错题重新答对后会出现在这里。",
 };
 
-export default function WrittenPractice({ userId, initialExamId, onExamAnswerPending, requestExamExit }: {
-  userId: number; initialExamId?: number;
+export default function WrittenPractice({ userId, initialPosition, onExamAnswerPending, requestExamExit }: {
+  userId: number; initialPosition?: WrittenPosition;
   onExamAnswerPending: (pending: boolean) => void;
   requestExamExit: (action: () => void) => void;
 }) {
-  const [position, setPosition] = useState<WrittenPosition>(() => initialExamId === undefined
-    ? readWrittenPosition(userId) : { list: "papers", target: { kind: "exam", id: initialExamId } });
+  const [position, setPosition] = useState<WrittenPosition>(() => initialPosition ?? readWrittenPosition(userId));
   const { list, target } = position;
   const [receipt, setReceipt] = useState<WrittenAttempt>();
   const [filter, setFilter] = useState(emptyFilter);
@@ -104,11 +103,12 @@ export default function WrittenPractice({ userId, initialExamId, onExamAnswerPen
     } });
   }
 
-  const returnExamId = target && target.kind !== "exam" ? target.examId ?? target.returnExamId : undefined;
+  const inPractice = target?.kind === "question" || target?.kind === "attempt";
+  const returnExamId = inPractice ? target.examId ?? target.returnExamId : undefined;
   return <section className="written-practice">
     <header className="page-head">
       <h1>初赛练习</h1>
-      {target && target.kind !== "exam" && <button className="ghost" type="button"
+      {inPractice && <button className="ghost" type="button"
         onClick={() => returnExamId ? open({ kind: "exam", id: returnExamId }) : showList(list)}>
         {returnExamId ? "返回模拟答卷" : `返回${listLabels[list]}`}
       </button>}
@@ -137,7 +137,9 @@ export default function WrittenPractice({ userId, initialExamId, onExamAnswerPen
       onExamAttempt={(id, attemptId) => open({ kind: "attempt", id: attemptId, examId: id })}
       onExamPractice={(id, question) => open({ kind: "question", id: question.id, version: question.version_id, returnExamId: id })}
       onPractice={(question) => open({ kind: "question", id: question.id, version: question.version_id })} />}
-    {list === "assignments" && <WrittenAssignments studentId={userId} />}
+    {list === "assignments" && <WrittenAssignments studentId={userId}
+      assignmentId={target?.kind === "assignment" ? target.id : undefined}
+      onSelected={(id) => setPosition({ list: "assignments", target: id === undefined ? null : { kind: "assignment", id } })} />}
     {!target && list === "progress" && <WrittenProgress onBank={() => showList("bank")} onOpen={open} />}
     {!target && isList && <div className="card written-practice-list">
       {list === "bank" && <form className="admin-actions written-practice-filters" onSubmit={(event) => {

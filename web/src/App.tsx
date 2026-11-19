@@ -17,7 +17,7 @@ import SubmissionLineage from "./components/SubmissionLineage";
 import NavIcon from "./components/NavIcon";
 import { cancelAndRefresh, parsePendingId, pendingKey, pollSubmission, submissionPhase, taskLabel } from "./judge-task";
 import JudgingQueuePanel from "./components/JudgingQueuePanel";
-import { rememberWrittenOpen, wasWrittenOpen } from "./written-practice";
+import { rememberWrittenOpen, wasWrittenOpen, type WrittenPosition } from "./written-practice";
 import {
   api, ApiError, cachedUser, checkSessionStorage, clearSession, messageOf, readLocal, removeLocal, writeLocal,
   type AuthUser, type CoachItem, type DiagResult, type EvidenceItem,
@@ -65,7 +65,7 @@ export default function App() {
   const [restore, setRestore] = useState<{ id: number; tick: number } | null>(null);
   const [practice, setPractice] = useState<TrainingPractice | null>(null);
   const [trainingTarget, setTrainingTarget] = useState<number>();
-  const [writtenExamTarget, setWrittenExamTarget] = useState<number>();
+  const [writtenEntry, setWrittenEntry] = useState<WrittenPosition>();
   const [examAnswerPending, setExamAnswerPending] = useState(false);
   const [leaveExam, setLeaveExam] = useState<(() => void) | null>(null);
   const [sessionNotice, setSessionNotice] = useState("");
@@ -113,7 +113,7 @@ export default function App() {
   if (!user) return <><Login onLogin={(next) => {
     setUser(next);
     setLeaveExam(null);
-    setWrittenExamTarget(undefined);
+    setWrittenEntry(undefined);
     setSessionNotice("");
     setRestore(null);
     setPractice(null); setTrainingTarget(undefined); setView(homeView(next));
@@ -125,6 +125,10 @@ export default function App() {
     ? [{ key: "trainings", label: "我的训练" }, { key: "submit", label: "自由练习" }, { key: "written", label: "初赛练习" }, { key: "my", label: "提交记录" }, { key: "profiles", label: "我的档案" }]
     : [...(user.role === "admin" ? [{ key: "admin" as const, label: "平台管理" }] : []), { key: "trainings", label: "训练工作台" }, { key: "written", label: "初赛任务" }, { key: "profiles", label: "学生档案" }, { key: "coach", label: "诊断复核" }];
   const openPractice = (value: TrainingPractice) => { setPractice(value); setRestore(value.submissionId ? { id: value.submissionId, tick: Date.now() } : null); setView("submit"); };
+  function openWritten(position: WrittenPosition) {
+    setWrittenEntry(position);
+    setView("written");
+  }
   function requestExamExit(action: () => void) {
     if (examAnswerPending) setLeaveExam(() => action);
     else action();
@@ -134,7 +138,7 @@ export default function App() {
     requestExamExit(() => {
       if (next === "submit") { setPractice(null); setRestore(null); }
       if (next === "trainings") setTrainingTarget(undefined);
-      if (next === "written") setWrittenExamTarget(undefined);
+      if (next === "written") setWrittenEntry(undefined);
       setView(next);
     });
   }
@@ -157,15 +161,13 @@ export default function App() {
       </aside>
       <main className="main" id="main">
         {user.role === "student" && <div hidden={view !== "submit"}><SubmitView key={`${user.id}:${practice?.id ?? "free"}:${practice?.pid ?? ""}`} userId={user.id} restore={restore} training={practice ?? undefined} /></div>}
-        {view === "trainings" && <TrainingWorkspace user={user} initialTrainingId={trainingTarget} onPractice={openPractice} />}
+        {view === "trainings" && <TrainingWorkspace user={user} initialTrainingId={trainingTarget} onPractice={openPractice}
+          onWritten={user.role === "student" ? openWritten : undefined} onFreePractice={() => navigate("submit")} />}
         {view === "profiles" && <StudentProfiles user={user} onPractice={openPractice} onTraining={(id) => { setTrainingTarget(id); setView("trainings"); }}
-          onWrittenExam={user.role === "student" ? (id) => {
-            setWrittenExamTarget(id);
-            setView("written");
-          } : undefined} />}
+          onWrittenExam={user.role === "student" ? (id) => openWritten({ list: "papers", target: { kind: "exam", id } }) : undefined} />}
         {view === "my" && <MyView onContinue={(id) => { setPractice(null); setRestore({ id, tick: Date.now() }); setView("submit"); }} />}
         {view === "written" && user.role === "student" && <Suspense fallback={<p role="status">正在打开初赛练习…</p>}>
-          <WrittenPractice key={user.id} userId={user.id} initialExamId={writtenExamTarget}
+          <WrittenPractice key={user.id} userId={user.id} initialPosition={writtenEntry}
             onExamAnswerPending={setExamAnswerPending} requestExamExit={requestExamExit} />
         </Suspense>}
         {view === "written" && user.role !== "student" && <Suspense fallback={<p role="status">正在打开初赛任务…</p>}>

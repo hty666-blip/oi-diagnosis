@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { api, messageOf, type AuthUser, type Problem, type Training, type TrainingDetail, type TrainingInput } from "../api";
+import { api, messageOf, type AuthUser, type Problem, type Training, type TrainingDetail, type TrainingInput, type WrittenAssignmentSummary } from "../api";
+import type { WrittenPosition } from "../written-practice";
 import { ErrorNotice, VerdictBadge } from "./RecordUI";
 import ReviewPanel from "./ReviewPanel";
 import TrainingLessonPanel from "./TrainingLessonPanel";
@@ -14,7 +15,10 @@ const localDate = (value: string) => {
 const emptyDraft = (className: string): TrainingInput => ({ title: "", class_name: className, objective: "", description: "",
   due_at: new Date(Date.now() + 7 * 86400000).toISOString(), problems: [] });
 
-export default function TrainingWorkspace({ user, onPractice, initialTrainingId }: { user: AuthUser; onPractice: (value: TrainingPractice) => void; initialTrainingId?: number }) {
+export default function TrainingWorkspace({ user, onPractice, initialTrainingId, onWritten, onFreePractice }: {
+  user: AuthUser; onPractice: (value: TrainingPractice) => void; initialTrainingId?: number;
+  onWritten?: (position: WrittenPosition) => void; onFreePractice: () => void;
+}) {
   const teacher = user.role !== "student";
   const [items, setItems] = useState<Training[]>([]);
   const [detail, setDetail] = useState<TrainingDetail | null>(null);
@@ -29,6 +33,7 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
+  const [writtenReload, setWrittenReload] = useState(0);
   const generation = useRef(0);
   const saveLock = useRef(false);
   const groups = [...new Set(roster.map((s) => s.class_name))];
@@ -75,8 +80,12 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
 
   return <>
     <div className="page-head"><div><h1>{teacher ? "训练工作台" : "我的训练"}</h1></div>
-      <div className="row"><button className="ghost" disabled={loading || saving} onClick={() => void load(detail?.id)}>刷新训练</button>
+      <div className="row"><button className="ghost" disabled={loading || saving} onClick={() => {
+        void load(detail?.id);
+        if (onWritten) setWrittenReload((value) => value + 1);
+      }}>刷新训练</button>
       {teacher && !draft && <button className="primary" disabled={loading || saving || !groups.length} onClick={() => edit()}>布置训练</button>}</div></div>
+    {onWritten && <StudentWrittenTasks key={user.id} reload={writtenReload} onOpen={onWritten} />}
     <ErrorNotice message={error} onRetry={draft ? undefined : () => void load(detail?.id)} />
     {notice && <p role="status" className="scope-note">{notice}</p>}
     {loading && <p role="status">正在读取训练与完成记录…</p>}
@@ -108,13 +117,14 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
         <div className="row"><button className="primary" disabled={saving || !draft.title.trim() || !draft.problems.some((p) => p.required) || draft.student_ids?.length === 0}>{saving ? "正在保存…" : "保存草稿并预览"}</button><button type="button" className="ghost" disabled={saving} onClick={() => setDraft(null)}>取消编辑</button></div>
       </fieldset></form></section>}
     <div className="training-layout" aria-busy={loading}>
-      <section className="training-list" aria-label="训练列表"><h2>{teacher ? "训练任务" : "收到的训练"}</h2>
-        {!items.length && !loading && <p className="empty">{teacher ? "还没有训练。先选择题目并保存一份草稿。" : "暂未收到训练，可以先到自由练习中选题。"}</p>}
+      <section className="training-list" aria-label="训练列表"><h2>{teacher ? "训练任务" : "编程训练"}</h2>
+        {!items.length && !loading && (teacher ? <p className="empty">还没有训练。先选择题目并保存一份草稿。</p>
+          : <div><p className="muted">暂未收到编程训练。</p><button type="button" className="ghost" onClick={onFreePractice}>打开自由练习</button></div>)}
         {items.map((item) => <button key={item.id} className={"training-item " + (item.id === detail?.id ? "selected" : "")} disabled={loading || saving || !!draft} onClick={() => void load(item.id)} aria-pressed={item.id === detail?.id}>
           <strong>{item.title}</strong><span>{item.class_name} · {item.status === "draft" ? "草稿" : new Date(item.due_at).getTime() < Date.now() ? "已截止 · 可补交" : "进行中"}</span><span>截止 {dateLabel(item.due_at)}</span></button>)}
       </section>
       <section className="training-detail" aria-label="训练详情">
-        {!detail && !loading && <p className="empty">选择一份训练查看题目和完成情况。</p>}
+        {!detail && !loading && (teacher || items.length > 0) && <p className="empty">选择一份训练查看题目和完成情况。</p>}
         {detail && !draft && <><div className="card-head"><h2>{detail.title}</h2>{teacher && detail.status === "draft" && <div className="row"><button className="ghost" disabled={saving || loading} onClick={() => edit(detail)}>编辑草稿</button><button className="primary" disabled={saving || loading} onClick={() => void save(true)}>{saving ? "正在发布…" : "发布到班级"}</button></div>}</div>
           <p className="muted">{detail.class_name} · 截止 {dateLabel(detail.due_at)} · {detail.status === "draft" ? "尚未发布，学生不可见" : "已发布"}</p>
           {detail.source_training_id && <p className="scope-note">补练来源：训练 #{detail.source_training_id}</p>}
@@ -138,4 +148,34 @@ export default function TrainingWorkspace({ user, onPractice, initialTrainingId 
     </div>
     {teacher && selectedCode && <ReviewPanel key={selectedCode} submissionId={selectedCode} onReviewed={() => void load(detail?.id)} />}
   </>;
+}
+
+function StudentWrittenTasks({ reload, onOpen }: { reload: number; onOpen: (position: WrittenPosition) => void }) {
+  const [tasks, setTasks] = useState<WrittenAssignmentSummary[]>();
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const request = new AbortController();
+    setError("");
+    void api.writtenAssignments(request.signal).then((result) => {
+      if (!request.signal.aborted) setTasks(result.filter((task) => !task.is_closed)
+        .sort((a, b) => Date.parse(a.due_at) - Date.parse(b.due_at)).slice(0, 3));
+    }).catch((failure) => { if (!request.signal.aborted) setError(messageOf(failure)); });
+    return () => request.abort();
+  }, [reload, retry]);
+  return <section className="card" aria-label="班级初赛专项">
+    <div className="card-head"><h2>初赛专项</h2><button type="button" className="ghost"
+      onClick={() => onOpen({ list: "assignments", target: null })}>全部初赛任务</button></div>
+    {error ? <ErrorNotice message={error} onRetry={() => setRetry((value) => value + 1)} />
+      : !tasks ? <p role="status">正在读取初赛专项…</p>
+      : !tasks.length ? <div className="row"><p className="muted">暂无进行中的初赛专项。</p><button type="button" className="ghost"
+        onClick={() => onOpen({ list: "bank", target: null })}>打开初赛题库</button></div>
+      : <div className="table-scroll"><table>
+        <thead><tr><th scope="col">进行中的专项</th><th scope="col">截止时间</th><th scope="col">操作</th></tr></thead>
+        <tbody>{tasks.map((task) => <tr key={task.id}><th scope="row">{task.title}</th>
+          <td><time dateTime={task.due_at}>{dateLabel(task.due_at)}</time></td>
+          <td><button type="button" className="ghost" onClick={() => onOpen({ list: "assignments", target: { kind: "assignment", id: task.id } })}
+            aria-label={`打开专项 ${task.title}`}>打开专项</button></td></tr>)}</tbody>
+      </table></div>}
+  </section>;
 }

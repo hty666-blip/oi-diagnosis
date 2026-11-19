@@ -11,12 +11,14 @@ type OpenTask = { kind: "question"; question: TaskQuestion } | { kind: "attempt"
 
 const deadlineText = (value: string) => new Date(value).toLocaleString("zh-CN");
 
-export default function WrittenAssignments({ studentId }: { studentId?: number }) {
+export default function WrittenAssignments({ studentId, assignmentId, onSelected }: {
+  studentId?: number; assignmentId?: number; onSelected?: (id?: number) => void;
+}) {
   const student = studentId !== undefined;
   const [showExams, setShowExams] = useState(false);
   const [tasks, setTasks] = useState<WrittenAssignmentSummary[]>();
-  const [selected, setSelected] = useState<number>();
-  const [detail, setDetail] = useState<WrittenAssignmentDetail>();
+  const [localSelected, setSelected] = useState<number>();
+  const [loadedTask, setDetail] = useState<WrittenAssignmentDetail>();
   const [target, setTarget] = useState<OpenTask>();
   const [receipt, setReceipt] = useState<WrittenAttempt>();
   const [publishing, setPublishing] = useState(false);
@@ -25,6 +27,8 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const refresh = () => setReload((value) => value + 1);
+  const selected = onSelected ? assignmentId : localSelected;
+  const detail = loadedTask?.id === selected ? loadedTask : undefined;
 
   useEffect(() => {
     if (showExams) return;
@@ -40,7 +44,8 @@ export default function WrittenAssignments({ studentId }: { studentId?: number }
   function open(id?: number) {
     setDetail(undefined);
     setTarget(undefined);
-    setSelected(id);
+    if (onSelected) onSelected(id);
+    else setSelected(id);
   }
 
   function start(question: TaskQuestion) {
